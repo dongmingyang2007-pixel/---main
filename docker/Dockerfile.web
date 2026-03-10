@@ -1,0 +1,16 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+COPY apps/web/package.json /app/package.json
+COPY apps/web/package-lock.json /app/package-lock.json
+RUN npm ci
+
+COPY apps/web /app
+
+EXPOSE 3000
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+CMD ["sh", "-lc", "npm run build && npm run start"]

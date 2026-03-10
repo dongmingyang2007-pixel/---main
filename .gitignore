@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+apps/api/.venv/
+
+# Node
+node_modules/
+apps/web/node_modules/
+apps/web/.next/
+
+# Test outputs
+playwright-report/
+apps/web/test-results/
+
+# Env
+.env
+.env.local
+.env.*.local

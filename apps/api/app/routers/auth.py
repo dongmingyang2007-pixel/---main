@@ -1,0 +1,158 @@
+from fastapi import APIRouter, Depends, Request, Response
+from sqlalchemy.orm import Session
+
+from app.core.deps import (
+    clear_auth_cookie,
+    clear_csrf_cookie,
+    enforce_rate_limit,
+    get_client_ip,
+    get_current_user,
+    get_db_session,
+    issue_csrf_token,
+    require_allowed_origin,
+    require_csrf_protection,
+    set_auth_cookie,
+)
+from app.core.errors import ApiError
+from app.core.security import create_access_token, hash_password, verify_password
+from app.core.config import settings
+from app.models import Membership, User, Workspace
+from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserOut, WorkspaceOut
+from app.services.audit import write_audit_log
+
+
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+@router.post("/register", response_model=AuthResponse)
+def register(
+    payload: RegisterRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db_session),
+) -> AuthResponse:
+    require_allowed_origin(request)
+    client_ip = get_client_ip(request)
+    enforce_rate_limit(
+        request,
+        scope="auth:register:ip",
+        identifier=client_ip,
+        limit=settings.auth_rate_limit_ip_max,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    enforce_rate_limit(
+        request,
+        scope="auth:register:email_ip",
+        identifier=f"{payload.email}:{client_ip}",
+        limit=settings.auth_rate_limit_email_ip_max,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    exists = db.query(User).filter(User.email == payload.email).first()
+    if exists:
+        raise ApiError("email_exists", "Email already registered", status_code=409)
+
+    user = User(email=payload.email, password_hash=hash_password(payload.password), display_name=payload.display_name)
+    workspace = Workspace(name=f"{payload.display_name or payload.email.split('@')[0]} Workspace", plan="free")
+    db.add(user)
+    db.add(workspace)
+    db.flush()
+
+    membership = Membership(workspace_id=workspace.id, user_id=user.id, role="owner")
+    db.add(membership)
+    write_audit_log(
+        db,
+        workspace_id=workspace.id,
+        actor_user_id=user.id,
+        action="auth.register",
+        target_type="user",
+        target_id=user.id,
+        meta_json={"email": user.email},
+    )
+    db.commit()
+
+    token = create_access_token(user.id)
+    set_auth_cookie(response, token)
+    issue_csrf_token(response, token, user.id)
+
+    return AuthResponse(
+        user=UserOut.model_validate(user, from_attributes=True),
+        workspace=WorkspaceOut.model_validate(workspace, from_attributes=True),
+    )
+
+
+@router.post("/login", response_model=AuthResponse)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db_session),
+) -> AuthResponse:
+    require_allowed_origin(request)
+    client_ip = get_client_ip(request)
+    enforce_rate_limit(
+        request,
+        scope="auth:login:ip",
+        identifier=client_ip,
+        limit=settings.auth_rate_limit_ip_max,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    enforce_rate_limit(
+        request,
+        scope="auth:login:email_ip",
+        identifier=f"{payload.email}:{client_ip}",
+        limit=settings.auth_rate_limit_email_ip_max,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise ApiError("invalid_credentials", "Invalid email or password", status_code=401)
+
+    workspace = (
+        db.query(Workspace)
+        .join(Membership, Membership.workspace_id == Workspace.id)
+        .filter(Membership.user_id == user.id)
+        .order_by(Workspace.created_at.asc())
+        .first()
+    )
+    if not workspace:
+        raise ApiError("workspace_not_found", "No workspace found", status_code=404)
+
+    token = create_access_token(user.id)
+    set_auth_cookie(response, token)
+    issue_csrf_token(response, token, user.id)
+
+    return AuthResponse(
+        user=UserOut.model_validate(user, from_attributes=True),
+        workspace=WorkspaceOut.model_validate(workspace, from_attributes=True),
+    )
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+) -> dict[str, bool]:
+    require_allowed_origin(request)
+    clear_auth_cookie(response)
+    clear_csrf_cookie(response)
+    return {"ok": True}
+
+
+@router.get("/csrf")
+def refresh_csrf(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    require_allowed_origin(request)
+    access_token = getattr(request.state, "access_token", None)
+    if not access_token:
+        raise ApiError("unauthorized", "Authentication required", status_code=401)
+    csrf_token = issue_csrf_token(response, access_token, current_user.id)
+    return {"csrf_token": csrf_token}
+
+
+@router.get("/me", response_model=UserOut)
+def me(current_user: User = Depends(get_current_user)) -> UserOut:
+    return UserOut.model_validate(current_user, from_attributes=True)
