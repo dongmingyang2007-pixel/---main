@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AdvancedDrawer } from "@/components/AdvancedDrawer";
+import { TextReveal } from "@/components/TextReveal";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 import { apiPost, uploadToPresignedUrl } from "@/lib/api";
 import { EARBUD_BUILD_TIER, QIHANG_EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
 import { DemoInferResponse, DemoPresignResponse } from "@/lib/types";
@@ -490,6 +492,8 @@ function commandBtn(enabled: boolean, active = false): string {
 }
 
 export default function DemoPage() {
+  const demoShellRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(demoShellRef);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
@@ -887,7 +891,7 @@ export default function DemoPage() {
   ] as const;
 
   return (
-    <div className="demo-page">
+    <div className="demo-page" ref={demoShellRef}>
       <input
         ref={fileInputRef}
         type="file"
@@ -908,10 +912,13 @@ export default function DemoPage() {
 
       <div className="demo-status-bar">
         <div className="demo-status-copy">
-          <div className="site-kicker">Interactive Demo</div>
-          <h1 className="display-face mt-3 text-[clamp(2rem,4vw,3.3rem)] leading-[0.96]">
-            在主舞台里直接试一次设备、隐私和推理闭环。
-          </h1>
+          <div className="site-kicker" data-reveal>Interactive Demo</div>
+          <TextReveal
+            text="在主舞台里直接试一次设备、隐私和推理闭环。"
+            tag="h1"
+            className="display-face mt-3 text-[clamp(2rem,4vw,3.3rem)] leading-[0.96]"
+            staggerMs={28}
+          />
           <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">{statusMessage}</p>
           <div className="demo-status-actions">
             <div className="demo-task-switch" role="tablist" aria-label="Select demo task">
@@ -952,7 +959,7 @@ export default function DemoPage() {
             ) : null}
           </div>
         </div>
-        <div className="demo-metric-grid w-full max-w-[360px]">
+        <div className="demo-metric-grid w-full max-w-[360px]" data-reveal data-reveal-delay="2">
           <div className="demo-metric-card">
             <div className="console-key-label">Viewer</div>
             <strong>{connectionMeta.label}</strong>
@@ -972,7 +979,7 @@ export default function DemoPage() {
         </div>
       </div>
 
-      <section className="demo-response-strip">
+      <section className="demo-response-strip" data-reveal data-reveal-delay="1">
         <div>
           <div className="console-kicker">Latest Response</div>
           <h2 className="demo-response-title">结果摘要直接贴着主舞台展示。</h2>

@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── View Transitions ─── */
+
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root) {
+  animation: viewFadeOut 0.28s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+::view-transition-new(root) {
+  animation: viewFadeIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.06s both;
+}
+
+@keyframes viewFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+    filter: blur(4px);
+  }
+}
+
+@keyframes viewFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(1.02);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Fallback for browsers without View Transitions API */
+.view-transitioning .site-main {
+  animation: viewFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 :root {
   --bg: #eef3fb;
   --bg-soft: #f8fbff;
@@ -2814,6 +2859,30 @@ button {
   .site-footer-panel {
     transition: none !important;
   }
+
+  .auth-card,
+  .demo-page {
+    animation: none !important;
+    opacity: 1;
+    filter: none;
+  }
+
+  .workbench-hero::after {
+    animation: none !important;
+  }
+
+  .demo-status-bar {
+    transition: none !important;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+
+  .view-transitioning .site-main {
+    animation: none !important;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -3538,6 +3607,7 @@ button {
     radial-gradient(circle at 84% 10%, rgba(15, 118, 255, 0.08), transparent 24%);
   box-shadow: var(--shadow-panel);
   backdrop-filter: blur(24px);
+  animation: heroEntrance 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
 }
 
 .workbench-hero {
@@ -3565,6 +3635,19 @@ button {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent 24%),
     linear-gradient(180deg, transparent 48%, rgba(255, 255, 255, 0.06));
+}
+
+.workbench-hero::after {
+  content: "";
+  position: absolute;
+  top: -30%;
+  right: -20%;
+  width: 60%;
+  height: 60%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(15, 118, 255, 0.18), transparent 60%);
+  animation: atmospherePulse 8s ease-in-out infinite alternate;
+  pointer-events: none;
 }
 
 .workbench-hero-topline {
@@ -3853,6 +3936,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  animation: heroEntrance 1s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
 }
 
 .demo-status-bar {
@@ -3862,6 +3946,11 @@ button {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(246, 249, 255, 0.72)),
     radial-gradient(circle at 84% 12%, rgba(15, 118, 255, 0.08), transparent 24%);
+  transition: box-shadow 0.4s ease;
+}
+
+.demo-status-bar:hover {
+  box-shadow: 0 28px 72px rgba(14, 30, 64, 0.14);
 }
 
 .demo-status-copy {

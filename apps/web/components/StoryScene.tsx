@@ -1,4 +1,7 @@
-import { PublicDocumentLink } from "@/components/PublicDocumentLink";
+"use client";
+
+import { MagneticButton } from "@/components/MagneticButton";
+import { TextReveal } from "@/components/TextReveal";
 import type { StoryAction, StorySceneContent } from "@/lib/story-types";
 
 export function StoryScene({
@@ -14,8 +17,6 @@ export function StoryScene({
   actions?: StoryAction[];
   scrollNote?: string;
 }) {
-  const Heading = opening ? "h1" : "h2";
-
   return (
     <section className={`story-experience-section ${opening ? "is-opening" : ""}`}>
       <div className="story-experience-index" data-reveal data-reveal-delay="1">
@@ -23,13 +24,22 @@ export function StoryScene({
       </div>
       <div className="story-experience-section-body">
         <div className="home-story-eyebrow" data-reveal>{scene.eyebrow}</div>
-        <Heading
-          className={`home-story-title ${opening ? "gradient-text" : ""}`}
-          data-reveal
-          data-reveal-delay="1"
-        >
-          {scene.title}
-        </Heading>
+        {opening ? (
+          <TextReveal
+            text={scene.title}
+            tag="h1"
+            className="home-story-title gradient-text"
+            staggerMs={38}
+          />
+        ) : (
+          <h2
+            className="home-story-title"
+            data-reveal
+            data-reveal-delay="1"
+          >
+            {scene.title}
+          </h2>
+        )}
         <p
           className={`home-story-summary ${opening ? "is-opening" : ""}`}
           data-reveal
@@ -40,13 +50,14 @@ export function StoryScene({
         {opening && actions.length ? (
           <div className="home-story-actions" data-reveal data-reveal-delay="3">
             {actions.map((action) => (
-              <PublicDocumentLink
+              <MagneticButton
                 key={`${action.href}-${action.label}`}
                 href={action.href}
                 className={`home-story-button ${action.variant === "secondary" ? "" : "is-primary"}`}
+                strength={0.25}
               >
                 {action.label}
-              </PublicDocumentLink>
+              </MagneticButton>
             ))}
           </div>
         ) : null}

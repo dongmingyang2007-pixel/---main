@@ -2,19 +2,23 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { MagneticButton } from "@/components/MagneticButton";
 import { WorkbenchHero } from "@/components/WorkbenchHero";
 import { apiPost, persistWorkspaceId } from "@/lib/api";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const shellRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(shellRef);
 
   return (
-    <div className="auth-shell">
+    <div className="auth-shell" ref={shellRef}>
       <div className="auth-card">
         <WorkbenchHero
           eyebrow="QIHANG Console"
@@ -28,13 +32,15 @@ export default function LoginPage() {
         />
 
         <section className="auth-panel">
-          <div>
+          <div data-reveal>
             <div className="console-kicker">Sign In</div>
             <h2 className="display-face mt-3 text-4xl">登录控制台</h2>
             <p className="auth-helper mt-3">继续进入你的 workspace。</p>
           </div>
           <form
             className="space-y-4"
+            data-reveal
+            data-reveal-delay="2"
             onSubmit={async (e) => {
               e.preventDefault();
               setError("");
@@ -72,10 +78,12 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            <button className="console-button w-full">登录</button>
+            <MagneticButton className="console-button w-full" strength={0.15}>
+              登录
+            </MagneticButton>
             {error ? <div className="console-inline-notice is-error">{error}</div> : null}
           </form>
-          <div className="auth-helper">
+          <div className="auth-helper" data-reveal="fade" data-reveal-delay="4">
             还没有账号？{" "}
             <Link href="/register" className="console-link">
               去注册

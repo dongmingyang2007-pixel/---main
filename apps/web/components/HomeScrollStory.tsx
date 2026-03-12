@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
+import { MagneticButton } from "@/components/MagneticButton";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
+import { TextReveal } from "@/components/TextReveal";
 import { useParallax } from "@/lib/useParallax";
 import { useScrollReveal } from "@/lib/useScrollReveal";
 import {
@@ -438,19 +440,22 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
                 <div className="home-story-eyebrow" data-reveal>{scene.eyebrow}</div>
                 {index === 0 ? (
                   <>
-                    <h1 className="home-story-title gradient-text" data-reveal data-reveal-delay="1">
-                      {scene.title}
-                    </h1>
+                    <TextReveal
+                      text={scene.title}
+                      tag="h1"
+                      className="home-story-title gradient-text"
+                      staggerMs={38}
+                    />
                     <p className="home-story-summary is-opening" data-reveal data-reveal-delay="2">
                       {scene.summary}
                     </p>
                     <div className="home-story-actions" data-reveal data-reveal-delay="3">
-                      <PublicDocumentLink href="/demo" className="home-story-button is-primary">
+                      <MagneticButton href="/demo" className="home-story-button is-primary" strength={0.25}>
                         进入 Demo
-                      </PublicDocumentLink>
-                      <PublicDocumentLink href="/product" className="home-story-button">
+                      </MagneticButton>
+                      <MagneticButton href="/product" className="home-story-button" strength={0.25}>
                         查看产品页
-                      </PublicDocumentLink>
+                      </MagneticButton>
                     </div>
                     <p className="home-story-scroll-note" data-reveal="fade" data-reveal-delay="5">
                       向下滑动，产品舞台会持续变化，而不是切成一堆卡片。
@@ -541,12 +546,12 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
               首屏先给产品，后半段再给流程和入口，让整站更接近一部可滚动观看的产品影片。
             </p>
             <div className="home-story-actions" data-reveal data-reveal-delay="3">
-              <PublicDocumentLink href="/demo" className="home-story-button is-primary">
+              <MagneticButton href="/demo" className="home-story-button is-primary" strength={0.3}>
                 进入 Demo
-              </PublicDocumentLink>
-              <PublicDocumentLink href="/contact" className="home-story-button">
+              </MagneticButton>
+              <MagneticButton href="/contact" className="home-story-button" strength={0.3}>
                 联系团队
-              </PublicDocumentLink>
+              </MagneticButton>
             </div>
           </section>
         </div>

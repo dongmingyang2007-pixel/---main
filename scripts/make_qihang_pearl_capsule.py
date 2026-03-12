@@ -775,6 +775,96 @@ def clear_lid_pivot_top_fans(gltf: dict, bin_chunk: bytearray) -> dict:
     }
 
 
+def clear_lid_pivot_boundary_fans(gltf: dict, bin_chunk: bytearray) -> dict:
+    node_lookup = {node.get("name"): node for node in gltf["nodes"] if node.get("name")}
+    shell_node = node_lookup["Case_Lid_Shell"]
+    hole_center = tuple(float(value) for value in node_lookup["Lid_Pivot_Hole_Center"]["translation"])
+
+    primitive = gltf["meshes"][shell_node["mesh"]]["primitives"][0]
+    if "indices" in primitive:
+        return {
+            "node": "Case_Lid_Shell",
+            "pivotBoundaryFanTrianglesCleared": 0,
+            "skipped": "Indexed lid-shell primitives are not supported by the boundary-fan cleanup pass",
+        }
+
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+
+    scale = shell_node.get("scale", [1.0, 1.0, 1.0])
+    translation = shell_node.get("translation", [0.0, 0.0, 0.0])
+    scale_x = float(scale[0])
+    scale_y = float(scale[1])
+    scale_z = float(scale[2])
+    translate_x = float(translation[0])
+    translate_y = float(translation[1])
+    translate_z = float(translation[2])
+
+    def to_world(row: list[float]) -> tuple[float, float, float]:
+        return (
+            (row[0] * scale_x) + translate_x,
+            (row[1] * scale_y) + translate_y,
+            (row[2] * scale_z) + translate_z,
+        )
+
+    updated_rows = [list(row) for row in positions]
+    cleared_triangles = 0
+    strongest_span = 0.0
+
+    for triangle_start in range(0, len(positions), 3):
+        triangle_world = (
+            to_world(positions[triangle_start]),
+            to_world(positions[triangle_start + 1]),
+            to_world(positions[triangle_start + 2]),
+        )
+        y_values = [point[1] for point in triangle_world]
+        if (
+            min(y_values) < LID_PIVOT_HOLE_TOP_Y - 0.00030
+            or min(y_values) > LID_PIVOT_HOLE_TOP_Y + 0.00002
+            or max(y_values) > LID_PIVOT_HOLE_TOP_Y + 0.00002
+        ):
+            continue
+
+        radii = [
+            math.hypot(point[0] - hole_center[0], point[2] - hole_center[2])
+            for point in triangle_world
+        ]
+        min_radius = min(radii)
+        max_radius = max(radii)
+        radial_span = max_radius - min_radius
+        if not (
+            (LID_PIVOT_HOLE_TOP_RADIUS - 0.00015) <= min_radius <= (LID_PIVOT_HOLE_TOP_RADIUS + 0.00010)
+            and (LID_PIVOT_HOLE_TOP_RADIUS + 0.00255) <= max_radius <= (LID_PIVOT_HOLE_TOP_RADIUS + 0.00470)
+        ):
+            continue
+
+        forward_offsets = [point[2] - hole_center[2] for point in triangle_world]
+        if min(forward_offsets) < -0.00030 or max(forward_offsets) > 0.00310:
+            continue
+
+        collapse_row = positions[triangle_start]
+        for row_index in range(triangle_start, triangle_start + 3):
+            updated_rows[row_index][0] = collapse_row[0]
+            updated_rows[row_index][1] = collapse_row[1]
+            updated_rows[row_index][2] = collapse_row[2]
+        cleared_triangles += 1
+        strongest_span = max(strongest_span, radial_span)
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+
+    return {
+        "node": "Case_Lid_Shell",
+        "pivotBoundaryFanTrianglesCleared": cleared_triangles,
+        "pivotBoundaryFanStrongestSpan": strongest_span,
+    }
+
+
 def weld_lid_tail_patch(gltf: dict, bin_chunk: bytearray) -> dict:
     node_lookup = {node.get("name"): node for node in gltf["nodes"] if node.get("name")}
     shell_node = node_lookup["Case_Lid_Shell"]
@@ -1526,6 +1616,136 @@ def smooth_lid_tail_transition(
     }
 
 
+def rebuild_lid_pivot_cap_and_hole(
+    gltf: dict,
+    bin_chunk: bytearray,
+    source_positions: list[list[float]],
+) -> dict:
+    node_lookup = {node.get("name"): node for node in gltf["nodes"] if node.get("name")}
+    shell_node = node_lookup["Case_Lid_Shell"]
+    hole_center = tuple(float(value) for value in node_lookup["Lid_Pivot_Hole_Center"]["translation"])
+
+    primitive = gltf["meshes"][shell_node["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+
+    if len(source_positions) != len(positions):
+        raise ValueError("Source lid-shell positions do not match current mesh row count")
+
+    scale = shell_node.get("scale", [1.0, 1.0, 1.0])
+    translation = shell_node.get("translation", [0.0, 0.0, 0.0])
+    scale_x = float(scale[0])
+    scale_y = float(scale[1])
+    scale_z = float(scale[2])
+    translate_x = float(translation[0])
+    translate_y = float(translation[1])
+    translate_z = float(translation[2])
+
+    opening_plane_y = 0.00393
+    outer_rim_radius = 0.00720
+    wall_source_radius_limit = 0.00515
+    inner_deck_source_radius_limit = 0.00605
+    outer_deck_source_radius_limit = 0.00775
+
+    def to_world(row: list[float]) -> tuple[float, float, float]:
+        return (
+            (row[0] * scale_x) + translate_x,
+            (row[1] * scale_y) + translate_y,
+            (row[2] * scale_z) + translate_z,
+        )
+
+    def to_local(point: tuple[float, float, float]) -> list[float]:
+        return [
+            (point[0] - translate_x) / scale_x,
+            (point[1] - translate_y) / scale_y,
+            (point[2] - translate_z) / scale_z,
+        ]
+
+    updated_rows = [list(row) for row in positions]
+    wall_row_count = 0
+    inner_deck_row_count = 0
+    outer_deck_row_count = 0
+    top_inner_row_count = 0
+
+    for row_index, (current_row, source_row) in enumerate(zip(positions, source_positions)):
+        current_world = to_world(current_row)
+        source_world = to_world(source_row)
+        source_radius = math.hypot(source_world[0] - hole_center[0], source_world[2] - hole_center[2])
+        source_forward = source_world[2] - hole_center[2]
+        source_y = source_world[1]
+
+        angle = math.atan2(source_world[2] - hole_center[2], source_world[0] - hole_center[0])
+        if abs(source_world[0] - hole_center[0]) < 1e-9 and abs(source_world[2] - hole_center[2]) < 1e-9:
+            angle = math.atan2(current_world[2] - hole_center[2], current_world[0] - hole_center[0])
+
+        target_world: tuple[float, float, float] | None = None
+        if (
+            -0.00335 <= source_y <= -0.00045
+            and source_radius <= wall_source_radius_limit
+            and -0.0026 <= source_forward <= 0.0050
+        ):
+            target_world = (
+                hole_center[0] + (math.cos(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+                source_y,
+                hole_center[2] + (math.sin(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+            )
+            wall_row_count += 1
+        elif (
+            0.00055 <= source_y <= 0.00105
+            and source_radius <= inner_deck_source_radius_limit
+            and -0.0026 <= source_forward <= 0.0059
+        ):
+            target_world = (
+                hole_center[0] + (math.cos(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+                opening_plane_y,
+                hole_center[2] + (math.sin(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+            )
+            inner_deck_row_count += 1
+        elif (
+            ((0.00055 <= source_y <= 0.00105) or (0.00365 <= source_y <= 0.00415))
+            and inner_deck_source_radius_limit < source_radius <= outer_deck_source_radius_limit
+            and -0.0026 <= source_forward <= 0.0075
+        ):
+            target_world = (
+                hole_center[0] + (math.cos(angle) * outer_rim_radius),
+                opening_plane_y,
+                hole_center[2] + (math.sin(angle) * outer_rim_radius),
+            )
+            outer_deck_row_count += 1
+        elif (
+            0.00365 <= source_y <= 0.00415
+            and source_radius <= inner_deck_source_radius_limit
+            and -0.0026 <= source_forward <= 0.0048
+        ):
+            target_world = (
+                hole_center[0] + (math.cos(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+                opening_plane_y,
+                hole_center[2] + (math.sin(angle) * LID_PIVOT_HOLE_BORE_RADIUS),
+            )
+            top_inner_row_count += 1
+
+        if target_world is not None:
+            updated_rows[row_index] = to_local(target_world)
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+
+    return {
+        "node": "Case_Lid_Shell",
+        "pivotCapOpeningPlaneY": opening_plane_y,
+        "pivotCapOuterRimRadius": outer_rim_radius,
+        "pivotCapWallRows": wall_row_count,
+        "pivotCapInnerDeckRows": inner_deck_row_count,
+        "pivotCapOuterDeckRows": outer_deck_row_count,
+        "pivotCapTopInnerRows": top_inner_row_count,
+    }
+
+
 def deform_shell(
     gltf: dict,
     bin_chunk: bytearray,
@@ -1650,7 +1870,7 @@ def main() -> None:
         ),
     ]
     reports.append(smooth_lid_tail_transition(gltf, bin_chunk, original_lid_shell_positions))
-    reports.append(shrink_lid_pivot_opening(gltf, bin_chunk, original_lid_shell_positions))
+    reports.append(rebuild_lid_pivot_cap_and_hole(gltf, bin_chunk, original_lid_shell_positions))
 
     write_glb(args.output, gltf, bin_chunk)
     print(json.dumps({"output": str(args.output), "reports": reports}, ensure_ascii=False, indent=2))
