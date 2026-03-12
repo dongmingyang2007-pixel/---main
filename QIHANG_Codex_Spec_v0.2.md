@@ -36,9 +36,9 @@
 - DB：PostgreSQL 15+
 - Object Storage：S3 兼容（本地 MinIO；线上可 AWS S3 / Cloudflare R2）
 
-### 1.3 Worker（apps/worker）
+### 1.3 Worker（Docker service）
 - Python 3.11+ + Celery worker
-- 与 API 共享同一套 models/services（建议复用 apps/api 里的代码）
+- 直接复用 `apps/api` 的 models/services，不再单独维护 `apps/worker` 包装
 
 ### 1.4 本地开发形态
 - 必须提供 `docker-compose.yml` 一键启动：postgres、redis、minio、api、worker（web 可本地跑或 docker 跑）
@@ -75,9 +75,6 @@ repo/
         tasks/              # Celery tasks
       alembic/
       alembic.ini
-      pyproject.toml
-    worker/
-      worker.py             # Celery app entry
       pyproject.toml
   docker/
     docker-compose.yml

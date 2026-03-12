@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
 import { DataTable } from "@/components/DataTable";
 import { StatusBadge } from "@/components/StatusBadge";
 import { apiGet, apiPost } from "@/lib/api";
+import { useProjectSelection } from "@/lib/useProjectSelection";
 
-type Project = { id: string; name: string };
 type Dataset = { id: string; name: string };
 type DatasetVersion = { id: string; version: number; dataset_id: string };
 type DatasetVersionOption = DatasetVersion & { dataset_name: string };
@@ -20,8 +20,6 @@ type Job = {
 };
 
 export default function TrainPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState("");
   const [versionOptions, setVersionOptions] = useState<DatasetVersionOption[]>([]);
   const [datasetVersionId, setDatasetVersionId] = useState("");
   const [recipe, setRecipe] = useState("mock");
@@ -30,13 +28,20 @@ export default function TrainPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const loadJobs = async (pid: string) => {
-    if (!pid) return;
+    if (!pid) {
+      setJobs([]);
+      return;
+    }
     const data = await apiGet<{ items: Job[] }>(`/api/v1/train/jobs?project_id=${pid}`);
     setJobs(data.items || []);
   };
 
   const loadVersions = async (pid: string) => {
-    if (!pid) return;
+    if (!pid) {
+      setVersionOptions([]);
+      setDatasetVersionId("");
+      return;
+    }
     const datasetList = await apiGet<Dataset[]>(`/api/v1/datasets?project_id=${pid}`);
     if (!datasetList.length) {
       setVersionOptions([]);
@@ -64,20 +69,12 @@ export default function TrainPage() {
     }
   };
 
-  const loadProjects = async () => {
-    const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
-    const list = data.items || [];
-    setProjects(list);
-    if (!projectId && list.length) {
-      const nextProjectId = list[0].id;
-      setProjectId(nextProjectId);
-      await Promise.all([loadJobs(nextProjectId), loadVersions(nextProjectId)]);
-    }
+  const loadProjectData = async (pid: string) => {
+    setErrorMessage("");
+    await Promise.all([loadJobs(pid), loadVersions(pid)]);
   };
 
-  useEffect(() => {
-    void loadProjects();
-  }, []);
+  const { projectId, projects, selectProject } = useProjectSelection(loadProjectData);
 
   const onCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -117,9 +114,7 @@ export default function TrainPage() {
                 className="console-select"
                 value={projectId}
                 onChange={(e) => {
-                  const pid = e.target.value;
-                  setProjectId(pid);
-                  void Promise.all([loadJobs(pid), loadVersions(pid)]);
+                  void selectProject(e.target.value);
                 }}
               >
                 {projects.map((project) => (

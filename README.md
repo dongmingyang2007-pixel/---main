@@ -6,8 +6,7 @@
 
 - `apps/web`: Next.js 前端
 - `apps/api`: FastAPI + SQLAlchemy 后端 API
-- `apps/worker`: Celery Worker 入口
-- `docker`: Dockerfiles 与本地完整开发栈 compose
+- `docker`: Dockerfiles 与本地完整开发栈 compose（其中 worker 直接复用 `apps/api` 代码）
 - `scripts/dev.sh`: 一键启动本地完整环境
 
 ## 一键启动
@@ -36,24 +35,6 @@
 
 说明：
 - 首次启动或前端代码变更后的重建会比开发态慢一些，因为 `web` 服务会在容器内先执行一次 `next build`
-
-## 统一启动方式
-
-满血版本地服务的唯一推荐启动入口就是：
-
-```bash
-cd /Users/dog/Desktop/铭润
-./scripts/dev.sh
-```
-
-这个命令会启动整套本地栈，而不是只起前端。包含：
-- `web`
-- `api`
-- `worker`
-- `postgres`
-- `redis`
-- `minio`
-- `minio-init`
 
 如果你只是想确认服务是否已经起来，执行：
 

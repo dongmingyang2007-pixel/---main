@@ -1105,7 +1105,9 @@ retuneLidLedPlacement(LED_MOUNT_ON_LID?-lidH*.92:baseH/2-P.seamGap,LID_LED_RADIU
 mesh.visible=false});ledAuraLight=null}const dream=buildDreamScanFx(P.radius);const dreamFx=dream.fx
 ;product.add(baseGroup,lidPivot,dreamFx);product.position.y+=.01;scene.add(product);const inspectRoot=new THREE.Group
 ;inspectRoot.name="Earbud_Inspect_Root";inspectRoot.visible=false;scene.add(inspectRoot);const gltfLoader=new GLTFLoader
-;const GLB_VISUAL_CANDIDATES=Object.freeze(["/product.glb","/product-assets/product-20260303-tail-pivot-printable-v1.glb"])
+;const viewerParams=new URLSearchParams(window.location.search)
+;const customGlbParam=(viewerParams.get("model")||viewerParams.get("glb")||"").trim()
+;const GLB_VISUAL_CANDIDATES=Object.freeze(customGlbParam?[customGlbParam,"/product.glb","/product-assets/product-20260303-tail-pivot-printable-v1.glb"]:["/product.glb","/product-assets/product-20260303-tail-pivot-printable-v1.glb"])
 ;let activeGlbVisualUrl=""
 const glbMaterialBuckets={casePrimary:new Set,
 caseSecondary:new Set,ear:new Set,accent:new Set};const glbMaterialDefaults=new Map;let earLPickRoot=earL
@@ -1409,7 +1411,7 @@ btnExportStlPack:document.getElementById("exportStlPack"),selectMode:document.ge
 selectColorway:document.getElementById("colorway"),uiRoot:document.getElementById("ui"),
 noteRoot:document.getElementById("viewerNote")})
 ;const{statusEl:statusEl,btnOpen:btnOpen,btnCam:btnCam,btnEarbuds:btnEarbuds,btnDream:btnDream,btnSpin:btnSpin,btnExplode:btnExplode,btnXray:btnXray,btnNight:btnNight,btnPivotPlug:btnPivotPlug,btnLayer:btnLayer,btnReset:btnReset,btnExport:btnExport,btnExportStlPack:btnExportStlPack,selectMode:selectMode,selectColorway:selectColorway,uiRoot:uiRoot,noteRoot:noteRoot}=ui
-;const params=new URLSearchParams(window.location.search)
+;const params=viewerParams
 ;const printProfileParam=String(params.get("print_profile")||"general").toLowerCase()
 ;const printProfile=printProfileParam==="fdm"||printProfileParam==="sla"?printProfileParam:"general"
 ;const embedMode=params.get("embedded")==="1";const hideUi=params.get("ui")==="0"||embedMode
@@ -1726,7 +1728,7 @@ min:Number((ledVisibleBand.minY/MM).toFixed(3)),max:Number((ledVisibleBand.maxY/
 led_ring_band_mm:ledRingBand?{min:Number((ledRingBand.minY/MM).toFixed(3)),max:Number((ledRingBand.maxY/MM).toFixed(3))
 }:null,pivot_path_safe_open_deg:Number(pivotPathSafeOpenDeg.toFixed(2)),
 pivot_path_min_clearance_mm:Number(((Number.isFinite(pivotPathMinClearance)?pivotPathMinClearance:0)/MM).toFixed(3)),
-status_text:statusEl?statusEl.textContent:""}}function emitViewerState(){
+glb_visual_url:activeGlbVisualUrl||null,status_text:statusEl?statusEl.textContent:""}}function emitViewerState(){
 emitToParent("qihang:model:state",getViewerState())}function applyEarRotation(mesh,targetRot){
 mesh.rotation.x+=(targetRot.x-mesh.rotation.x)*.14;mesh.rotation.y+=(targetRot.y-mesh.rotation.y)*.14
 ;mesh.rotation.z+=(targetRot.z-mesh.rotation.z)*.14}function getLidOpenFactor(){

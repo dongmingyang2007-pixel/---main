@@ -1,4 +1,3 @@
-from tempfile import SpooledTemporaryFile
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -17,12 +16,10 @@ from app.services.storage import (
     build_data_item_object_key,
     build_upload_id,
     create_presigned_put,
-    delete_object,
-    get_object_metadata,
     object_exists,
     put_object_bytes,
-    uploaded_object_matches,
 )
+from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
 from app.tasks.worker_tasks import process_data_item
 
 
@@ -31,56 +28,6 @@ router = APIRouter(prefix="/api/v1/uploads", tags=["uploads"])
 
 def _upload_session_scope(upload_id: str) -> str:
     return f"upload:{upload_id}"
-
-
-def _ensure_direct_upload_matches(upload: dict) -> None:
-    metadata = get_object_metadata(
-        bucket_name=settings.s3_private_bucket,
-        object_key=upload["object_key"],
-    )
-    if not metadata:
-        raise ApiError("upload_incomplete", "Uploaded object not found", status_code=400)
-    if uploaded_object_matches(
-        metadata,
-        expected_size_bytes=upload["size_bytes"],
-        expected_media_type=upload["media_type"],
-    ):
-        return
-    delete_object(bucket_name=settings.s3_private_bucket, object_key=upload["object_key"])
-    raise ApiError("upload_mismatch", "Uploaded object metadata does not match declared file", status_code=400)
-
-
-async def _read_proxy_upload_body(request: Request, expected_size: int, max_bytes: int) -> bytes:
-    header_length = request.headers.get("content-length")
-    if not header_length:
-        raise ApiError("length_required", "Content-Length header is required", status_code=411)
-    try:
-        content_length = int(header_length)
-    except ValueError as exc:
-        raise ApiError("invalid_length", "Invalid Content-Length header", status_code=400) from exc
-    if content_length <= 0:
-        raise ApiError("empty_body", "Empty upload payload", status_code=400)
-    if content_length != expected_size:
-        raise ApiError("length_mismatch", "Content-Length does not match declared file size", status_code=400)
-    if content_length > max_bytes:
-        raise ApiError("payload_too_large", f"File exceeds {settings.upload_max_mb}MB limit", status_code=413)
-
-    total = 0
-    with SpooledTemporaryFile(max_size=max_bytes) as temp_file:
-        async for chunk in request.stream():
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                raise ApiError("payload_too_large", f"File exceeds {settings.upload_max_mb}MB limit", status_code=413)
-            temp_file.write(chunk)
-        if total == 0:
-            raise ApiError("empty_body", "Empty upload payload", status_code=400)
-        if total != expected_size:
-            raise ApiError("length_mismatch", "Uploaded body size does not match declared file size", status_code=400)
-        temp_file.seek(0)
-        return temp_file.read()
-
 
 @router.post("/presign", response_model=UploadPresignResponse)
 def presign_upload(
@@ -193,7 +140,7 @@ async def proxy_upload_put(
         raise ApiError("content_type_mismatch", "Content-Type does not match upload session", status_code=400)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
-    payload = await _read_proxy_upload_body(request, upload["size_bytes"], max_bytes)
+    payload = await read_upload_body(request, expected_size=upload["size_bytes"], max_bytes=max_bytes)
 
     item = get_data_item_in_workspace(db, data_item_id=upload["data_item_id"], workspace_id=workspace_id)
     if not item:
@@ -252,7 +199,14 @@ def complete_upload(
             object_key=upload["object_key"],
         ):
             raise ApiError("upload_incomplete", "Uploaded object not found", status_code=400)
-        _ensure_direct_upload_matches(upload)
+        ensure_uploaded_object_matches(
+            bucket_name=settings.s3_private_bucket,
+            object_key=upload["object_key"],
+            expected_size_bytes=upload["size_bytes"],
+            expected_media_type=upload["media_type"],
+            missing_message="Uploaded object not found",
+            mismatch_message="Uploaded object metadata does not match declared file",
+        )
 
     item.meta_json = {**(item.meta_json or {}), "upload_status": "completed"}
 

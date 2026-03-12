@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,12 +22,21 @@ from app.routers import auth, datasets, demo, eval, models, projects, train, upl
 from app.services.runtime_state import runtime_state
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings.validate_runtime_configuration()
+    runtime_state.ensure_available()
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
 app = FastAPI(
     title="QIHANG API",
     version="0.1.0",
     docs_url=None if settings.is_production else "/docs",
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(RequestIDMiddleware)
@@ -44,13 +55,6 @@ app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
-
-
-@app.on_event("startup")
-def startup() -> None:
-    settings.validate_runtime_configuration()
-    runtime_state.ensure_available()
-    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")

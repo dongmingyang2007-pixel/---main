@@ -1,6 +1,5 @@
 import json
 from random import randint
-from tempfile import SpooledTemporaryFile
 from uuid import uuid4
 
 import httpx
@@ -22,11 +21,9 @@ from app.services.storage import (
     build_demo_object_key,
     build_upload_id,
     create_presigned_put,
-    delete_object,
-    get_object_metadata,
     put_object_bytes,
-    uploaded_object_matches,
 )
+from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
 
 
 router = APIRouter(prefix="/api/v1/demo", tags=["demo"])
@@ -46,54 +43,6 @@ def _release_demo_slot(client_ip: str, session: dict | None = None) -> None:
     runtime_state.decr("demo:active", client_ip)
     if session is not None:
         session["slot_released"] = True
-
-
-def _ensure_direct_demo_upload_matches(session: dict) -> None:
-    metadata = get_object_metadata(
-        bucket_name=settings.s3_demo_bucket,
-        object_key=session["object_key"],
-    )
-    if not metadata:
-        raise ApiError("upload_incomplete", "Demo upload is not complete", status_code=400)
-    if uploaded_object_matches(
-        metadata,
-        expected_size_bytes=session["size_bytes"],
-        expected_media_type=session["media_type"],
-    ):
-        return
-    delete_object(bucket_name=settings.s3_demo_bucket, object_key=session["object_key"])
-    raise ApiError("upload_mismatch", "Demo upload metadata does not match declared file", status_code=400)
-
-
-async def _read_demo_upload_body(request: Request, expected_size: int, max_bytes: int) -> bytes:
-    header_length = request.headers.get("content-length")
-    if not header_length:
-        raise ApiError("length_required", "Content-Length header is required", status_code=411)
-    try:
-        content_length = int(header_length)
-    except ValueError as exc:
-        raise ApiError("invalid_length", "Invalid Content-Length header", status_code=400) from exc
-    if content_length <= 0:
-        raise ApiError("empty_body", "Empty upload payload", status_code=400)
-    if content_length != expected_size:
-        raise ApiError("length_mismatch", "Content-Length does not match declared file size", status_code=400)
-    if content_length > max_bytes:
-        raise ApiError("payload_too_large", f"File exceeds {settings.upload_max_mb}MB limit", status_code=413)
-
-    total = 0
-    with SpooledTemporaryFile(max_size=max_bytes) as temp_file:
-        async for chunk in request.stream():
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                raise ApiError("payload_too_large", f"File exceeds {settings.upload_max_mb}MB limit", status_code=413)
-            temp_file.write(chunk)
-        if total != expected_size:
-            raise ApiError("length_mismatch", "Uploaded body size does not match declared file size", status_code=400)
-        temp_file.seek(0)
-        return temp_file.read()
-
 
 @router.post("/presign", response_model=DemoUploadPresignResponse)
 def demo_presign_upload(payload: DemoUploadPresignRequest, request: Request) -> DemoUploadPresignResponse:
@@ -187,7 +136,7 @@ async def demo_upload(upload_id: str, request: Request) -> dict[str, bool]:
         raise ApiError("content_type_mismatch", "Content-Type does not match upload session", status_code=400)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
-    payload = await _read_demo_upload_body(request, upload["size_bytes"], max_bytes)
+    payload = await read_upload_body(request, expected_size=upload["size_bytes"], max_bytes=max_bytes)
 
     if settings.env != "test":
         try:
@@ -236,7 +185,14 @@ async def demo_infer(
     if session.get("client_ip") != client_ip:
         raise ApiError("forbidden", "Demo request not accessible", status_code=403)
     if not session.get("uploaded"):
-        _ensure_direct_demo_upload_matches(session)
+        ensure_uploaded_object_matches(
+            bucket_name=settings.s3_demo_bucket,
+            object_key=session["object_key"],
+            expected_size_bytes=session["size_bytes"],
+            expected_media_type=session["media_type"],
+            missing_message="Demo upload is not complete",
+            mismatch_message="Demo upload metadata does not match declared file",
+        )
         session["uploaded"] = True
         runtime_state.set_json(
             _demo_request_scope(payload.request_id),

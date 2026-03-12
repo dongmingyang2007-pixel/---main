@@ -20,7 +20,7 @@ function isProtectedConsolePath(pathname: string): boolean {
   return pathname === "/app" || pathname.startsWith("/app/");
 }
 
-function buildCsp(nonce: string, allowSameOriginFrame: boolean): string {
+function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
   const apiOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL) || "'self'";
   const assetOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN);
   const connectSrc = ["'self'", "blob:", apiOrigin, assetOrigin].filter(Boolean).join(" ");
@@ -29,30 +29,7 @@ function buildCsp(nonce: string, allowSameOriginFrame: boolean): string {
 
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    "style-src 'self' 'unsafe-inline'",
-    `img-src ${assetSrc}`,
-    `media-src ${assetSrc}`,
-    `connect-src ${connectSrc}`,
-    "font-src 'self' data:",
-    "frame-src 'self'",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    `frame-ancestors ${frameAncestors}`,
-  ].join("; ");
-}
-
-function buildLocalCsp(allowSameOriginFrame: boolean): string {
-  const apiOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL) || "'self'";
-  const assetOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN);
-  const connectSrc = ["'self'", "blob:", apiOrigin, assetOrigin].filter(Boolean).join(" ");
-  const assetSrc = ["'self'", "data:", "blob:", apiOrigin, assetOrigin].filter(Boolean).join(" ");
-  const frameAncestors = allowSameOriginFrame ? "'self'" : "'none'";
-
-  return [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
     `img-src ${assetSrc}`,
     `media-src ${assetSrc}`,
@@ -101,9 +78,12 @@ export function proxy(request: NextRequest) {
   );
 
   if (process.env.NODE_ENV === "production") {
+    const scriptSrc = nonce
+      ? `'self' 'nonce-${nonce}' 'strict-dynamic'`
+      : "'self' 'unsafe-inline'";
     response.headers.set(
       "Content-Security-Policy",
-      nonce ? buildCsp(nonce, allowSameOriginFrame) : buildLocalCsp(allowSameOriginFrame),
+      buildCsp(allowSameOriginFrame, scriptSrc),
     );
   }
 

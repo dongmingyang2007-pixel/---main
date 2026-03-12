@@ -1,41 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
 import { DataTable } from "@/components/DataTable";
 import { apiGet, apiPost } from "@/lib/api";
+import { useProjectSelection } from "@/lib/useProjectSelection";
 
-type Project = { id: string; name: string };
 type Dataset = { id: string; name: string; type: string; project_id: string; created_at: string };
 
 export default function DatasetsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [projectId, setProjectId] = useState("");
   const [name, setName] = useState("");
   const [type, setType] = useState("images");
 
-  const loadProjects = async () => {
-    const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
-    setProjects(data.items || []);
-    if (!projectId && data.items?.length) {
-      const nextProjectId = data.items[0].id;
-      setProjectId(nextProjectId);
-      const list = await apiGet<Dataset[]>(`/api/v1/datasets?project_id=${nextProjectId}`);
-      setDatasets(list);
-    }
-  };
-
   const loadDatasets = async (pid: string) => {
-    if (!pid) return;
+    if (!pid) {
+      setDatasets([]);
+      return;
+    }
     const data = await apiGet<Dataset[]>(`/api/v1/datasets?project_id=${pid}`);
     setDatasets(data);
   };
 
-  useEffect(() => {
-    void loadProjects();
-  }, []);
+  const { projectId, projects, selectProject } = useProjectSelection(loadDatasets);
 
   const onCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -62,9 +50,7 @@ export default function DatasetsPage() {
                 className="console-select"
                 value={projectId}
                 onChange={(e) => {
-                  const pid = e.target.value;
-                  setProjectId(pid);
-                  void loadDatasets(pid);
+                  void selectProject(e.target.value);
                 }}
               >
                 {projects.map((project) => (

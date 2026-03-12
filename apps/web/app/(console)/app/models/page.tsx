@@ -1,41 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 
 import { DataTable } from "@/components/DataTable";
 import { apiGet, apiPost } from "@/lib/api";
+import { useProjectSelection } from "@/lib/useProjectSelection";
 
-type Project = { id: string; name: string };
 type Model = { id: string; project_id: string; name: string; task_type: string; created_at: string };
 
 export default function ModelsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState("");
   const [models, setModels] = useState<Model[]>([]);
   const [name, setName] = useState("Personal Assistant");
   const [taskType, setTaskType] = useState("general");
 
-  const loadProjects = async () => {
-    const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
-    const list = data.items || [];
-    setProjects(list);
-    if (!projectId && list.length) {
-      const nextProjectId = list[0].id;
-      setProjectId(nextProjectId);
-      await loadModels(nextProjectId);
-    }
-  };
-
   const loadModels = async (pid: string) => {
-    if (!pid) return;
+    if (!pid) {
+      setModels([]);
+      return;
+    }
     const data = await apiGet<{ items: Model[] }>(`/api/v1/models?project_id=${pid}`);
     setModels(data.items || []);
   };
 
-  useEffect(() => {
-    void loadProjects();
-  }, []);
+  const { projectId, projects, selectProject } = useProjectSelection(loadModels);
 
   const onCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,9 +53,7 @@ export default function ModelsPage() {
                 className="console-select"
                 value={projectId}
                 onChange={(e) => {
-                  const pid = e.target.value;
-                  setProjectId(pid);
-                  void loadModels(pid);
+                  void selectProject(e.target.value);
                 }}
               >
                 {projects.map((project) => (

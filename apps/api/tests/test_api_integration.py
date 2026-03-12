@@ -1,12 +1,18 @@
 # ruff: noqa: E402
 
+import atexit
 import importlib
 import os
 from pathlib import Path
+import shutil
+import tempfile
 
 from fastapi.testclient import TestClient
 
-DB_PATH = Path(__file__).resolve().parent / "test_api.db"
+TEST_TEMP_DIR = Path(tempfile.mkdtemp(prefix="qihang-api-tests-"))
+atexit.register(lambda: shutil.rmtree(TEST_TEMP_DIR, ignore_errors=True))
+
+DB_PATH = TEST_TEMP_DIR / "test_api.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{DB_PATH}"
 os.environ["ENV"] = "test"
 os.environ["COOKIE_DOMAIN"] = ""
