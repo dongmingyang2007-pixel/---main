@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
+import { DM_Sans, Sora } from "next/font/google";
 
 import { Providers } from "@/components/providers";
 import "@/styles/globals.css";
 
-const plex = IBM_Plex_Sans({
+const plex = DM_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-ui",
 });
 
-const display = Space_Grotesk({
+const display = Sora({
   subsets: ["latin"],
-  weight: ["500", "700"],
+  weight: ["400", "600", "700", "800"],
   variable: "--font-display",
 });
 

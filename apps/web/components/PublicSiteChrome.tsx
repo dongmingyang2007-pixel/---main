@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
+import { useScrollNav } from "@/lib/useScrollNav";
 
 const NAV_ITEMS = [
   { href: "/product", label: "产品" },
@@ -40,11 +41,18 @@ function SmartLink({
 
 export function PublicSiteChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { scrolled, hidden, progress } = useScrollNav();
 
   return (
     <div className="site-shell">
       <div className="site-container">
-        <header className="site-header">
+        <header
+          className={clsx(
+            "site-header",
+            scrolled && "is-scrolled",
+            hidden && "is-hidden",
+          )}
+        >
           <div className="site-nav">
             <SmartLink href="/" className="site-brand-mark" active={pathname === "/"}>
               <span className="site-brand-dot" />
@@ -69,11 +77,18 @@ export function PublicSiteChrome({ children }: { children: ReactNode }) {
               </SmartLink>
             </nav>
           </div>
+
+          {/* Scroll progress indicator */}
+          <div
+            className="site-nav-progress"
+            style={{ "--nav-progress": progress } as React.CSSProperties}
+            aria-hidden="true"
+          />
         </header>
 
         <main className="site-main">{children}</main>
 
-        <footer className="site-footer">
+        <footer className="site-footer" data-reveal="fade">
           <div className="site-footer-panel">
             <div>© 2026 QIHANG</div>
             <div>离线优先的环境 AI 工作台</div>

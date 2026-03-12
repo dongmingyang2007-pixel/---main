@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { StoryScene } from "@/components/StoryScene";
 import { StoryStage } from "@/components/StoryStage";
+import { useScrollReveal } from "@/lib/useScrollReveal";
+import { useParallax } from "@/lib/useParallax";
 import {
   QIHANG_VIEWER_SOURCE,
   QIHANG_WEB_SOURCE,
@@ -58,6 +60,10 @@ export function PublicStoryExperience({
     : viewerEnabled
       ? VIEWER_SRC_BASE
       : "";
+
+  const experienceRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(experienceRef);
+  useParallax(experienceRef);
 
   const activeScene = scenes[activeSceneIndex] ?? scenes[0];
   const activeProgress = sceneProgress[activeSceneIndex] ?? 0;
@@ -232,7 +238,7 @@ export function PublicStoryExperience({
   }, [viewerEnabled, viewerPatch]);
 
   return (
-    <div className="story-experience">
+    <div className="story-experience" ref={experienceRef}>
       <div className="story-experience-grid">
         <div className="story-experience-stage-column">
           <StoryStage

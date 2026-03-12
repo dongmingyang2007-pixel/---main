@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
+import { useParallax } from "@/lib/useParallax";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 import {
   QIHANG_VIEWER_SOURCE,
   QIHANG_WEB_SOURCE,
@@ -183,6 +185,9 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
   );
   const [viewerConnected, setViewerConnected] = useState(false);
   const [viewerStatus, setViewerStatus] = useState("载入产品舞台...");
+  const pageRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(pageRef);
+  useParallax(pageRef);
 
   const activeScene = STORY_SCENES[activeSceneIndex] ?? STORY_SCENES[0];
   const activeProgress = sceneProgress[activeSceneIndex] ?? 0;
@@ -354,7 +359,7 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
   }, [viewerPatch]);
 
   return (
-    <div className="home-story-page">
+    <div className="home-story-page" ref={pageRef}>
       <div className="home-story-grid">
         <div className="home-story-stage-column">
           <div className={`home-story-stage tone-${activeScene.tone}`} style={stageStyle}>
@@ -368,6 +373,7 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
             </div>
 
             <div className="home-stage-shell">
+              <div className="home-stage-atmosphere" aria-hidden="true" />
               <div className="home-stage-orbit home-stage-orbit-a" aria-hidden="true" />
               <div className="home-stage-orbit home-stage-orbit-b" aria-hidden="true" />
               <div className="home-stage-placeholder home-stage-placeholder-top">{activeScene.assetSlots[0]}</div>
@@ -425,14 +431,20 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
               }}
               className={`home-story-section ${index === 0 ? "is-opening" : ""}`}
             >
-              <div className="home-story-section-index">{String(index + 1).padStart(2, "0")}</div>
+              <div className="home-story-section-index" data-reveal data-reveal-delay="1">
+                {String(index + 1).padStart(2, "0")}
+              </div>
               <div className="home-story-section-body">
-                <div className="home-story-eyebrow">{scene.eyebrow}</div>
+                <div className="home-story-eyebrow" data-reveal>{scene.eyebrow}</div>
                 {index === 0 ? (
                   <>
-                    <h1 className="home-story-title">{scene.title}</h1>
-                    <p className="home-story-summary is-opening">{scene.summary}</p>
-                    <div className="home-story-actions">
+                    <h1 className="home-story-title gradient-text" data-reveal data-reveal-delay="1">
+                      {scene.title}
+                    </h1>
+                    <p className="home-story-summary is-opening" data-reveal data-reveal-delay="2">
+                      {scene.summary}
+                    </p>
+                    <div className="home-story-actions" data-reveal data-reveal-delay="3">
                       <PublicDocumentLink href="/demo" className="home-story-button is-primary">
                         进入 Demo
                       </PublicDocumentLink>
@@ -440,18 +452,29 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
                         查看产品页
                       </PublicDocumentLink>
                     </div>
-                    <p className="home-story-scroll-note">向下滑动，产品舞台会持续变化，而不是切成一堆卡片。</p>
+                    <p className="home-story-scroll-note" data-reveal="fade" data-reveal-delay="5">
+                      向下滑动，产品舞台会持续变化，而不是切成一堆卡片。
+                    </p>
                   </>
                 ) : (
                   <>
-                    <h2 className="home-story-title">{scene.title}</h2>
-                    <p className="home-story-summary">{scene.summary}</p>
+                    <h2 className="home-story-title" data-reveal data-reveal-delay="1">
+                      {scene.title}
+                    </h2>
+                    <p className="home-story-summary" data-reveal data-reveal-delay="2">
+                      {scene.summary}
+                    </p>
                   </>
                 )}
 
                 <div className="home-story-detail-list">
-                  {scene.details.map((detail) => (
-                    <div key={detail.label} className="home-story-detail">
+                  {scene.details.map((detail, detailIndex) => (
+                    <div
+                      key={detail.label}
+                      className="home-story-detail"
+                      data-reveal
+                      data-reveal-delay={String(detailIndex + 3)}
+                    >
                       <span>{detail.label}</span>
                       <p>{detail.body}</p>
                     </div>
@@ -461,41 +484,45 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
             </section>
           ))}
 
-          <section className="home-film-band">
-            <div className="home-story-eyebrow">Future Footage</div>
-            <h2 className="home-story-band-title">后续用真实镜头接管这些位置。</h2>
-            <p className="home-story-band-summary">
+          <section className="home-film-band" data-parallax>
+            <div className="home-story-eyebrow" data-reveal>Future Footage</div>
+            <h2 className="home-story-band-title" data-reveal data-reveal-delay="1">
+              后续用真实镜头接管这些位置。
+            </h2>
+            <p className="home-story-band-summary" data-reveal data-reveal-delay="2">
               现在先保留分镜位，后续直接补入产品实拍、佩戴场景和系统联动短片。
             </p>
             <div className="home-film-reel">
-              <article className="home-film-frame is-wide">
+              <article className="home-film-frame is-wide" data-reveal="scale" data-reveal-delay="2">
                 <div className="home-film-frame-label">产品实拍短片</div>
                 <p>建议 8-12 秒，纯净背景，展示拿起、开合、放回的连续动作。</p>
               </article>
-              <article className="home-film-frame">
+              <article className="home-film-frame" data-reveal="scale" data-reveal-delay="3">
                 <div className="home-film-frame-label">佩戴与触发场景</div>
                 <p>展示胸前相机进入工作状态、退出状态，以及用户如何明确触发。</p>
               </article>
-              <article className="home-film-frame is-dark">
+              <article className="home-film-frame is-dark" data-reveal="scale" data-reveal-delay="4">
                 <div className="home-film-frame-label">系统联动录屏</div>
                 <p>展示离线到增强模式的切换、状态灯反馈和结果返回链路。</p>
               </article>
             </div>
           </section>
 
-          <section className="home-workflow-band">
-            <div className="home-story-eyebrow">One Line</div>
-            <h2 className="home-story-band-title">产品看完，再进入工作流。</h2>
-            <p className="home-story-band-summary">
+          <section className="home-workflow-band" data-parallax>
+            <div className="home-story-eyebrow" data-reveal>One Line</div>
+            <h2 className="home-story-band-title" data-reveal data-reveal-delay="1">
+              产品看完，再进入工作流。
+            </h2>
+            <p className="home-story-band-summary" data-reveal data-reveal-delay="2">
               Demo、数据、训练和发布仍然存在，但放到故事后半段出现，不和产品主舞台抢首屏。
             </p>
             <div className="home-workflow-rail" aria-label="Workflow rail">
-              <span>Demo</span>
-              <span>Dataset</span>
-              <span>Train</span>
-              <span>Release</span>
+              <span data-reveal data-reveal-delay="3">Demo</span>
+              <span data-reveal data-reveal-delay="4">Dataset</span>
+              <span data-reveal data-reveal-delay="5">Train</span>
+              <span data-reveal data-reveal-delay="6">Release</span>
             </div>
-            <div className="home-story-actions">
+            <div className="home-story-actions" data-reveal data-reveal-delay="7">
               <PublicDocumentLink href="/how-it-works" className="home-story-button">
                 查看工作原理
               </PublicDocumentLink>
@@ -505,13 +532,15 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
             </div>
           </section>
 
-          <section className="home-final-band">
-            <div className="home-story-eyebrow">Next Step</div>
-            <h2 className="home-story-band-title">先体验，再决定要不要进入系统。</h2>
-            <p className="home-story-band-summary">
+          <section className="home-final-band" data-parallax>
+            <div className="home-story-eyebrow" data-reveal>Next Step</div>
+            <h2 className="home-story-band-title gradient-text-light" data-reveal data-reveal-delay="1">
+              先体验，再决定要不要进入系统。
+            </h2>
+            <p className="home-story-band-summary" data-reveal data-reveal-delay="2">
               首屏先给产品，后半段再给流程和入口，让整站更接近一部可滚动观看的产品影片。
             </p>
-            <div className="home-story-actions">
+            <div className="home-story-actions" data-reveal data-reveal-delay="3">
               <PublicDocumentLink href="/demo" className="home-story-button is-primary">
                 进入 Demo
               </PublicDocumentLink>
