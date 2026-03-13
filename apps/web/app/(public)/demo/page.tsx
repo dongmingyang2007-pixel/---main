@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AdvancedDrawer } from "@/components/AdvancedDrawer";
 import { TextReveal } from "@/components/TextReveal";
+import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
 import { useScrollReveal } from "@/lib/useScrollReveal";
 import { apiPost, uploadToPresignedUrl } from "@/lib/api";
 import { EARBUD_BUILD_TIER, QIHANG_EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
@@ -19,7 +20,7 @@ import {
   VIEWER_MESSAGE_SCREEN_ACTION,
   VIEWER_MESSAGE_SET_STATE,
   VIEWER_MESSAGE_STATE,
-  VIEWER_SRC_BASE,
+  VIEWER_DEMO_SRC_BASE,
   appendParentOrigin,
   type ViewerCaseMode,
   type ViewerColorway,
@@ -499,7 +500,8 @@ export default function DemoPage() {
   const [viewerReady, setViewerReady] = useState(false);
   const [availableCommands, setAvailableCommands] = useState<ViewerCommand[]>([]);
   const [connectionPhase, setConnectionPhase] = useState<ViewerConnectionPhase>("connecting");
-  const [viewerSrc, setViewerSrc] = useState(VIEWER_SRC_BASE);
+  const [viewerSrc, setViewerSrc] = useState(VIEWER_DEMO_SRC_BASE);
+  const deferredViewerSrc = useDeferredIframeSrc(viewerSrc, true);
   const [handshakeAttempts, setHandshakeAttempts] = useState(0);
   const [viewerState, setViewerState] = useState<ViewerState>(INITIAL_VIEWER_STATE);
   const [task, setTask] = useState<DemoTask>("vqa");
@@ -513,7 +515,7 @@ export default function DemoPage() {
   const viewerReadyRef = useRef(false);
 
   useEffect(() => {
-    setViewerSrc(appendParentOrigin(VIEWER_SRC_BASE, window.location.origin));
+    setViewerSrc(appendParentOrigin(VIEWER_DEMO_SRC_BASE, window.location.origin));
   }, []);
 
   const clearHandshakeTimers = useCallback(() => {
@@ -719,6 +721,8 @@ export default function DemoPage() {
   }, [busy, file, postCaptureEvent, task, viewerState.caseMode]);
 
   useEffect(() => {
+    if (!deferredViewerSrc) return;
+
     const onMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow;
       if (!frameWindow || event.source !== frameWindow) {
@@ -818,17 +822,32 @@ export default function DemoPage() {
     };
 
     window.addEventListener("message", onMessage);
-    startHandshake("listener-ready");
     const frame = iframeRef.current;
     return () => {
       clearHandshakeTimers();
       window.removeEventListener("message", onMessage);
       viewerReadyRef.current = false;
+    };
+  }, [clearHandshakeTimers, deferredViewerSrc, runInference, postToViewer, startHandshake]);
+
+  // Pre-release WebGL resources when navigation is about to happen.
+  // Without this, Chrome blocks the main thread while synchronously tearing
+  // down the GPU context during React unmount, causing a multi-second stall.
+  useEffect(() => {
+    const onSuspend = () => {
+      clearHandshakeTimers();
+      viewerReadyRef.current = false;
+      setViewerReady(false);
+      const frame = iframeRef.current;
       if (frame) {
         frame.src = "about:blank";
       }
     };
-  }, [clearHandshakeTimers, runInference, postToViewer, startHandshake]);
+    window.addEventListener("qihang:viewer-suspend", onSuspend);
+    return () => {
+      window.removeEventListener("qihang:viewer-suspend", onSuspend);
+    };
+  }, [clearHandshakeTimers]);
 
   const retryViewerConnection = useCallback(() => {
     startHandshake("manual-retry");
@@ -994,15 +1013,18 @@ export default function DemoPage() {
 
       <div className="demo-grid">
         <section className="demo-stage">
-          <iframe
-            ref={iframeRef}
-            src={viewerSrc}
-            title="QIHANG Demo Model"
-            className="demo-iframe"
-            onLoad={() => {
-              startHandshake("iframe-load");
-            }}
-          />
+          {deferredViewerSrc ? (
+            <iframe
+              ref={iframeRef}
+              src={deferredViewerSrc}
+              title="QIHANG Demo Model"
+              className="demo-iframe"
+              loading="lazy"
+              onLoad={() => {
+                startHandshake("iframe-load");
+              }}
+            />
+          ) : null}
         </section>
 
         <aside className="demo-sidebar">

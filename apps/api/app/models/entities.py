@@ -65,12 +65,12 @@ class Dataset(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
 class DataItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "data_items"
 
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"))
     object_key: Mapped[str] = mapped_column(Text, nullable=False)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     media_type: Mapped[str] = mapped_column(Text, nullable=False)
     size_bytes: Mapped[int] = mapped_column(nullable=False, default=0)
-    sha256: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     width: Mapped[int | None] = mapped_column(nullable=True)
     height: Mapped[int | None] = mapped_column(nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(nullable=True)
@@ -81,7 +81,7 @@ class DataItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class Annotation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "annotations"
 
-    data_item_id: Mapped[str] = mapped_column(ForeignKey("data_items.id", ondelete="CASCADE"), index=True)
+    data_item_id: Mapped[str] = mapped_column(ForeignKey("data_items.id", ondelete="CASCADE"))
     type: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_by: Mapped[str | None] = mapped_column(
@@ -93,7 +93,7 @@ class DatasetVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "dataset_versions"
     __table_args__ = (UniqueConstraint("dataset_id", "version", name="uq_dataset_versions_dataset_version"),)
 
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"))
     version: Mapped[int] = mapped_column(nullable=False)
     commit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     item_count: Mapped[int] = mapped_column(default=0, nullable=False)
@@ -106,7 +106,7 @@ class DatasetVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class TrainingJob(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
     __tablename__ = "training_jobs"
 
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     dataset_version_id: Mapped[str] = mapped_column(
         ForeignKey("dataset_versions.id", ondelete="RESTRICT"), nullable=False
     )
@@ -122,9 +122,7 @@ class TrainingJob(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
 class TrainingRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "training_runs"
 
-    training_job_id: Mapped[str] = mapped_column(
-        ForeignKey("training_jobs.id", ondelete="CASCADE"), index=True
-    )
+    training_job_id: Mapped[str] = mapped_column(ForeignKey("training_jobs.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(Text, default="running", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -136,7 +134,7 @@ class Metric(Base):
     __tablename__ = "metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    run_id: Mapped[str] = mapped_column(ForeignKey("training_runs.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("training_runs.id", ondelete="CASCADE"))
     key: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
     step: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -146,7 +144,7 @@ class Metric(Base):
 class Artifact(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "artifacts"
 
-    run_id: Mapped[str] = mapped_column(ForeignKey("training_runs.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("training_runs.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     object_key: Mapped[str] = mapped_column(Text, nullable=False)
     meta_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -155,7 +153,7 @@ class Artifact(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class Model(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
     __tablename__ = "models"
 
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     task_type: Mapped[str] = mapped_column(Text, default="general", nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -165,7 +163,7 @@ class ModelVersion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "model_versions"
     __table_args__ = (UniqueConstraint("model_id", "version", name="uq_model_versions_model_version"),)
 
-    model_id: Mapped[str] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), index=True)
+    model_id: Mapped[str] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"))
     version: Mapped[int] = mapped_column(nullable=False)
     run_id: Mapped[str | None] = mapped_column(
         ForeignKey("training_runs.id", ondelete="SET NULL"), nullable=True
@@ -222,6 +220,7 @@ class AuditLog(Base):
 
 
 Index("idx_data_items_dataset", DataItem.dataset_id)
+Index("idx_data_items_sha", DataItem.sha256)
 Index("idx_annotations_item", Annotation.data_item_id)
 Index("idx_dsv_dataset", DatasetVersion.dataset_id)
 Index("idx_jobs_project", TrainingJob.project_id)

@@ -155,6 +155,8 @@ export const VIEWER_MESSAGE_CAPTURE_EVENT = "qihang:model:capture-event";
 
 export const VIEWER_REVISION = "20260308-tail-pivot-v51-device-scale";
 export const VIEWER_SRC_BASE = `/product-viewer.html?embedded=1&note=0&print_profile=general&v=${VIEWER_REVISION}`;
+export const VIEWER_STORY_SRC_BASE = `${VIEWER_SRC_BASE}&surface=story`;
+export const VIEWER_DEMO_SRC_BASE = `${VIEWER_SRC_BASE}&surface=demo`;
 
 export function appendParentOrigin(viewerSrc: string, origin: string): string {
   const delimiter = viewerSrc.includes("?") ? "&" : "?";

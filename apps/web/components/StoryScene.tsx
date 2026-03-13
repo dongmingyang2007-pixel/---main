@@ -1,10 +1,12 @@
 "use client";
 
+import { memo } from "react";
+
 import { MagneticButton } from "@/components/MagneticButton";
 import { TextReveal } from "@/components/TextReveal";
 import type { StoryAction, StorySceneContent } from "@/lib/story-types";
 
-export function StoryScene({
+export const StoryScene = memo(function StoryScene({
   scene,
   index,
   opening = false,
@@ -82,4 +84,4 @@ export function StoryScene({
       </div>
     </section>
   );
-}
+});

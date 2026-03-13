@@ -9,10 +9,11 @@ from app.core.config import settings
 from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
 from app.core.errors import ApiError
 from app.core.sanitize import strip_object_key_fields
-from app.models import Annotation, DataItem, Dataset, DatasetVersion, Project, User
+from app.models import Annotation, DataItem, Dataset, DatasetVersion, User
 from app.routers.utils import get_data_item_in_workspace, get_dataset_in_workspace, get_project_in_workspace
 from app.schemas.dataset import (
     AnnotationCreateRequest,
+    AnnotationOut,
     DataItemOut,
     DatasetCommitRequest,
     DatasetCreate,
@@ -29,6 +30,30 @@ router = APIRouter(tags=["datasets"])
 
 def _sanitize_item_meta(meta_json: dict | None) -> dict:
     return strip_object_key_fields(meta_json or {})
+
+
+def _build_annotation_out(annotation: Annotation) -> AnnotationOut:
+    return AnnotationOut(
+        id=annotation.id,
+        type=annotation.type,
+        payload_json=annotation.payload_json,
+        created_at=annotation.created_at,
+    )
+
+
+def _get_tagged_item_ids(db: Session, *, dataset_id: str, tag: str) -> set[str]:
+    return {
+        ann.data_item_id
+        for ann in db.query(Annotation)
+        .join(DataItem, DataItem.id == Annotation.data_item_id)
+        .filter(
+            Annotation.type == "tag",
+            DataItem.dataset_id == dataset_id,
+            DataItem.deleted_at.is_(None),
+        )
+        .all()
+        if tag in (ann.payload_json.get("tags") or [])
+    }
 
 
 def _build_data_item_out(item: DataItem) -> DataItemOut:
@@ -158,29 +183,28 @@ def list_items(
         raise ApiError("not_found", "Dataset not found", status_code=404)
 
     query = db.query(DataItem).filter(DataItem.dataset_id == dataset_id, DataItem.deleted_at.is_(None))
+    if tag:
+        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset_id, tag=tag)
+        if not tagged_item_ids:
+            return []
+        query = query.filter(DataItem.id.in_(sorted(tagged_item_ids)))
     items = query.offset(offset).limit(limit).all()
+
+    item_ids = [item.id for item in items]
+    annotations_by_item_id: dict[str, list[Annotation]] = {item_id: [] for item_id in item_ids}
+    if item_ids:
+        for annotation in db.query(Annotation).filter(Annotation.data_item_id.in_(item_ids)).all():
+            annotations_by_item_id.setdefault(annotation.data_item_id, []).append(annotation)
 
     out: list[DataItemOut] = []
     for item in items:
-        annotations_query = db.query(Annotation).filter(Annotation.data_item_id == item.id)
+        annotations = annotations_by_item_id.get(item.id, [])
         if tag:
             annotations = [
-                a
-                for a in annotations_query.all()
-                if a.type == "tag" and tag in (a.payload_json.get("tags") or [])
+                ann for ann in annotations if ann.type == "tag" and tag in (ann.payload_json.get("tags") or [])
             ]
-        else:
-            annotations = annotations_query.all()
         item_out = _build_data_item_out(item)
-        item_out.annotations = [
-            {
-                "id": ann.id,
-                "type": ann.type,
-                "payload_json": ann.payload_json,
-                "created_at": ann.created_at,
-            }
-            for ann in annotations
-        ]
+        item_out.annotations = [_build_annotation_out(ann) for ann in annotations]
         out.append(item_out)
     return out
 
@@ -242,15 +266,7 @@ def get_data_item(
 
     annotations = db.query(Annotation).filter(Annotation.data_item_id == item.id).all()
     item_out = _build_data_item_out(item)
-    item_out.annotations = [
-        {
-            "id": ann.id,
-            "type": ann.type,
-            "payload_json": ann.payload_json,
-            "created_at": ann.created_at,
-        }
-        for ann in annotations
-    ]
+    item_out.annotations = [_build_annotation_out(ann) for ann in annotations]
     return item_out
 
 
@@ -270,14 +286,7 @@ def commit_dataset(
     query = db.query(DataItem).filter(DataItem.dataset_id == dataset.id, DataItem.deleted_at.is_(None))
     if payload.freeze_filter and payload.freeze_filter.get("tag"):
         tag = payload.freeze_filter["tag"]
-        tagged_item_ids = {
-            ann.data_item_id
-            for ann in db.query(Annotation)
-            .join(DataItem, DataItem.id == Annotation.data_item_id)
-            .filter(Annotation.type == "tag", DataItem.dataset_id == dataset.id, DataItem.deleted_at.is_(None))
-            .all()
-            if tag in (ann.payload_json.get("tags") or [])
-        }
+        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset.id, tag=tag)
         query = query.filter(DataItem.id.in_(list(tagged_item_ids)))
 
     item_ids = [item.id for item in query.all()]

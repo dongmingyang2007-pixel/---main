@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Tracks scroll position to drive navigation appearance changes.
@@ -14,6 +14,7 @@ export function useScrollNav(threshold = 80) {
   const [scrolled, setScrolled] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [progress, setProgress] = useState(0);
+  const hiddenRef = useRef(false);
 
   useEffect(() => {
     let lastY = 0;
@@ -23,21 +24,32 @@ export function useScrollNav(threshold = 80) {
       ticking = false;
       const y = window.scrollY;
       const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const nextScrolled = y > threshold;
+      const nextProgress = docHeight > 0 ? Math.min(1, y / docHeight) : 0;
+      const roundedProgress = Math.round(nextProgress * 1000) / 1000;
+      let nextHidden = false;
 
-      setScrolled(y > threshold);
-      setProgress(docHeight > 0 ? Math.min(1, y / docHeight) : 0);
-
-      // Auto-hide: only when scrolling down AND past threshold
-      if (y > threshold) {
+      if (nextScrolled) {
         const delta = y - lastY;
         if (delta > 12) {
-          setHidden(true);
+          nextHidden = true;
         } else if (delta < -6) {
-          setHidden(false);
+          nextHidden = false;
+        } else {
+          nextHidden = hiddenRef.current;
         }
-      } else {
-        setHidden(false);
       }
+
+      setScrolled((previous) => (previous === nextScrolled ? previous : nextScrolled));
+      setHidden((previous) => {
+        if (previous === nextHidden) {
+          return previous;
+        }
+        hiddenRef.current = nextHidden;
+        return nextHidden;
+      });
+      setProgress((previous) => (Math.abs(previous - roundedProgress) < 0.01 ? previous : roundedProgress));
+      hiddenRef.current = nextHidden;
 
       lastY = y;
     };
@@ -49,8 +61,13 @@ export function useScrollNav(threshold = 80) {
       }
     };
 
+    update();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
   }, [threshold]);
 
   return { scrolled, hidden, progress };

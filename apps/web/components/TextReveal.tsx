@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Apple-style character-by-character text reveal.
@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
  * when the element enters the viewport. Uses IntersectionObserver for
  * trigger and CSS animations for the actual reveal.
  */
-export function TextReveal({
+export const TextReveal = memo(function TextReveal({
   text,
   tag: Tag = "h1",
   className = "",
@@ -23,11 +23,33 @@ export function TextReveal({
   revealDuration?: number;
 }) {
   const containerRef = useRef<HTMLElement>(null);
+  const [enhanced, setEnhanced] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    const revealImmediately = (animate = false) => {
+      setEnhanced(animate);
+      setRevealed(true);
+    };
+
+    if (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      revealImmediately(false);
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom >= 0 && rect.top <= window.innerHeight * 0.92) {
+      revealImmediately(false);
+      return;
+    }
+
+    setEnhanced(true);
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -45,12 +67,17 @@ export function TextReveal({
     return () => observer.disconnect();
   }, []);
 
-  const chars = text.split("");
+  const chars = useMemo(() => Array.from(text), [text]);
+  const effectiveStaggerMs = useMemo(() => {
+    if (chars.length <= 1) return 0;
+    const maxWindowMs = 260;
+    return Math.min(staggerMs, maxWindowMs / (chars.length - 1));
+  }, [chars.length, staggerMs]);
 
   return (
     <Tag
       ref={containerRef as never}
-      className={`text-reveal ${revealed ? "is-revealed" : ""} ${className}`}
+      className={`text-reveal ${enhanced ? "is-enhanced" : ""} ${revealed ? "is-revealed" : ""} ${className}`}
       aria-label={text}
     >
       {chars.map((char, i) => (
@@ -58,7 +85,7 @@ export function TextReveal({
           key={i}
           className="text-reveal-char"
           style={{
-            animationDelay: revealed ? `${i * staggerMs}ms` : undefined,
+            animationDelay: revealed ? `${i * effectiveStaggerMs}ms` : undefined,
             animationDuration: `${revealDuration}ms`,
           }}
           aria-hidden="true"
@@ -68,4 +95,4 @@ export function TextReveal({
       ))}
     </Tag>
   );
-}
+});

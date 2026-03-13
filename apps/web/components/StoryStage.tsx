@@ -1,4 +1,4 @@
-import type { CSSProperties, Ref } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 
 import type { StoryTone } from "@/lib/story-types";
 
@@ -19,6 +19,7 @@ export function StoryStage({
   viewerConnected,
   onViewerLoad,
   loaderLabel,
+  illustration,
 }: {
   eyebrow: string;
   status: string;
@@ -36,6 +37,7 @@ export function StoryStage({
   viewerConnected?: boolean;
   onViewerLoad?: () => void;
   loaderLabel?: string;
+  illustration?: ReactNode;
 }) {
   const [topSlot, bottomSlot, sideSlot] = assetSlots;
 
@@ -59,8 +61,11 @@ export function StoryStage({
             src={viewerSrc}
             title={viewerTitle || "QIHANG Story Stage"}
             className="story-stage-iframe"
+            loading="lazy"
             onLoad={onViewerLoad}
           />
+        ) : illustration ? (
+          <div className="story-stage-illustration">{illustration}</div>
         ) : (
           <div className="story-stage-no-media" />
         )}

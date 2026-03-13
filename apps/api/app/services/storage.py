@@ -4,10 +4,12 @@ from functools import lru_cache
 import json
 import os
 import re
+from urllib.parse import quote
 from uuid import uuid4
 
 import boto3
 from botocore.client import BaseClient
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 
@@ -73,7 +75,7 @@ def build_manual_model_artifact_object_key(
 
 
 def sanitize_filename(filename: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", filename.strip())
+    cleaned = re.sub(r"[^\w._-]", "_", filename.strip())
     return cleaned or f"file-{uuid4().hex[:8]}"
 
 
@@ -107,7 +109,10 @@ def create_presigned_get(
     client = get_s3_presign_client()
     params = {"Bucket": bucket_name, "Key": object_key}
     if download_name:
-        params["ResponseContentDisposition"] = f'attachment; filename="{sanitize_filename(download_name)}"'
+        safe_name = sanitize_filename(download_name)
+        params["ResponseContentDisposition"] = (
+            f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(download_name, safe="")}'
+        )
     return client.generate_presigned_url(
         ClientMethod="get_object",
         Params=params,
@@ -135,6 +140,12 @@ def put_json_object(*, bucket_name: str, object_key: str, payload: dict) -> None
     )
 
 
+def _is_missing_object_error(exc: ClientError) -> bool:
+    error = exc.response.get("Error", {})
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return str(error.get("Code")) in {"404", "NoSuchKey", "NotFound"} or status == 404
+
+
 def get_object_metadata(*, bucket_name: str, object_key: str) -> dict[str, int | str] | None:
     if settings.env == "test":
         return None
@@ -142,8 +153,10 @@ def get_object_metadata(*, bucket_name: str, object_key: str) -> dict[str, int |
     client = get_s3_client()
     try:
         response = client.head_object(Bucket=bucket_name, Key=object_key)
-    except Exception:  # noqa: BLE001
-        return None
+    except ClientError as exc:
+        if _is_missing_object_error(exc):
+            return None
+        raise
     return {
         "size_bytes": int(response.get("ContentLength", 0)),
         "media_type": normalize_media_type(response.get("ContentType", "application/octet-stream")),
@@ -170,8 +183,10 @@ def object_exists(*, bucket_name: str, object_key: str) -> bool:
     client = get_s3_client()
     try:
         client.head_object(Bucket=bucket_name, Key=object_key)
-    except Exception:  # noqa: BLE001
-        return False
+    except ClientError as exc:
+        if _is_missing_object_error(exc):
+            return False
+        raise
     return True
 
 

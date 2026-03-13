@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -17,7 +19,7 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.core.sanitize import strip_object_key_fields
-from app.models import Artifact, Dataset, Metric, Project, TrainingJob, TrainingRun, User
+from app.models import Artifact, Metric, Project, TrainingJob, TrainingRun, User
 from app.routers.utils import (
     get_dataset_in_workspace,
     get_dataset_version_in_workspace,
@@ -32,6 +34,7 @@ from app.tasks.worker_tasks import run_training_job
 
 
 router = APIRouter(prefix="/api/v1/train", tags=["train"])
+logger = logging.getLogger(__name__)
 
 
 def _job_to_dict(db: Session, job: TrainingJob, workspace_id: str) -> dict:
@@ -135,6 +138,7 @@ def create_job(
     db.commit()
     db.refresh(job)
 
+    execution_error: Exception | None = None
     try:
         if settings.env == "test" or payload.params_json.get("sync"):
             raise RuntimeError("execute_inline")
@@ -142,11 +146,29 @@ def create_job(
     except Exception:  # noqa: BLE001
         try:
             run_training_job(job.id)
-        except Exception:  # noqa: BLE001
-            # Fallback execution is best-effort; task writes failed status itself.
-            pass
+        except Exception as exc:  # noqa: BLE001
+            execution_error = exc
+            logger.exception("Training job %s inline fallback execution failed", job.id)
 
-    return {"job": _job_to_dict(db, job, workspace_id)}
+    db.expire_all()
+    refreshed_job = get_training_job_in_workspace(db, job_id=job.id, workspace_id=workspace_id)
+    if not refreshed_job:
+        raise ApiError("not_found", "Job not found", status_code=404)
+
+    if execution_error and refreshed_job.status == "pending":
+        logs = list(refreshed_job.summary_json.get("logs", []))
+        logs.append("training dispatch failed before worker startup")
+        refreshed_job.status = "failed"
+        refreshed_job.updated_at = datetime.now(timezone.utc)
+        refreshed_job.summary_json = {
+            **refreshed_job.summary_json,
+            "logs": logs,
+            "error": str(execution_error),
+        }
+        db.commit()
+        db.refresh(refreshed_job)
+
+    return {"job": _job_to_dict(db, refreshed_job, workspace_id)}
 
 
 @router.get("/jobs")

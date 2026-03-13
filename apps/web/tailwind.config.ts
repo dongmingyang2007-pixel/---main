@@ -14,6 +14,20 @@ const config: Config = {
         electric: "#1F8AFA",
         mint: "#00A885",
         amber: "#F6A609",
+        brand: "#0f76ff",
+        "brand-strong": "#0a4ed1",
+        accent: "#19d6bf",
+      },
+      maxWidth: {
+        site: "1120px",
+      },
+      borderRadius: {
+        panel: "30px",
+        card: "20px",
+      },
+      screens: {
+        tablet: "768px",
+        ipad: "1024px",
       },
     },
   },

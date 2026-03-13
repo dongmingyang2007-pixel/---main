@@ -23,6 +23,7 @@ def process_data_item(data_item_id: str) -> None:
         if not item or item.deleted_at is not None:
             return
 
+        # v0.1 keeps dataset processing mock-only until object content inspection is wired up.
         pseudo = f"{item.dataset_id}:{item.filename}:{item.size_bytes}".encode()
         item.sha256 = hashlib.sha256(pseudo).hexdigest()
 
@@ -30,7 +31,7 @@ def process_data_item(data_item_id: str) -> None:
             item.width = item.width or 1024
             item.height = item.height or 768
 
-        item.meta_json = {**(item.meta_json or {}), "processed": True}
+        item.meta_json = {**(item.meta_json or {}), "processed": True, "mock": True}
 
         write_audit_log(
             db,

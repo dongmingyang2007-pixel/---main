@@ -13,11 +13,38 @@
 
 前提：
 - 已安装 Docker / Docker Compose
+- macOS 如果使用 Colima，需要先确保 Colima 已启动，且 Docker context 指向 `colima`
+
+推荐先做一次环境确认：
+
+```bash
+docker info
+docker context ls
+```
+
+如果你在 macOS 上用 Colima，建议先执行：
+
+```bash
+colima start
+docker context use colima
+```
 
 在仓库根目录执行这一条命令即可：
 
 ```bash
 ./scripts/dev.sh
+```
+
+如果这里报：
+
+```bash
+zsh: permission denied: ./scripts/dev.sh
+```
+
+说明脚本缺少执行权限，先执行：
+
+```bash
+chmod +x ./scripts/dev.sh
 ```
 
 这个脚本会自动完成：
@@ -35,6 +62,8 @@
 
 说明：
 - 首次启动或前端代码变更后的重建会比开发态慢一些，因为 `web` 服务会在容器内先执行一次 `next build`
+- `./scripts/dev.sh` 会等待 `API` 和 `Web` 都可访问后再返回；通常 `API` 会先就绪，`Web` 会因为 `next build` 稍慢一些
+- 启动时如果看到 `Docker Compose requires buildx plugin to be installed`，当前这套 compose 仍可继续启动；这是警告，不会阻塞本地运行
 
 如果你只是想确认服务是否已经起来，执行：
 
@@ -114,6 +143,7 @@ alembic upgrade head
 - `202602150001`: 初始 schema（按 Spec）
 - `202602150002`: 软删与清理状态字段
 - `202602150003`: 性能索引与约束增强
+- `202603120001`: 清理 ORM 重复匿名索引并补齐命名索引
 
 ## 测试
 
@@ -135,6 +165,23 @@ uv pip install --python .venv/bin/python -e '.[dev]'
 6. 删除数据集后，列表不可见，后端保留软删与异步清理入口。
 
 ## 常见问题
+
+- `./scripts/dev.sh` 报 `zsh: permission denied: ./scripts/dev.sh`：执行 `chmod +x ./scripts/dev.sh` 后重试。
+- `Cannot connect to the Docker daemon at unix:///Users/.../.colima/default/docker.sock`：通常是 Docker CLI 正在使用 `colima` context，但 Colima 没启动。先执行：
+
+```bash
+colima start
+docker context use colima
+docker info
+```
+
+- `colima start` 失败且日志里出现 `attach disk ... in use by instance "colima"`：说明上一次 Colima 退出不干净。先执行：
+
+```bash
+colima stop --force
+colima start
+docker context use colima
+```
 
 - `./scripts/dev.sh` 卡住：先执行 `docker compose -f docker/docker-compose.yml logs -f` 看具体服务日志。
 - Cookie 不生效：检查 `COOKIE_DOMAIN`、`COOKIE_SECURE`、`CORS_ORIGINS` 是否仍是本地默认值。

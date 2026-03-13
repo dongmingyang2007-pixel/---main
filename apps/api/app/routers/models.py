@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
 from app.core.errors import ApiError
-from app.models import Artifact, Model, ModelAlias, ModelVersion, TrainingJob, TrainingRun, User
+from app.models import Artifact, Model, ModelAlias, ModelVersion, User
 from app.routers.utils import (
     get_model_in_workspace,
     get_project_in_workspace,

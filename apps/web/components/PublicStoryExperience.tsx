@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type JSX } from "react";
 
 import { StoryScene } from "@/components/StoryScene";
 import { StoryStage } from "@/components/StoryStage";
 import { useScrollReveal } from "@/lib/useScrollReveal";
 import { useParallax } from "@/lib/useParallax";
+import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
 import {
   QIHANG_VIEWER_SOURCE,
   QIHANG_WEB_SOURCE,
@@ -13,7 +14,7 @@ import {
   VIEWER_MESSAGE_READY,
   VIEWER_MESSAGE_SET_STATE,
   VIEWER_MESSAGE_STATE,
-  VIEWER_SRC_BASE,
+  VIEWER_STORY_SRC_BASE,
   appendParentOrigin,
 } from "@/lib/qihang-viewer-contract";
 import type { StoryAction, StorySceneContent } from "@/lib/story-types";
@@ -35,6 +36,7 @@ export function PublicStoryExperience({
   viewerParentOrigin,
   viewerTitle,
   children,
+  illustrations,
 }: {
   scenes: StorySceneContent[];
   actions?: StoryAction[];
@@ -43,6 +45,7 @@ export function PublicStoryExperience({
   viewerParentOrigin?: string | null;
   viewerTitle?: string;
   children?: ReactNode;
+  illustrations?: Record<string, JSX.Element>;
 }) {
   const sceneRefs = useRef<Array<HTMLElement | null>>([]);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -54,12 +57,13 @@ export function PublicStoryExperience({
   const [sceneProgress, setSceneProgress] = useState<number[]>(() => scenes.map(() => 0));
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
   const [viewerConnected, setViewerConnected] = useState(false);
-  const [viewerStatus, setViewerStatus] = useState(viewerEnabled ? "载入产品舞台..." : "展位块已准备");
+  const [viewerStatus, setViewerStatus] = useState(viewerEnabled ? "准备产品舞台..." : "展位块已准备");
   const viewerSrc = viewerEnabled && viewerParentOrigin
-    ? appendParentOrigin(VIEWER_SRC_BASE, viewerParentOrigin)
+    ? appendParentOrigin(VIEWER_STORY_SRC_BASE, viewerParentOrigin)
     : viewerEnabled
-      ? VIEWER_SRC_BASE
+      ? VIEWER_STORY_SRC_BASE
       : "";
+  const deferredViewerSrc = useDeferredIframeSrc(viewerSrc, viewerEnabled);
 
   const experienceRef = useRef<HTMLDivElement>(null);
   useScrollReveal(experienceRef);
@@ -69,26 +73,88 @@ export function PublicStoryExperience({
   const activeProgress = sceneProgress[activeSceneIndex] ?? 0;
   const timelineProgress = clamp((activeSceneIndex + activeProgress) / scenes.length);
 
+  const clearHandshakeTimers = useCallback(() => {
+    if (handshakeIntervalRef.current !== null) {
+      window.clearInterval(handshakeIntervalRef.current);
+      handshakeIntervalRef.current = null;
+    }
+    if (handshakeTimeoutRef.current !== null) {
+      window.clearTimeout(handshakeTimeoutRef.current);
+      handshakeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const suspendViewer = useCallback(() => {
+    clearHandshakeTimers();
+    viewerReadyRef.current = false;
+    setViewerConnected(false);
+    const frame = iframeRef.current;
+    if (frame && frame.src !== "about:blank") {
+      frame.src = "about:blank";
+    }
+  }, [clearHandshakeTimers]);
+
+  const postToViewer = useCallback((type: string, payload?: unknown): boolean => {
+    const targetWindow = iframeRef.current?.contentWindow;
+    if (!targetWindow) return false;
+    targetWindow.postMessage(
+      {
+        source: QIHANG_WEB_SOURCE,
+        type,
+        payload,
+      },
+      "*",
+    );
+    return true;
+  }, []);
+
+  const startHandshake = useCallback((reason: string) => {
+    clearHandshakeTimers();
+    viewerReadyRef.current = false;
+    setViewerConnected(false);
+    setViewerStatus("同步产品舞台...");
+
+    let attempts = 0;
+    const tick = () => {
+      attempts += 1;
+      if (attempts > 16) {
+        clearHandshakeTimers();
+        setViewerStatus("模型加载较慢，继续显示展位块。");
+        return;
+      }
+      postToViewer(VIEWER_MESSAGE_GET_STATE, { reason, attempt: attempts });
+    };
+
+    tick();
+    handshakeIntervalRef.current = window.setInterval(tick, 450);
+    handshakeTimeoutRef.current = window.setTimeout(() => {
+      if (!viewerReadyRef.current) {
+        setViewerStatus("模型尚未返回，先保留展位块。");
+      }
+    }, 7200);
+  }, [clearHandshakeTimers, postToViewer]);
+
   useEffect(() => {
     let frame = 0;
 
     const measure = () => {
       const viewportHeight = window.innerHeight;
-      const nextProgress = scenes.map((_, index) => {
+      const measuredRects = scenes.map((_, index) => {
         const node = sceneRefs.current[index];
-        if (!node) return 0;
-        const rect = node.getBoundingClientRect();
+        return node ? node.getBoundingClientRect() : null;
+      });
+
+      const nextProgress = measuredRects.map((rect) => {
+        if (!rect) return 0;
         const distance = viewportHeight + rect.height;
-        return clamp((viewportHeight - rect.top) / distance);
+        return Math.round(clamp((viewportHeight - rect.top) / distance) * 50) / 50;
       });
 
       let nextActiveSceneIndex = 0;
       let bestWeight = -1;
 
-      scenes.forEach((_, index) => {
-        const node = sceneRefs.current[index];
-        if (!node) return;
-        const rect = node.getBoundingClientRect();
+      measuredRects.forEach((rect, index) => {
+        if (!rect) return;
         const centerOffset = Math.abs(rect.top + rect.height / 2 - viewportHeight * 0.48);
         const weight = 1 - Math.min(centerOffset / (viewportHeight * 0.9), 1);
         if (weight > bestWeight) {
@@ -97,8 +163,10 @@ export function PublicStoryExperience({
         }
       });
 
-      setSceneProgress((previous) => (sameProgressArray(previous, nextProgress) ? previous : nextProgress));
-      setActiveSceneIndex((previous) => (previous === nextActiveSceneIndex ? previous : nextActiveSceneIndex));
+      startTransition(() => {
+        setSceneProgress((previous) => (sameProgressArray(previous, nextProgress) ? previous : nextProgress));
+        setActiveSceneIndex((previous) => (previous === nextActiveSceneIndex ? previous : nextActiveSceneIndex));
+      });
     };
 
     const requestMeasure = () => {
@@ -123,58 +191,7 @@ export function PublicStoryExperience({
   }, [scenes]);
 
   useEffect(() => {
-    if (!viewerEnabled) return;
-
-    const clearTimers = () => {
-      if (handshakeIntervalRef.current !== null) {
-        window.clearInterval(handshakeIntervalRef.current);
-        handshakeIntervalRef.current = null;
-      }
-      if (handshakeTimeoutRef.current !== null) {
-        window.clearTimeout(handshakeTimeoutRef.current);
-        handshakeTimeoutRef.current = null;
-      }
-    };
-
-    const postToViewer = (type: string, payload?: unknown): boolean => {
-      const targetWindow = iframeRef.current?.contentWindow;
-      if (!targetWindow) return false;
-      targetWindow.postMessage(
-        {
-          source: QIHANG_WEB_SOURCE,
-          type,
-          payload,
-        },
-        "*",
-      );
-      return true;
-    };
-
-    const startHandshake = (reason: string) => {
-      clearTimers();
-      viewerReadyRef.current = false;
-      setViewerConnected(false);
-      setViewerStatus("同步产品舞台...");
-
-      let attempts = 0;
-      const tick = () => {
-        attempts += 1;
-        if (attempts > 16) {
-          clearTimers();
-          setViewerStatus("模型加载较慢，继续显示展位块。");
-          return;
-        }
-        postToViewer(VIEWER_MESSAGE_GET_STATE, { reason, attempt: attempts });
-      };
-
-      tick();
-      handshakeIntervalRef.current = window.setInterval(tick, 450);
-      handshakeTimeoutRef.current = window.setTimeout(() => {
-        if (!viewerReadyRef.current) {
-          setViewerStatus("模型尚未返回，先保留展位块。");
-        }
-      }, 7200);
-    };
+    if (!viewerEnabled || !deferredViewerSrc) return;
 
     const onMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow;
@@ -197,19 +214,36 @@ export function PublicStoryExperience({
         viewerReadyRef.current = true;
         setViewerConnected(true);
         setViewerStatus("产品舞台已联动");
-        clearTimers();
+        clearHandshakeTimers();
         postToViewer(VIEWER_MESSAGE_SET_STATE, latestPatchRef.current);
       }
     };
 
     window.addEventListener("message", onMessage);
-    startHandshake("story-stage-init");
+    const frame = iframeRef.current;
 
     return () => {
-      clearTimers();
+      clearHandshakeTimers();
       window.removeEventListener("message", onMessage);
+      viewerReadyRef.current = false;
+      if (frame) {
+        frame.src = "about:blank";
+      }
     };
-  }, [viewerEnabled]);
+  }, [clearHandshakeTimers, deferredViewerSrc, postToViewer, viewerEnabled]);
+
+  useEffect(() => {
+    if (!viewerEnabled || !deferredViewerSrc) return;
+
+    const onViewerSuspend = () => {
+      suspendViewer();
+    };
+
+    window.addEventListener("qihang:viewer-suspend", onViewerSuspend);
+    return () => {
+      window.removeEventListener("qihang:viewer-suspend", onViewerSuspend);
+    };
+  }, [deferredViewerSrc, suspendViewer, viewerEnabled]);
 
   const viewerPatch = useMemo(
     () => activeScene?.viewerPatch || {},
@@ -253,19 +287,21 @@ export function PublicStoryExperience({
             activeId={activeScene.id}
             progress={timelineProgress}
             iframeRef={viewerEnabled ? iframeRef : undefined}
-            viewerSrc={viewerEnabled ? viewerSrc : undefined}
+            viewerSrc={viewerEnabled ? deferredViewerSrc : undefined}
             viewerTitle={viewerTitle}
             viewerConnected={viewerConnected}
             onViewerLoad={
               viewerEnabled
                 ? () => {
-                    viewerReadyRef.current = false;
-                    setViewerConnected(false);
-                    setViewerStatus("产品舞台载入中...");
-                  }
+                  viewerReadyRef.current = false;
+                  setViewerConnected(false);
+                  setViewerStatus("产品舞台载入中...");
+                  startHandshake("story-stage-iframe-load");
+                }
                 : undefined
             }
             loaderLabel={viewerEnabled ? "产品舞台加载中" : undefined}
+            illustration={!viewerEnabled && illustrations ? illustrations[activeScene.id] : undefined}
           />
         </div>
 

@@ -9,27 +9,27 @@ export default function UpdatesPage() {
       scenes={UPDATES_STORY_SCENES}
       actions={[
         { href: "/", label: "返回首页" },
-        { href: "/docs", label: "看文档路径", variant: "secondary" },
+        { href: "/product", label: "查看产品", variant: "secondary" },
       ]}
-      scrollNote="这里只记录真正影响体验、结构和安全边界的变化。"
+      scrollNote="向下滑动，查看更新详情"
     >
       <ContentRail
         eyebrow="Timeline"
-        title="重要变化不该碎成一堆时间卡。"
-        summary="更新页采用连续时间轴，记录真正影响产品感知和系统边界的变化。"
+        title="更新记录"
+        summary="产品、体验和安全方面的重要变更。"
         items={UPDATE_TIMELINE_RAIL}
         variant="timeline"
       />
 
       <section className="story-band is-final">
-        <div className="home-story-eyebrow">Continue</div>
-        <h2 className="home-story-band-title">看完更新，再回到产品和工作流页面。</h2>
+        <div className="home-story-eyebrow">Explore</div>
+        <h2 className="home-story-band-title">查看最新的产品体验。</h2>
         <div className="home-story-actions">
           <PublicDocumentLink href="/product" className="home-story-button is-primary">
-            查看产品页
+            产品页
           </PublicDocumentLink>
-          <PublicDocumentLink href="/how-it-works" className="home-story-button">
-            查看工作流
+          <PublicDocumentLink href="/demo" className="home-story-button">
+            Demo
           </PublicDocumentLink>
         </div>
       </section>

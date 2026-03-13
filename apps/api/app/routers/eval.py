@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.deps import get_current_user, get_current_workspace_id, require_csrf_protection
 from app.core.errors import ApiError
 from app.models import User
+from app.schemas.eval import EvalRunCreate
 from app.services.runtime_state import runtime_state
 
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/v1/eval", tags=["eval"])
 
 @router.post("/runs")
 def create_eval_run(
-    payload: dict,
+    payload: EvalRunCreate,
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
     _: None = Depends(require_csrf_protection),
@@ -30,7 +31,7 @@ def create_eval_run(
             "created_by": current_user.id,
             "workspace_id": workspace_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "payload": payload,
+            "payload": payload.model_dump(),
             "samples": [
                 {"input": "sample-1", "a": "result-a", "b": "result-b", "winner": "a"},
                 {"input": "sample-2", "a": "result-a2", "b": "result-b2", "winner": "b"},

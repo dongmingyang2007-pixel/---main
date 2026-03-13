@@ -16,19 +16,32 @@ export function useParallax(containerRef: RefObject<HTMLElement | null>) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    const elements = Array.from(container.querySelectorAll<HTMLElement>("[data-parallax]"));
+    if (!elements.length) return;
 
     let ticking = false;
 
     const update = () => {
       ticking = false;
-      const vh = window.innerHeight;
-      const elements = container.querySelectorAll<HTMLElement>("[data-parallax]");
+      if (document.visibilityState === "hidden") return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        elements.forEach((el) => {
+          if (el.style.getPropertyValue("--parallax") !== "0") {
+            el.style.setProperty("--parallax", "0");
+          }
+        });
+        return;
+      }
 
+      const vh = window.innerHeight;
       elements.forEach((el) => {
         const rect = el.getBoundingClientRect();
         // 0 when element enters bottom, 1 when it exits top
         const progress = Math.min(1, Math.max(0, (vh - rect.top) / (vh + rect.height)));
-        el.style.setProperty("--parallax", progress.toFixed(4));
+        const nextValue = progress.toFixed(4);
+        if (el.style.getPropertyValue("--parallax") !== nextValue) {
+          el.style.setProperty("--parallax", nextValue);
+        }
       });
     };
 

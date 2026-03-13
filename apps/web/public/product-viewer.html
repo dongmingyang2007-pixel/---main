@@ -166,8 +166,14 @@ assembly_clearance_mm:.28,shell_clearance_target_mm:.3,envelope_margin_mm:.35,sa
 inspect_module_clearance_mm:.3};const PIVOT_REAR_CORNER_MIN_CLEARANCE=.3*MM;const PIVOT_VISUAL_INSET_Z=0*MM;const CASE_SHELL_XZ_SCALE=.88;const CASE_SHELL_Y_SCALE=.92;const CASE_TOP_XZ_SCALE=.91;const EARBUD_VISUAL_SCALE=2.34;const GLB_EARBUD_SCALE_MULTIPLIER=1.22;const CAMERA_VISUAL_SCALE=1.74;const EARBUD_DOCK_RADIUS_X_MULT=1.12;const EARBUD_DOCK_RADIUS_Z_MULT=1.14;const CAMERA_DOCK_RADIUS_X_MULT=1.06;const CAMERA_DOCK_RADIUS_Z_MULT=1.08;const EARBUD_DOCK_BASE_Y_OFFSET=-.01135;const EARBUD_WORLD_BOTTOM_CLEARANCE=.0032;const EARBUD_VISIBLE_BOTTOM_CLEARANCE=.0026;const EARBUD_OPEN_SHOWCASE_START_T=.12;const EARBUD_OPEN_SHOWCASE_END_T=.68;const EARBUD_FLOOR_CLEARANCE=.00165;const EARBUD_CLOSED_LID_CLEARANCE=.00055;const EARBUD_DOCK_MAX_Y_SHIFT=.0042;const P={radius:.0488,thickness:.0335,
 seamGap:42e-5,baseRatio:.74,pivotOffsetZ:MECH.pivotAxisZ,openAngle:THREE.MathUtils.degToRad(MECH.openStopDeg),
 screenRadius:.0198,screenThickness:.0014,screenInset:.00155,earbudScale:EARBUD_VISUAL_SCALE,cameraScale:CAMERA_VISUAL_SCALE,showWirelessCoil:false};const PIVOT_CLEARANCE_SPEC={threadClearance:PIVOT_PRINT_TOLERANCE.radialClearance}
+;const viewerParams=new URLSearchParams(window.location.search)
+;const viewerAutomationMode=navigator.webdriver===true||/HeadlessChrome/i.test(navigator.userAgent)
+;const embeddedViewerMode=viewerParams.get("embedded")==="1"
+;const storySurfaceParam=String(viewerParams.get("surface")||"").toLowerCase()
+;const skipRuntimeEarbudSpecFetch=embeddedViewerMode||viewerAutomationMode||storySurfaceParam==="story"
+;const forceHeadlessRender=viewerAutomationMode
 ;const EARBUD_SPEC_URL_DEFAULT="/api/qihang-earbud-spec"
-;const EARBUD_SPEC_URL=(new URLSearchParams(window.location.search)).get("earbud_spec_url")||EARBUD_SPEC_URL_DEFAULT
+;const EARBUD_SPEC_URL=viewerParams.get("earbud_spec_url")||EARBUD_SPEC_URL_DEFAULT
 ;let EARBUD_BUILD_TIER="engineering";let EARBUD_ANC_LAYOUT="feedforward_feedback_dual_mic"
 ;let EARBUD_TARGET_ENVELOPE_MM={x:15.2,y:20.6,z:17.8}
 ;let EARBUD_DOCK_CLEARANCE_RANGE_MM={min:.5,max:1}
@@ -176,7 +182,7 @@ screenRadius:.0198,screenThickness:.0014,screenInset:.00155,earbudScale:EARBUD_V
 ;let EARBUD_MODULE_ENVELOPES_MM={driver:{x:10.8,y:10.8,z:4.2},battery:{x:11.6,y:9.8,z:5.1},pcb:{x:14,y:9,z:1.6}}
 ;let EARBUD_SPEC_REVISION="tws-anc-prototype-v1";let EARBUD_SPEC_SOURCE_HASH="fallback"
 ;function finiteNumber(value,fallback){return typeof value==="number"&&Number.isFinite(value)?value:fallback}
-function loadRuntimeEarbudSpec(){let payloadText=""
+function loadRuntimeEarbudSpec(){if(skipRuntimeEarbudSpecFetch)return;let payloadText=""
 ;try{const xhr=new XMLHttpRequest;xhr.open("GET",EARBUD_SPEC_URL,false);xhr.send(null)
 ;if(xhr.status>=200&&xhr.status<300&&xhr.responseText){payloadText=xhr.responseText;const raw=JSON.parse(xhr.responseText)
 ;if(raw&&typeof raw==="object"){const runtime=raw
@@ -201,8 +207,8 @@ loadRuntimeEarbudSpec()
 ;const defaultCamPos=new THREE.Vector3(.165,.102,.168);const defaultTarget=new THREE.Vector3(0,.01,0)
 ;camera.position.copy(defaultCamPos);let renderer=null;let headlessRender=false;const webglInitErrors=[]
 ;const webglRendererOptions=[{antialias:true,powerPreference:"high-performance",alpha:false,preserveDrawingBuffer:false},{antialias:false,powerPreference:"high-performance",alpha:false,preserveDrawingBuffer:false},{antialias:false,powerPreference:"default",alpha:false,preserveDrawingBuffer:false}]
-;for(const opts of webglRendererOptions){try{renderer=new THREE.WebGLRenderer(opts);break}catch(err){
-webglInitErrors.push(err)}}if(!renderer){headlessRender=true
+;if(!forceHeadlessRender){for(const opts of webglRendererOptions){try{renderer=new THREE.WebGLRenderer(opts);break}catch(err){
+webglInitErrors.push(err)}}}if(!renderer){headlessRender=true
 ;console.warn("[viewer] WebGL unavailable, fallback to headless render mode.",webglInitErrors[webglInitErrors.length-1]||new Error("unknown"));const fallbackCanvas=document.createElement("canvas")
 ;fallbackCanvas.setAttribute("data-render-mode","headless");renderer={domElement:fallbackCanvas,setSize:(w,h)=>{
 fallbackCanvas.width=w;fallbackCanvas.height=h;fallbackCanvas.style.width=`${w}px`;fallbackCanvas.style.height=`${h}px`
@@ -1105,7 +1111,6 @@ retuneLidLedPlacement(LED_MOUNT_ON_LID?-lidH*.92:baseH/2-P.seamGap,LID_LED_RADIU
 mesh.visible=false});ledAuraLight=null}const dream=buildDreamScanFx(P.radius);const dreamFx=dream.fx
 ;product.add(baseGroup,lidPivot,dreamFx);product.position.y+=.01;scene.add(product);const inspectRoot=new THREE.Group
 ;inspectRoot.name="Earbud_Inspect_Root";inspectRoot.visible=false;scene.add(inspectRoot);const gltfLoader=new GLTFLoader
-;const viewerParams=new URLSearchParams(window.location.search)
 ;const customGlbParam=(viewerParams.get("model")||viewerParams.get("glb")||"").trim()
 ;const GLB_VISUAL_CANDIDATES=Object.freeze(customGlbParam?[customGlbParam,"/product.glb","/product-assets/product-20260303-tail-pivot-printable-v1.glb"]:["/product.glb","/product-assets/product-20260303-tail-pivot-printable-v1.glb"])
 ;let activeGlbVisualUrl=""
@@ -1389,14 +1394,19 @@ mountedEarR=mountGlbPart(sourceRoot,canonicalEarSource,earR,"GLB_Ear_Right",{loc
 ;const baseCollisionShell=findNodeByAliases(baseVisual,["Case_Base_Shell"])||findNodeByTokens(baseVisual,["base","shell"])||baseVisual
 ;const lidCollisionShell=findNodeByAliases(lidVisual,["Case_Lid_Shell"])||findNodeByTokens(lidVisual,["lid","shell"])||lidVisual
 ;baseCollisionRoot=baseShell||baseGroup||baseVisual||baseCollisionShell;lidCollisionRoot=lidShell||lidGroup||lidCollisionShell||lidVisual;earLPickRoot=earLVisual
-;earRPickRoot=earRVisual;hideProceduralVisualLayers({hideEarbuds:usingGlbEarVisuals});applyColorway(activeColorway);applyShellXrayMaterial(xrayOn)
-;const glbValidation=validatePivotPathClearance();pivotPathSafeOpenDeg=glbValidation.safeOpenDeg
+;earRPickRoot=earRVisual;runBatchedViewerUpdate(()=>{hideProceduralVisualLayers({hideEarbuds:usingGlbEarVisuals});applyColorway(activeColorway);applyShellXrayMaterial(xrayOn)})
+;if(viewerStorySurface){pivotPathSafeOpenDeg=MECH.openStopDeg;pivotPathMinClearance=PIVOT_CLEARANCE_SPEC.threadClearance
+;pivotShellPathMinClearance=MECH.shellMinPathClearance;pivotRearCornerPathMinClearance=PIVOT_REAR_CORNER_MIN_CLEARANCE
+;pivotNotchPeakOverCap=0;pivotSpikeViolationCount=0;pivotClearanceSampleStepDeg=0
+;pivotClearanceSampleCount=0;pivotShellCurrentClearance=pivotShellPathMinClearance
+;pivotRearCornerCurrentClearance=pivotRearCornerPathMinClearance}else{const glbValidation=validatePivotPathClearance()
+;pivotPathSafeOpenDeg=glbValidation.safeOpenDeg
 ;pivotPathMinClearance=glbValidation.minPivotGapObserved;pivotShellPathMinClearance=glbValidation.minShellGapObserved
 ;pivotRearCornerPathMinClearance=glbValidation.minRearCornerGapObserved
 ;pivotNotchPeakOverCap=glbValidation.notchPeakOverCap||0;pivotSpikeViolationCount=glbValidation.spikeViolationCount||0
 ;pivotClearanceSampleStepDeg=glbValidation.sampleStepDeg||0
 ;pivotClearanceSampleCount=glbValidation.sampleCount||0
-;pivotShellCurrentClearance=pivotShellPathMinClearance;pivotRearCornerCurrentClearance=pivotRearCornerPathMinClearance}
+;pivotShellCurrentClearance=pivotShellPathMinClearance;pivotRearCornerCurrentClearance=pivotRearCornerPathMinClearance}}
 },undefined,error=>{if(candidateIndex+1<GLB_VISUAL_CANDIDATES.length){
 console.warn("[viewer] failed to load product.glb candidate, trying next.",{url:glbUrl,error:error})
 ;loadProductGlbVisuals(candidateIndex+1);return}
@@ -1414,6 +1424,8 @@ noteRoot:document.getElementById("viewerNote")})
 ;const params=viewerParams
 ;const printProfileParam=String(params.get("print_profile")||"general").toLowerCase()
 ;const printProfile=printProfileParam==="fdm"||printProfileParam==="sla"?printProfileParam:"general"
+;const viewerSurface=String(params.get("surface")||"").toLowerCase()
+;const viewerStorySurface=viewerSurface==="story"
 ;const embedMode=params.get("embedded")==="1";const hideUi=params.get("ui")==="0"||embedMode
 ;const hideNote=params.get("note")==="0"||embedMode
 ;const parentOriginParam=String(params.get("parent_origin")||"").trim()
@@ -1441,11 +1453,12 @@ noteRoot.style.display="none"}let isOpen=false;let camDetached=false;let earbuds
 ;let pivotClipGuardActive=false;let pivotOpenElapsedMs=0;let pivotOpenStartMs=0;let pivotOpenElapsedLatched=false
 ;let pivotSwingSide="left";let manualPivotDegOverride=null;let lastPivotStatusState=pivotState;let lastPivotStatusBucket=0;let latchPressPulse=0
 ;let explodeT=0;let earOutT=0;let activeColorway="pearl";let mode="offline";let trainLayerIndex=0
+;let storyReadySent=false
 ;const screenHudDefaultOpacity=.98;let earInspectActive=false;let earInspectTarget="";let earInspectHiddenSource=null
 ;let pivotInspectActive=false;let pivotExplodeActive=false;let pivotExplodeT=0
 ;let pivotPlugInserted=false;let pivotPlugReady=false;let pivotPlugAnimating=false;let pivotPlugTransitionT=0;let pivotPlugSlideT=0
 ;let pivotPlugDragActive=false;let pivotPlugDragPointerId=-1;let pivotPlugDragStartY=0;let pivotPlugDragStartT=0;let pivotPlugHovering=false
-;let pivotPlugGuidePulse=0
+;let pivotPlugGuidePulse=0;let embeddedPaused=false
 ;const PIVOT_PLUG_READY_TRAVEL_T=.58;const PIVOT_PLUG_DRAG_FULL_PX=170;const PIVOT_PLUG_ALIGN_DAMP=4.2;const PIVOT_PLUG_RETURN_DAMP=10.5;const PIVOT_PLUG_SLIDE_DAMP=18
 ;let pivotInspectMinClearance=PIVOT_ENGINEERING.inspect_module_clearance_mm*MM;const pivotInspectHiddenSource=[]
 ;let earbudFitClearanceMm=0;let earbudContactCompressionLMm=0;let earbudContactCompressionRMm=0
@@ -1567,7 +1580,7 @@ node:tab,angle:Number.isFinite(tab?.userData?.angle)?tab.userData.angle:0,
 baseRadius:Number.isFinite(tab?.userData?.baseRadius)?tab.userData.baseRadius:P.radius*.918,
 baseY:Number.isFinite(tab?.userData?.baseY)?tab.userData.baseY:-lidH*.44}))
 ;const fallbackPivotAxisWorld=getPivotCylinderAxisWorld();if(fallbackPivotAxisWorld){
-alignLidPivotToAxisWorld(fallbackPivotAxisWorld)}solveClosedPoseBias();const initialClosedMetrics=measureClosedPoseMetrics()
+alignLidPivotToAxisWorld(fallbackPivotAxisWorld)}solveClosedPoseBias();if(!viewerStorySurface){const initialClosedMetrics=measureClosedPoseMetrics()
 ;if(initialClosedMetrics){lidClosedSeamGapMm=initialClosedMetrics.seamGapY/MM}pivotAxisAlignmentDeg=getPivotAxisAlignmentDeg()
 ;const pivotPathValidation=validatePivotPathClearance()
 ;pivotPathSafeOpenDeg=pivotPathValidation.safeOpenDeg;pivotPathMinClearance=pivotPathValidation.minPivotGapObserved
@@ -1579,6 +1592,11 @@ alignLidPivotToAxisWorld(fallbackPivotAxisWorld)}solveClosedPoseBias();const ini
 ;pivotClearanceSampleCount=pivotPathValidation.sampleCount||0
 ;pivotClearanceFineSampleCount=pivotPathValidation.fineSampleCount||0
 ;pivotShellCurrentClearance=pivotShellPathMinClearance;pivotRearCornerCurrentClearance=pivotRearCornerPathMinClearance
+}else{pivotPathSafeOpenDeg=MECH.openStopDeg;pivotPathMinClearance=PIVOT_CLEARANCE_SPEC.threadClearance
+;pivotShellPathMinClearance=MECH.shellMinPathClearance;pivotRearCornerPathMinClearance=PIVOT_REAR_CORNER_MIN_CLEARANCE
+;pivotNotchPeakOverCap=0;pivotSpikeViolationCount=0;pivotClearanceSampleStepDeg=0
+;pivotClearanceSampleCount=0;pivotClearanceFineSampleCount=0
+;pivotShellCurrentClearance=pivotShellPathMinClearance;pivotRearCornerCurrentClearance=pivotRearCornerPathMinClearance}
 ;const tmpV1=new THREE.Vector3;const tmpV2=new THREE.Vector3;const tmpV3=new THREE.Vector3;const tmpV4=new THREE.Vector3
 ;const tmpV5=new THREE.Vector3;const tmpV6=new THREE.Vector3;const tmpV7=new THREE.Vector3;const earBox=new THREE.Box3
 ;const camBox=new THREE.Box3;const ledBox=new THREE.Box3;const ledBoxTmp=new THREE.Box3;const inspectBox=new THREE.Box3
@@ -1648,9 +1666,11 @@ depthTest:lidShell.material.depthTest,renderOrder:lidShell.renderOrder}};let dem
 ;let ambientLuxEstimate=280;let proximityMmEstimate=160;function toHex(v){
 return`#${v.toString(16).padStart(6,"0")}`}function emitToParent(type,payload){
 if(window.parent&&window.parent!==window){window.parent.postMessage({source:"qihang-viewer",type:type,payload:payload
-},parentPostOrigin)}}function emitReady(reason="init"){emitToParent("qihang:model:ready",{version:MECH_REVISION,
+},parentPostOrigin)}}function emitReady(reason="init"){if(viewerStorySurface&&storyReadySent&&reason!=="init")return
+;emitToParent("qihang:model:ready",viewerStorySurface?{version:MECH_REVISION,
+embedMode:embedMode,protocol_version:"2026-03-bridge-v1",reason:reason,sent_at:new Date().toISOString()}:{version:MECH_REVISION,
 embedMode:embedMode,state:getViewerState(),commands:READY_COMMANDS,protocol_version:"2026-03-bridge-v1",reason:reason,
-sent_at:new Date().toISOString()})}function emitScreenAction(action,extra={}){emitToParent("qihang:model:screen-action",{
+sent_at:new Date().toISOString()});if(viewerStorySurface){storyReadySent=true}}function emitScreenAction(action,extra={}){emitToParent("qihang:model:screen-action",{
 action:action,...extra})}function applyCaptureEvent(eventPayload={},options={}){if(!eventPayload||typeof eventPayload!=="object"){
 return false}const name=typeof eventPayload.name==="string"?eventPayload.name:"";if(!CAPTURE_EVENTS.includes(name)){
 return false}captureLastEvent=name
@@ -1728,8 +1748,14 @@ min:Number((ledVisibleBand.minY/MM).toFixed(3)),max:Number((ledVisibleBand.maxY/
 led_ring_band_mm:ledRingBand?{min:Number((ledRingBand.minY/MM).toFixed(3)),max:Number((ledRingBand.maxY/MM).toFixed(3))
 }:null,pivot_path_safe_open_deg:Number(pivotPathSafeOpenDeg.toFixed(2)),
 pivot_path_min_clearance_mm:Number(((Number.isFinite(pivotPathMinClearance)?pivotPathMinClearance:0)/MM).toFixed(3)),
-glb_visual_url:activeGlbVisualUrl||null,status_text:statusEl?statusEl.textContent:""}}function emitViewerState(){
-emitToParent("qihang:model:state",getViewerState())}function applyEarRotation(mesh,targetRot){
+glb_visual_url:activeGlbVisualUrl||null,status_text:statusEl?statusEl.textContent:""}}let remoteStateBatchDepth=0;let pendingViewerStateEmit=false;let pendingScreenHudDraw=false
+;function flushBatchedViewerUpdates(){if(remoteStateBatchDepth>0)return
+;if(pendingScreenHudDraw){pendingScreenHudDraw=false;drawScreenHud()}
+;if(pendingViewerStateEmit&&!viewerStorySurface){pendingViewerStateEmit=false;emitToParent("qihang:model:state",getViewerState())}}
+function runBatchedViewerUpdate(task){remoteStateBatchDepth+=1;try{return typeof task==="function"?task():undefined}finally{
+remoteStateBatchDepth=Math.max(0,remoteStateBatchDepth-1);flushBatchedViewerUpdates()}}function emitViewerState(){
+if(remoteStateBatchDepth>0){pendingViewerStateEmit=true;return}if(viewerStorySurface)return
+;emitToParent("qihang:model:state",getViewerState())}function applyEarRotation(mesh,targetRot){
 mesh.rotation.x+=(targetRot.x-mesh.rotation.x)*.14;mesh.rotation.y+=(targetRot.y-mesh.rotation.y)*.14
 ;mesh.rotation.z+=(targetRot.z-mesh.rotation.z)*.14}function getLidOpenFactor(){
 const safeOpen=Math.max(pivotPathSafeOpenDeg,.001);return THREE.MathUtils.clamp(pivotAngleDeg/safeOpen,0,1)}
@@ -2074,7 +2100,7 @@ inspectText=` · Inspect ${earInspectTarget==="left"?"Ear L":"Ear R"}`}else if(p
 inspectText=` · Pivot Inspect${pivotExplodeActive?" Exploded":""}`}
 ;const pivotPlugStatus=pivotPlugInserted?"IN":pivotPlugReady?`READY ${Math.round(pivotPlugSlideT*100)}%`:"OUT"
 const statusText=`${isOpen?"Open":"Closed"} · ${camDetached?"Camera Detached":"Camera Docked"} · `+`${earbudsOut?"Earbuds Out":"Earbuds Docked"} · ${modeMeta?modeMeta.label:mode} · `+`${layer.id?`L${layer.id}`:"L?"} · Case ${caseMode} · Dream ${dreamOn?"ON":"OFF"} · `+`Spin ${autoSpin?"ON":"OFF"} · ${exploded?"Exploded":"Compact"} · `+`${xrayOn?"X-Ray":"Solid"} · Night ${nightOn?"ON":"OFF"} · `+`Privacy ${privacyLockHw?"LOCK":"OPEN"} · Plug ${pivotPlugStatus} · `+`Pivot ${pivotState} ${pivotAngleDeg.toFixed(1)}°${inspectText}`
-;if(statusEl){statusEl.textContent=statusText}emitViewerState()}function shortenText(value,maxLen=36){if(!value)return""
+;if(statusEl){statusEl.textContent=statusText}if(!viewerStorySurface){emitViewerState()}}function shortenText(value,maxLen=36){if(!value)return""
 ;if(value.length<=maxLen)return value;return`${value.slice(0,maxLen-1)}…`}function drawRoundRect(ctx,x,y,w,h,r){
 const rr=Math.min(r,w*.5,h*.5);ctx.beginPath();ctx.moveTo(x+rr,y);ctx.arcTo(x+w,y,x+w,y+h,rr)
 ;ctx.arcTo(x+w,y+h,x,y+h,rr);ctx.arcTo(x,y+h,x,y,rr);ctx.arcTo(x,y,x+w,y,rr);ctx.closePath()}
@@ -2090,7 +2116,7 @@ action:"run-infer",label:demoBusy?"RUNNING":"RUN",x:328,y:344,w:112,h:34,active:
 function findScreenButtonAt(x,y){const dx=x-256;const dy=y-256;if(dx*dx+dy*dy>230*230){return null}
 const buttons=getScreenButtons()
 ;return buttons.find(button=>x>=button.x&&x<=button.x+button.w&&y>=button.y&&y<=button.y+button.h)||null}
-function drawScreenHud(){const{canvas:canvas,ctx:ctx,tex:tex}=screenHudCtxObj;const modeMeta=MODE_META[mode]
+function drawScreenHud(){if(remoteStateBatchDepth>0){pendingScreenHudDraw=true;return}const{canvas:canvas,ctx:ctx,tex:tex}=screenHudCtxObj;const modeMeta=MODE_META[mode]
 ;const layer=TRAIN_LAYERS[trainLayerIndex];const base=COLORWAYS[activeColorway]||COLORWAYS.pearl
 ;ctx.clearRect(0,0,canvas.width,canvas.height);const grad=ctx.createRadialGradient(256,206,14,256,256,236)
 ;grad.addColorStop(0,"#14243b");grad.addColorStop(1,"#070f1a");ctx.fillStyle=grad;ctx.beginPath()
@@ -2311,7 +2337,7 @@ if(typeof value==="boolean")return value;if(value===1||value==="1"||value==="tru
 ;if(value===0||value==="0"||value==="false")return false;return undefined}function pickPatch(patch,...keys){
 for(let i=0;i<keys.length;i+=1){const key=keys[i]
 ;if(Object.prototype.hasOwnProperty.call(patch,key)&&patch[key]!==undefined){return patch[key]}}return undefined}
-function applyRemoteState(patch={}){let demoStatePatched=false
+function applyRemoteState(patch={}){if(viewerStorySurface){extendStoryBurst(960)}remoteStateBatchDepth+=1;try{let demoStatePatched=false
 ;if(typeof patch.task==="string"&&(patch.task==="vqa"||patch.task==="ocr")){demoTask=patch.task;demoStatePatched=true}
 const patchDemoHasImage=pickPatch(patch,"demoHasImage","demo_has_image")
 ;const nextDemoHasImage=normalizeBool(patchDemoHasImage);if(nextDemoHasImage!==undefined){demoHasImage=nextDemoHasImage
@@ -2319,6 +2345,8 @@ const patchDemoHasImage=pickPatch(patch,"demoHasImage","demo_has_image")
 ;const nextDemoBusy=normalizeBool(patchDemoBusy);if(nextDemoBusy!==undefined){demoBusy=nextDemoBusy
 ;demoStatePatched=true}const nextDemoMessage=pickPatch(patch,"demoMessage","demo_message")
 ;if(typeof nextDemoMessage==="string"){demoMessage=shortenText(nextDemoMessage,72);demoStatePatched=true}
+const nextEmbeddedPaused=normalizeBool(pickPatch(patch,"embeddedPaused","embedded_paused"))
+;if(nextEmbeddedPaused!==undefined){embeddedPaused=nextEmbeddedPaused}
 const patchCaseMode=pickPatch(patch,"caseMode","case_mode");if(typeof patchCaseMode==="string"){
 setCaseMode(patchCaseMode)}const patchPrivacyLock=normalizeBool(pickPatch(patch,"privacyLockHw","privacy_lock_hw"))
 ;if(patchPrivacyLock!==undefined){setPrivacyLock(patchPrivacyLock)}
@@ -2381,7 +2409,8 @@ const patchPivotExplode=pickPatch(patch,"pivotExplodeActive","pivot_explode_acti
 ;if(nextPivotExplode!==undefined&&nextPivotExplode!==pivotExplodeActive){togglePivotExplode()}
 const patchNight=pickPatch(patch,"nightOn","night_mode","nightMode");const nextNight=normalizeBool(patchNight)
 ;if(nextNight!==undefined)setNightMode(nextNight);if(normalizeBool(pickPatch(patch,"resetView","reset_view"))===true){
-resetView()}if(updateCaptureHardwareState()){demoStatePatched=true}if(demoStatePatched){drawScreenHud();emitViewerState()}}const PIVOT_REAR_FOCUS_OPTIONS=Object.freeze({
+resetView()}if(updateCaptureHardwareState()){demoStatePatched=true}if(demoStatePatched){drawScreenHud();emitViewerState()}}finally{
+remoteStateBatchDepth=Math.max(0,remoteStateBatchDepth-1);flushBatchedViewerUpdates()}}const PIVOT_REAR_FOCUS_OPTIONS=Object.freeze({
 distance:.086,sideBias:.52,rearBias:.9,upBias:.014});const PIVOT_FRONT_FOCUS_OPTIONS=Object.freeze({distance:.086,
 sideBias:.52,rearBias:-.9,upBias:.011});const PIVOT_XRAY_FOCUS_OPTIONS=Object.freeze({distance:.082,sideBias:.58,
 rearBias:.88,upBias:.012});const PIVOT_REAR_CORNER_FOCUS_OPTIONS=Object.freeze({distance:.078,sideBias:.76,rearBias:.96,
@@ -2424,12 +2453,12 @@ pivotRedesignRev:PIVOT_REDESIGN_REV,beginPivotPlugDrag:(clientY=0)=>beginPivotPl
 endPivotPlugDrag:(snap=true)=>endPivotPlugDrag(0,snap),getPivotPlugState:()=>({ready:pivotPlugReady,inserted:pivotPlugInserted,slideT:pivotPlugSlideT,dragActive:pivotPlugDragActive})}
 ;window.QIHANG_MODEL={setState:patch=>{applyRemoteState(patch||{});return getViewerState()},
 getState:()=>getViewerState(),command:name=>{const handled=runRemoteCommand({name:name});return{handled:handled,
-state:getViewerState()}}};window.qihangModel=window.QIHANG_MODEL;syncUiLabels();applyNightLighting(nightOn)
-;updateStatus();applyColorway(activeColorway);setMode(mode);loadProductGlbVisuals()
+state:getViewerState()}}};window.qihangModel=window.QIHANG_MODEL;runBatchedViewerUpdate(()=>{syncUiLabels();applyNightLighting(nightOn)
+;updateStatus();applyColorway(activeColorway);setMode(mode)});loadProductGlbVisuals()
 ;[[btnOpen,()=>setOpen(!isOpen)],[btnCam,()=>setCamDetach(!camDetached)],[btnEarbuds,()=>setEarbuds(!earbudsOut)],[btnDream,()=>setDream(!dreamOn)],[btnSpin,()=>setSpin(!autoSpin)],[btnExplode,()=>setExplode(!exploded)],[btnXray,()=>setXray(!xrayOn)],[btnNight,()=>setNightMode(!nightOn)],[btnPivotPlug,()=>togglePivotPlugInteractive()],[btnLayer,cycleLayer],[btnReset,resetView]].forEach(([el,handler])=>{
 if(el)el.addEventListener("click",handler)});if(selectMode){selectMode.addEventListener("change",e=>{
 setMode(e.target.value)})}if(selectColorway){selectColorway.addEventListener("change",e=>{applyColorway(e.target.value)
-;drawScreenHud()})}renderer.domElement.addEventListener("pointermove",e=>{if(pivotPlugDragActive&&e.pointerId===pivotPlugDragPointerId){
+;drawScreenHud()})}renderer.domElement.addEventListener("pointermove",e=>{if(viewerStorySurface&&e.isPrimary){extendStoryBurst(240)}if(pivotPlugDragActive&&e.pointerId===pivotPlugDragPointerId){
 updatePivotPlugDrag(e.clientY);e.preventDefault();e.stopPropagation();return}if(earInspectActive||pivotInspectActive){
 if(inspectPointerDown&&!inspectPointerMoved){const dx=e.clientX-inspectPointerDownX
 ;const dy=e.clientY-inspectPointerDownY;if(dx*dx+dy*dy>INSPECT_CLICK_MOVE_PX*INSPECT_CLICK_MOVE_PX){
@@ -2442,6 +2471,7 @@ const hoveringScreen=updateScreenHover(e.clientX,e.clientY)
 renderer.domElement.style.cursor=""})
 ;renderer.domElement.addEventListener("pointerleave",()=>{if(hoveredScreenAction){hoveredScreenAction="";drawScreenHud()
 }pivotPlugHovering=false;endPivotPlugDrag(undefined,false);renderer.domElement.style.cursor=""});renderer.domElement.addEventListener("pointerdown",e=>{
+if(viewerStorySurface){extendStoryBurst(1200)}
 if(!earInspectActive&&!pivotInspectActive){const consumed=onScreenPointerTap(e.clientX,e.clientY);if(consumed){
 e.preventDefault();e.stopPropagation();return}if(detectLatchButtonFromPointer(e.clientX,e.clientY)){setOpen(!isOpen)
 ;e.preventDefault();e.stopPropagation();return}if(detectPivotPlugFromPointer(e.clientX,e.clientY)&&beginPivotPlugDrag(e.pointerId,e.clientY)){
@@ -2626,11 +2656,18 @@ if(result instanceof ArrayBuffer){downloadBlob(new Blob([result],{type:"applicat
 }),`qihang_product_${activeColorway}.glb`)}else{downloadBlob(new Blob([JSON.stringify(result,null,2)],{
 type:"application/json"}),`qihang_product_${activeColorway}.gltf`)}},err=>{console.error(err)
 ;alert("Export failed. Check console.")},{binary:true,trs:true})}btnExport.addEventListener("click",exportGlb)
-;if(btnExportStlPack){btnExportStlPack.addEventListener("click",exportStlPack)}let t=0;let lastFrameAt=performance.now()
+;if(btnExportStlPack){btnExportStlPack.addEventListener("click",exportStlPack)}let t=0;let lastFrameAt=performance.now();let lastDiagnosticsAt=0;let lastStoryFrameAt=0;let storyBurstUntil=performance.now()+1200
+;function extendStoryBurst(ms=960){if(!viewerStorySurface)return;storyBurstUntil=Math.max(storyBurstUntil,performance.now()+ms)}
+;function storyNeedsBurst(now){return pivotPlugDragActive||Math.abs(explodeT-(exploded?1:0))>.002||Math.abs(earOutT-(earbudsOut?1:0))>.002||Math.abs(latchPressPulse)>.002||Math.abs(pivotAngularVelocityDeg)>.02||now<storyBurstUntil}
+;function getStoryFrameBudget(now){if(storyNeedsBurst(now))return 28;if(autoSpin||dreamOn)return 42;return 84}
 ;function animate(){requestAnimationFrame(animate);const now=performance.now()
+;if(document.hidden){lastFrameAt=now;return}
+;if(embeddedPaused){lastFrameAt=now;return}
+;if(viewerStorySurface&&now-lastStoryFrameAt<getStoryFrameBudget(now)){return}
+;if(viewerStorySurface){lastStoryFrameAt=now}
 ;const dt=Math.min(.05,Math.max(.001,(now-lastFrameAt)/1e3));lastFrameAt=now;t+=dt
-;if(autoSpin){product.rotation.y+=.004*dt/.016}explodeT+=((exploded?1:0)-explodeT)*.08
-;const earOutGoal=earbudsOut?1:0;earOutT+=(earOutGoal-earOutT)*.1;updatePivotDynamics(dt)
+;if(autoSpin){product.rotation.y+=.004*dt/.016}if(viewerStorySurface){explodeT=exploded?1:0}else{explodeT+=((exploded?1:0)-explodeT)*.08}
+;const earOutGoal=earbudsOut?1:0;if(viewerStorySurface){earOutT=earOutGoal}else{earOutT+=(earOutGoal-earOutT)*.1}updatePivotDynamics(dt)
 ;const pivotBucket=Math.round(pivotAngleDeg/12)
 ;if(pivotBucket!==lastPivotStatusBucket||pivotState!==lastPivotStatusState){lastPivotStatusBucket=pivotBucket
 ;lastPivotStatusState=pivotState;updateStatus()}const lidOpenT=getLidOpenFactor()
@@ -2638,8 +2675,9 @@ type:"application/json"}),`qihang_product_${activeColorway}.gltf`)}},err=>{conso
 ;const latchRetractT=THREE.MathUtils.smoothstep(lidOpenT,LATCH_TAB_UNLOCK_START,LATCH_TAB_UNLOCK_END)
 ;applyLidPoseByAngle(pivotAngleDeg);if(!STRICT_LID_AXIS_ROTATION){lidPivot.position.y+=.018*explodeT}
 ;enforceClosedConcentricGuard(lidOpenT);lidPivot.updateMatrixWorld(true);baseGroup.updateMatrixWorld(true)
-;lidGroup.updateMatrixWorld(true);baseShellVisualBox.setFromObject(baseShell);baseShellVisibleMinWorldY=baseShellVisualBox.isEmpty()?baseBottomWorldY:baseShellVisualBox.min.y
-;updatePivotPlugTransform(dt);updatePivotPlugGuide(dt);const closedMetricsNow=measureClosedPoseMetrics();if(closedMetricsNow){lidClosedSeamGapMm=closedMetricsNow.seamGapY/MM}
+;lidGroup.updateMatrixWorld(true);if(!viewerStorySurface){baseShellVisualBox.setFromObject(baseShell);baseShellVisibleMinWorldY=baseShellVisualBox.isEmpty()?baseBottomWorldY:baseShellVisualBox.min.y}
+;updatePivotPlugTransform(viewerStorySurface?0:dt,viewerStorySurface);updatePivotPlugGuide(viewerStorySurface?0:dt);const shouldRefreshDiagnostics=!viewerStorySurface&&(pivotInspectActive||earInspectActive||now-lastDiagnosticsAt>=120)
+;if(shouldRefreshDiagnostics){lastDiagnosticsAt=now;const closedMetricsNow=measureClosedPoseMetrics();if(closedMetricsNow){lidClosedSeamGapMm=closedMetricsNow.seamGapY/MM}
 ;pivotAxisAlignmentDeg=getPivotAxisAlignmentDeg();let shellGapNow=Math.max(PIVOT_CLEARANCE_SPEC.threadClearance,MECH.shellMinPathClearance)
 ;const pivotValidation=validatePivotPathClearance();pivotPathSafeOpenDeg=pivotValidation.safeOpenDeg
 ;pivotPathMinClearance=pivotValidation.minPivotGapObserved
@@ -2665,14 +2703,17 @@ const deficit=PIVOT_INTERSECT_THRESHOLD-clearanceSnapshot.pivotGap
 ;if(Number.isFinite(guardedSnapshot.rearCornerGap))rearCornerGapNow=guardedSnapshot.rearCornerGap
 ;pivotClipGuardActive=true}const runtimeGuardSnapshot=applyRuntimePivotClipGuard(shellGapNow,rearCornerGapNow,lidOpenT)
 ;shellGapNow=runtimeGuardSnapshot.shellGap;rearCornerGapNow=runtimeGuardSnapshot.rearCornerGap
-;pivotShellCurrentClearance=shellGapNow;pivotRearCornerCurrentClearance=rearCornerGapNow;const pivotExplodeTarget=pivotInspectActive&&pivotExplodeActive?1:0
+;pivotShellCurrentClearance=shellGapNow;pivotRearCornerCurrentClearance=rearCornerGapNow
+;const pivotExplodeTarget=pivotInspectActive&&pivotExplodeActive?1:0
 ;pivotExplodeT+=(pivotExplodeTarget-pivotExplodeT)*.18;applyPivotExplodeLayoutFactor(pivotExplodeT)
 ;if(pivotInspectActive&&pivotExplodeT>.02){let inspectGap=evaluatePivotInspectClearance()
 ;const minInspectGap=PIVOT_ENGINEERING.inspect_module_clearance_mm*MM
 ;if(Number.isFinite(inspectGap)&&inspectGap<minInspectGap){
 const scale=THREE.MathUtils.clamp(inspectGap/minInspectGap,.68,1);applyPivotExplodeLayoutFactor(pivotExplodeT*scale)
 ;inspectGap=evaluatePivotInspectClearance()}pivotInspectMinClearance=Math.max(inspectGap,minInspectGap)}else{
-pivotInspectMinClearance=PIVOT_ENGINEERING.inspect_module_clearance_mm*MM}latchTabStates.forEach(item=>{
+pivotInspectMinClearance=PIVOT_ENGINEERING.inspect_module_clearance_mm*MM}
+;updateEarbudManufacturingMetrics()}const pivotExplodeTarget=pivotInspectActive&&pivotExplodeActive?1:0
+;if(!shouldRefreshDiagnostics){pivotExplodeT+=(pivotExplodeTarget-pivotExplodeT)*.18;applyPivotExplodeLayoutFactor(pivotExplodeT)}latchTabStates.forEach(item=>{
 const radius=item.baseRadius-LATCH_TAB_RETRACT_DIST*latchRetractT
 ;item.node.position.set(Math.cos(item.angle)*radius,item.baseY,Math.sin(item.angle)*radius)})
 ;latchPressPulse+=(0-latchPressPulse)*.18;const pressMix=Math.max(latchRetractT*.9,latchPressPulse)
@@ -2686,14 +2727,14 @@ tmpV1.lerpVectors(earLBasePos,earLExplodePos,explodeT);tmpV2.lerpVectors(earLOut
 const dockPoseLocked=earOutT<.2&&!exploded;if(dockPoseLocked){earL.position.copy(earLBasePos)
 ;earL.rotation.copy(earLBaseRot);earR.position.copy(earRBasePos);earR.rotation.copy(earRBaseRot)
 ;if(STRICT_EARBUD_MIRROR){enforceStrictEarMirrorPose()}}
-updateEarbudManufacturingMetrics();if(updateCaptureHardwareState()){emitViewerState()}
+if(!viewerStorySurface&&updateCaptureHardwareState()){emitViewerState()}
 tmpV1.copy(camDetached?camDetachPos:camDockPos);tmpV2.copy(tmpV1).addScaledVector(camExplodeAdd,explodeT)
-;camGroup.position.lerp(tmpV2,.1);camBox.setFromObject(camGroup);if(!camDetached){
+;if(viewerStorySurface){camGroup.position.copy(tmpV2)}else{camGroup.position.lerp(tmpV2,.1)}camBox.setFromObject(camGroup);if(!camDetached){
 const camMinAllowed=Math.max(camSlotFloorWorldY+6e-4,baseBottomWorldY+.0021);if(camBox.min.y<camMinAllowed){
 camGroup.position.y+=camMinAllowed-camBox.min.y}}const targetRotX=camDetached?-Math.PI*.26:0
-;camGroup.rotation.x+=(targetRotX-camGroup.rotation.x)*.1;const targetRotY=camDetached?.12+.08*explodeT:.06*explodeT
-;camGroup.rotation.y+=(targetRotY-camGroup.rotation.y)*.1;const targetRotZ=camDetached?.02:0
-;camGroup.rotation.z+=(targetRotZ-camGroup.rotation.z)*.1;if(LED_ENABLED){
+;camGroup.rotation.x=viewerStorySurface?targetRotX:camGroup.rotation.x+(targetRotX-camGroup.rotation.x)*.1;const targetRotY=camDetached?.12+.08*explodeT:.06*explodeT
+;camGroup.rotation.y=viewerStorySurface?targetRotY:camGroup.rotation.y+(targetRotY-camGroup.rotation.y)*.1;const targetRotZ=camDetached?.02:0
+;camGroup.rotation.z=viewerStorySurface?targetRotZ:camGroup.rotation.z+(targetRotZ-camGroup.rotation.z)*.1;if(LED_ENABLED){
 const modeLedFactor=mode==="online"?1.05:mode==="hybrid"?.88:.72;const xrayLedBoost=xrayOn?.72:1
 ;const nightLedBoost=nightOn?1.7:1;const breatheBase=(isOpen?.3:.2)*modeLedFactor
 ;const breathePulse=(.06+.04*modeLedFactor)*(.5+.5*Math.sin(t*1.9))
