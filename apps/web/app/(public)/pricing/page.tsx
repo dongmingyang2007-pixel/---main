@@ -1,38 +1,66 @@
-import { ContentRail } from "@/components/ContentRail";
-import { PublicStoryExperience } from "@/components/PublicStoryExperience";
-import { PublicDocumentLink } from "@/components/PublicDocumentLink";
-import { PRICING_COMPARE_RAIL, PRICING_STORY_SCENES } from "@/lib/public-story-content";
+"use client";
+
+import { useRef, useEffect } from "react";
+import { gsap } from "@/lib/gsap-register";
+import { MagneticButton } from "@/components/MagneticButton";
+import { PRICING_COMPARE_RAIL } from "@/lib/public-story-content";
 
 export default function PricingPage() {
-  return (
-    <PublicStoryExperience
-      scenes={PRICING_STORY_SCENES}
-      actions={[
-        { href: "/demo", label: "免费体验" },
-        { href: "/contact", label: "申请内测", variant: "secondary" },
-      ]}
-      scrollNote="向下滑动，了解每个方案"
-    >
-      <ContentRail
-        eyebrow="Plans"
-        title="三个方案，按需选择。"
-        summary="从免费体验到团队协作，按你的阶段升级。"
-        items={PRICING_COMPARE_RAIL}
-        variant="plans"
-      />
+  const containerRef = useRef<HTMLDivElement>(null);
 
-      <section className="story-band is-final">
-        <div className="home-story-eyebrow">Get Started</div>
-        <h2 className="home-story-band-title">先免费试试。</h2>
-        <div className="home-story-actions">
-          <PublicDocumentLink href="/demo" className="home-story-button is-primary">
-            打开 Demo
-          </PublicDocumentLink>
-          <PublicDocumentLink href="/contact" className="home-story-button">
-            申请 Studio
-          </PublicDocumentLink>
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cards = el.querySelectorAll(".pricing-card");
+    gsap.from(cards, {
+      opacity: 0,
+      y: 30,
+      stagger: 0.1,
+      duration: 0.6,
+      ease: "power2.out",
+      scrollTrigger: {
+        trigger: el.querySelector(".pricing-grid"),
+        start: "top 80%",
+        once: true,
+      },
+    });
+  }, []);
+
+  return (
+    <div ref={containerRef}>
+      <section className="flex min-h-[40vh] flex-col items-center justify-center px-6 text-center">
+        <h1 className="text-[var(--font-size-hero)] font-bold text-[var(--text-primary)]">
+          Pricing
+        </h1>
+        <p className="mt-4 max-w-xl text-lg text-[var(--text-secondary)]">
+          选择适合你的方案。
+        </p>
+      </section>
+
+      <section className="pricing-grid mx-auto max-w-5xl px-6 py-16">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {PRICING_COMPARE_RAIL.map((plan) => (
+            <div
+              key={plan.title}
+              className="pricing-card flex flex-col rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-6"
+            >
+              <p className="text-xs font-medium tracking-wider text-[var(--text-secondary)] uppercase">
+                {plan.label}
+              </p>
+              <h3 className="mt-2 text-xl font-bold text-[var(--text-primary)]">{plan.title}</h3>
+              <p className="mt-2 flex-1 text-sm text-[var(--text-secondary)]">{plan.body}</p>
+              <div className="mt-6">
+                <MagneticButton
+                  href="/demo"
+                  className="block w-full rounded-[var(--radius-md)] bg-[var(--brand-v2)] py-2.5 text-center text-sm font-medium text-white"
+                >
+                  Get Started
+                </MagneticButton>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
-    </PublicStoryExperience>
+    </div>
   );
 }
