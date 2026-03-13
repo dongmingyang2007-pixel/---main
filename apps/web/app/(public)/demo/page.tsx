@@ -486,7 +486,7 @@ function modeFromIcons(icons: string[]): "offline" | "online" | "hybrid" {
 
 function commandBtn(enabled: boolean, active = false): string {
   const tone = active
-    ? "border-[var(--brand)] bg-[var(--brand)] text-white shadow-[0_16px_30px_rgba(17,115,255,0.18)]"
+    ? "border-[var(--brand-v2)] bg-[var(--brand-v2)] text-white shadow-[0_16px_30px_rgba(17,115,255,0.18)]"
     : "border-[rgba(17,24,39,0.12)] bg-white text-[var(--fg)]";
   const disabled = enabled ? "" : " cursor-not-allowed opacity-45";
   return `min-h-[42px] rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${tone}${disabled}`;
