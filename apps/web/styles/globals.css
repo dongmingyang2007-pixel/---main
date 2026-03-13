@@ -60,6 +60,116 @@
   --site-width: 1120px;
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+  /* ── New design tokens (v2) ────────────────────── */
+  /* Colors — Public site light mode */
+  --bg-base: #ffffff;
+  --bg-surface: #f8fafc;
+  --bg-raised: #f1f5f9;
+  --border: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --brand-v2: #0f76ff;
+  --brand-soft: rgba(15, 118, 255, 0.08);
+  --success-v2: #16a34a;
+  --warning-v2: #d97706;
+  --error: #dc2626;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radii (v2) */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Typography scale */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+  --font-size-4xl: 2.25rem;
+  --font-size-hero: clamp(2.5rem, 5vw, 4.5rem);
+
+  /* Duration tokens */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+  --duration-scroll: 0.3s;
+
+  /* Easing tokens (v2) */
+  --ease-out-v2: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring-v2: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-linear: linear;
+
+  /* ── shadcn/ui token bridge ──────────────────── */
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--brand-v2);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-raised);
+  --secondary-foreground: var(--text-primary);
+  --muted-v2: var(--bg-raised);
+  --muted-foreground: var(--text-secondary);
+  --accent-v2: var(--bg-raised);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--error);
+  --destructive-foreground: #ffffff;
+  --ring: var(--brand-v2);
+  --input: var(--border);
+  --radius: var(--radius-md);
+}
+
+/* ── Console dark tokens (Deep Slate) ──────────── */
+[data-theme="console"] {
+  --bg-base: #020617;
+  --bg-surface: #0f172a;
+  --bg-raised: #1e293b;
+  --border: #334155;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --brand-v2: #0f76ff;
+  --brand-soft: rgba(15, 118, 255, 0.13);
+  --success-v2: #4ade80;
+  --warning-v2: #fbbf24;
+  --error: #f87171;
+
+  /* shadcn bridge overrides */
+  --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--brand-v2);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-raised);
+  --secondary-foreground: var(--text-primary);
+  --muted-v2: var(--bg-raised);
+  --muted-foreground: var(--text-secondary);
+  --accent-v2: var(--bg-raised);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--error);
+  --destructive-foreground: #ffffff;
+  --ring: var(--brand-v2);
+  --input: var(--border);
 }
 
 * {
