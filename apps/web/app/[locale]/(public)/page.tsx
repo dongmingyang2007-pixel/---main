@@ -7,7 +7,16 @@ import { CTAScene } from "@/components/public/CTAScene";
 
 export async function generateMetadata() {
   const t = await getTranslations("home");
-  return { title: t("meta.title"), description: t("meta.description") };
+  return {
+    title: t("meta.title"),
+    description: t("meta.description"),
+    alternates: {
+      languages: {
+        zh: "/",
+        en: "/en",
+      },
+    },
+  };
 }
 
 export default async function HomePage() {

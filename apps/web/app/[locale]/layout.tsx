@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
-import { getMessages, getTranslations } from "next-intl/server";
+import { getLocale, getMessages, getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { Providers } from "@/components/providers";
@@ -25,6 +25,7 @@ export function generateStaticParams() {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
   const t = await getTranslations("common");
   const th = await getTranslations("home");
   return {
@@ -33,6 +34,15 @@ export async function generateMetadata(): Promise<Metadata> {
       default: th("meta.title"),
     },
     description: th("meta.description"),
+    openGraph: {
+      locale: locale === "zh" ? "zh_CN" : "en_US",
+    },
+    alternates: {
+      languages: {
+        zh: "/",
+        en: "/en",
+      },
+    },
   };
 }
 
