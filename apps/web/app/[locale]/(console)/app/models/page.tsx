@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { FormEvent, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { ConsoleTableSkeleton } from "@/components/ConsoleSkeleton";
 import { DataTable } from "@/components/DataTable";
@@ -17,6 +18,7 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("Personal Assistant");
   const [taskType, setTaskType] = useState("general");
+  const t = useTranslations("console-models");
 
   const loadModels = async (pid: string) => {
     setLoading(true);
@@ -51,10 +53,10 @@ export default function ModelsPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Models
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">模型仓库</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">登记版本，发布 alias，并保留回滚路径。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="console-panel">

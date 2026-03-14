@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { FormEvent, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { ConsoleTableSkeleton } from "@/components/ConsoleSkeleton";
 import { DataTable } from "@/components/DataTable";
@@ -17,6 +18,7 @@ export default function DatasetsPage() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [type, setType] = useState("images");
+  const t = useTranslations("console-datasets");
 
   const loadDatasets = async (pid: string) => {
     setLoading(true);
@@ -48,10 +50,10 @@ export default function DatasetsPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Datasets
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">数据集与版本</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">上传样本、冻结版本，再让训练和评测复用同一批数据。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="console-panel">

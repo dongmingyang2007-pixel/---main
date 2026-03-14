@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { DataTable } from "@/components/DataTable";
 import { PageTransition } from "@/components/console/PageTransition";
@@ -39,6 +40,7 @@ export default function ModelDetailPage() {
   const [aliasName, setAliasName] = useState<"prod" | "staging" | "dev">("prod");
   const [aliasVersionId, setAliasVersionId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const t = useTranslations("console-models");
 
   const load = async () => {
     const detail = await apiGet<{ model: { id: string; name: string }; aliases: Alias[] }>(`/api/v1/models/${modelId}`);
@@ -121,10 +123,10 @@ export default function ModelDetailPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Models
+              {t("kicker")}
             </p>
             <h1 className="mt-2 text-2xl font-bold">模型详情</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">管理版本和发布。</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">

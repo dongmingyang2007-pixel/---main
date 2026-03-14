@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
@@ -8,6 +9,7 @@ import { apiPost } from "@/lib/api";
 
 export default function SettingsPage() {
   const [msg, setMsg] = useState("");
+  const t = useTranslations("console-settings");
 
   return (
     <PanelLayout>
@@ -15,18 +17,18 @@ export default function SettingsPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Settings
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">账户与安全</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">管理账户、安全和后续敏感操作入口。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="console-panel">
         <div className="console-panel-header">
           <div>
-            <h2 className="console-panel-title">账户操作</h2>
-            <p className="console-panel-description">当前版本先保留登录管理和删除流程入口，后续会补上 API Key 与团队设置。</p>
+            <h2 className="console-panel-title">{t("panel.title")}</h2>
+            <p className="console-panel-description">{t("panel.description")}</p>
           </div>
         </div>
         <div className="console-panel-body">

@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { FormEvent, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { ConsoleTableSkeleton } from "@/components/ConsoleSkeleton";
 import { DataTable } from "@/components/DataTable";
@@ -30,6 +31,7 @@ export default function TrainPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const t = useTranslations("console-train");
 
   const loadJobs = async (pid: string) => {
     if (!pid) {
@@ -111,10 +113,10 @@ export default function TrainPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Train
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">训练作业</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">创建任务，查看状态、日志、指标和产物。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="console-panel">

@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
@@ -12,6 +13,7 @@ export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const projectId = Array.isArray(params.id) ? params.id[0] : params.id;
   const [project, setProject] = useState<{ id: string; name: string; description?: string } | null>(null);
+  const t = useTranslations("console-projects");
 
   useEffect(() => {
     if (!projectId) return;
@@ -19,7 +21,7 @@ export default function ProjectDetailPage() {
   }, [projectId]);
 
   if (!project) {
-    return <PanelLayout><div className="console-panel"><div className="console-panel-body">加载中...</div></div></PanelLayout>;
+    return <PanelLayout><div className="console-panel"><div className="console-panel-body">{t("loading")}</div></div></PanelLayout>;
   }
 
   return (
@@ -28,10 +30,10 @@ export default function ProjectDetailPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Projects
+              {t("detail.kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">项目详情</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">查看项目内容。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("detail.title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("detail.description")}</p>
           </div>
 
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">

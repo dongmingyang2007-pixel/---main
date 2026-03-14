@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
@@ -38,6 +39,7 @@ export default function EvalPage() {
   const [result, setResult] = useState<EvalResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const t = useTranslations("console-eval");
 
   const metrics = result?.summary?.metrics;
   const samples = result?.samples;
@@ -49,10 +51,10 @@ export default function EvalPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Eval
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">评测回放</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">对照版本结果，为发布决策提供依据。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="console-panel">

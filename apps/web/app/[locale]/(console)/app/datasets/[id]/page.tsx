@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { DataTable } from "@/components/DataTable";
 import { Uploader } from "@/components/Uploader";
@@ -38,6 +39,7 @@ export default function DatasetDetailPage() {
   const [tagInput, setTagInput] = useState<Record<string, string>>({});
   const [commitMessage, setCommitMessage] = useState("v1 baseline");
   const [commitResult, setCommitResult] = useState("");
+  const t = useTranslations("console-datasets");
 
   const load = async () => {
     const [data, versionData] = await Promise.all([
@@ -59,7 +61,7 @@ export default function DatasetDetailPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Datasets
+              {t("kicker")}
             </p>
             <h1 className="mt-2 text-2xl font-bold">数据集详情</h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">浏览样本、上传文件和管理版本。</p>

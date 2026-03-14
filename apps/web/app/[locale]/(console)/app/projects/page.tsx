@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { ConsoleTableSkeleton } from "@/components/ConsoleSkeleton";
 import { DataTable } from "@/components/DataTable";
@@ -16,6 +17,7 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const t = useTranslations("console-projects");
 
   const load = async () => {
     const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
@@ -40,10 +42,10 @@ export default function ProjectsPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Projects
+              {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">项目空间</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">按项目切开数据、训练和模型版本的边界。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
       <section className="console-panel">

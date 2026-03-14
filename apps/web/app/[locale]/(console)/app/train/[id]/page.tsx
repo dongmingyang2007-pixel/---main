@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { JobLogViewer } from "@/components/JobLogViewer";
 import { MetricChart } from "@/components/MetricChart";
@@ -35,6 +36,7 @@ export default function TrainDetailPage() {
   const [job, setJob] = useState<JobResponse["job"] | null>(null);
   const [useSse, setUseSse] = useState(false);
   const eventRef = useRef<EventSource | null>(null);
+  const t = useTranslations("console-train");
 
   useEffect(() => {
     if (!jobId) return;
@@ -130,7 +132,7 @@ export default function TrainDetailPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Train
+              {t("kicker")}
             </p>
             <h1 className="mt-2 text-2xl font-bold">训练详情</h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">查看日志、指标和产物。</p>

@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { ConsoleSkeleton } from "@/components/ConsoleSkeleton";
 import { ContentRail } from "@/components/ContentRail";
@@ -20,6 +21,7 @@ type ModelVersion = { id: string; version: number };
 export default function DashboardPage() {
   const [summary, setSummary] = useState({ projects: 0, datasets: 0, jobs: 0, modelVersion: "-" });
   const [loading, setLoading] = useState(true);
+  const t = useTranslations("console");
 
   useEffect(() => {
     async function load() {
@@ -81,7 +83,7 @@ export default function DashboardPage() {
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
               Studio Overview
             </p>
-            <h1 className="mt-2 text-2xl font-bold">数据工作台总览</h1>
+            <h1 className="mt-2 text-2xl font-bold">{t("nav.dashboard")}</h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">先看状态，再决定下一步进入项目、数据集、训练还是模型仓。</p>
           </div>
 
