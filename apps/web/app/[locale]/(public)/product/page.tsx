@@ -4,10 +4,26 @@ import { useRef, useEffect } from "react";
 import { gsap } from "@/lib/gsap-register";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 import { MagneticButton } from "@/components/MagneticButton";
-import { PRODUCT_STORY_SCENES } from "@/lib/public-story-content";
+import { useTranslations } from "next-intl";
+import { PRODUCT_SCENES } from "@/lib/product-data";
 
 export default function ProductPage() {
+  const t = useTranslations("product");
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const scenes = PRODUCT_SCENES.map((scene) => ({
+    ...scene,
+    eyebrow: t(`scenes.${scene.id}.eyebrow`),
+    title: t(`scenes.${scene.id}.title`),
+    summary: t(`scenes.${scene.id}.summary`),
+    stageLabel: t(`scenes.${scene.id}.stageLabel`),
+    stageSummary: t(`scenes.${scene.id}.stageSummary`),
+    stageTags: t(`scenes.${scene.id}.tags`).split(","),
+    details: [0, 1, 2].map((i) => ({
+      label: t(`scenes.${scene.id}.detail${i}.label`),
+      body: t(`scenes.${scene.id}.detail${i}.body`),
+    })),
+  }));
 
   useEffect(() => {
     const el = containerRef.current;
@@ -30,9 +46,9 @@ export default function ProductPage() {
       );
     });
     return () => {
-      tweens.forEach((t) => {
-        t.scrollTrigger?.kill();
-        t.kill();
+      tweens.forEach((tw) => {
+        tw.scrollTrigger?.kill();
+        tw.kill();
       });
     };
   }, []);
@@ -42,18 +58,18 @@ export default function ProductPage() {
       {/* Hero */}
       <section className="flex min-h-[70vh] flex-col items-center justify-center px-6 text-center">
         <h1 className="text-[var(--font-size-hero)] font-bold text-[var(--text-primary)]">
-          Product
+          {t("hero.title")}
         </h1>
         <p className="mt-4 max-w-xl text-lg text-[var(--text-secondary)]">
-          随身携带的 AI 感知系统。
+          {t("hero.title")}
         </p>
         <div className="mt-8 w-full max-w-2xl">
           <ImagePlaceholder label="Product Hero Shot" aspect="16/9" icon="photo" />
         </div>
       </section>
 
-      {/* Sections from existing story content */}
-      {PRODUCT_STORY_SCENES.map((scene) => (
+      {/* Sections from product data + translations */}
+      {scenes.map((scene) => (
         <section
           key={scene.id}
           className="product-section mx-auto max-w-5xl px-6 py-20"
@@ -92,7 +108,7 @@ export default function ProductPage() {
 
       {/* CTA */}
       <section className="flex flex-col items-center justify-center px-6 py-20 text-center">
-        <h2 className="text-2xl font-bold text-[var(--text-primary)]">体验产品</h2>
+        <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("hero.cta")}</h2>
         <div className="mt-6 flex gap-4">
           <MagneticButton href="/demo" className="rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-6 py-3 text-sm font-medium text-white">
             Try Demo
