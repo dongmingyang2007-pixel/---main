@@ -4,9 +4,15 @@ import { useRef, useEffect } from "react";
 import { gsap } from "@/lib/gsap-register";
 import { TextReveal } from "@/components/TextReveal";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
-import type { HomeScene } from "@/lib/home-content";
 
-export function HeroScene({ scene }: { scene: HomeScene }) {
+interface HeroSceneProps {
+  eyebrow: string;
+  title: string;
+  body: string;
+  imageAlt: string;
+}
+
+export function HeroScene({ eyebrow, title, body, imageAlt }: HeroSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -21,20 +27,20 @@ export function HeroScene({ scene }: { scene: HomeScene }) {
   return (
     <div ref={containerRef} className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
       <p className="mb-4 text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
-        {scene.eyebrow}
+        {eyebrow}
       </p>
       <h1 className="text-[var(--font-size-hero)] font-bold leading-tight text-[var(--text-primary)]">
-        {scene.title.split("\n").map((line, i) => (
+        {title.split("\n").map((line, i) => (
           <span key={i} className="block">
             <TextReveal text={line} tag="span" />
           </span>
         ))}
       </h1>
       <p className="hero-body mt-6 max-w-xl text-lg text-[var(--text-secondary)]">
-        {scene.body}
+        {body}
       </p>
       <div className="hero-image mt-12 w-full max-w-2xl">
-        <ImagePlaceholder label="Earphone Hero Shot / 3D Viewer" aspect="16/9" icon="photo" />
+        <ImagePlaceholder label={imageAlt} aspect="16/9" icon="photo" />
       </div>
     </div>
   );

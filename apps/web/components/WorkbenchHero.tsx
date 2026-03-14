@@ -12,17 +12,19 @@ export function WorkbenchHero({
   title,
   summary,
   points,
+  statusLabel = "Studio Access",
 }: {
   eyebrow: string;
   title: string;
   summary: string;
   points: WorkbenchPoint[];
+  statusLabel?: string;
 }) {
   return (
     <section className="workbench-hero">
       <div className="workbench-hero-topline" data-reveal="fade">
         <div className="site-kicker is-on-dark">{eyebrow}</div>
-        <div className="workbench-hero-status">Studio Access</div>
+        <div className="workbench-hero-status">{statusLabel}</div>
       </div>
       <TextReveal
         text={title}

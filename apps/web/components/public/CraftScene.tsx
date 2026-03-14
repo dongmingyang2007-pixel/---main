@@ -3,9 +3,14 @@
 import { useRef, useEffect } from "react";
 import { gsap } from "@/lib/gsap-register";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
-import type { HomeScene } from "@/lib/home-content";
 
-export function CraftScene({ scene }: { scene: HomeScene }) {
+interface CraftSceneProps {
+  eyebrow: string;
+  title: string;
+  body: string;
+}
+
+export function CraftScene({ eyebrow, title, body }: CraftSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -13,35 +18,44 @@ export function CraftScene({ scene }: { scene: HomeScene }) {
     if (!el) return;
     const bgLayer = el.querySelector(".craft-bg");
     const fgLayer = el.querySelector(".craft-fg");
+    const tweens: gsap.core.Tween[] = [];
 
     if (bgLayer && fgLayer) {
-      gsap.to(bgLayer, {
-        yPercent: -15,
-        ease: "none",
-        scrollTrigger: {
-          trigger: el,
-          start: "top bottom",
-          end: "bottom top",
-          scrub: true,
-        },
-      });
-      gsap.to(fgLayer, {
-        yPercent: 10,
-        ease: "none",
-        scrollTrigger: {
-          trigger: el,
-          start: "top bottom",
-          end: "bottom top",
-          scrub: true,
-        },
-      });
+      tweens.push(
+        gsap.to(bgLayer, {
+          yPercent: -15,
+          ease: "none",
+          scrollTrigger: {
+            trigger: el,
+            start: "top bottom",
+            end: "bottom top",
+            scrub: true,
+          },
+        }),
+        gsap.to(fgLayer, {
+          yPercent: 10,
+          ease: "none",
+          scrollTrigger: {
+            trigger: el,
+            start: "top bottom",
+            end: "bottom top",
+            scrub: true,
+          },
+        }),
+      );
     }
 
     const tl = gsap.timeline({
       scrollTrigger: { trigger: el, start: "top 60%", once: true },
     });
     tl.from(el.querySelector(".craft-copy"), { opacity: 0, y: 30, duration: 0.7 });
-    return () => { tl.kill(); };
+    return () => {
+      tweens.forEach((t) => {
+        t.scrollTrigger?.kill();
+        t.kill();
+      });
+      tl.kill();
+    };
   }, []);
 
   return (
@@ -61,12 +75,12 @@ export function CraftScene({ scene }: { scene: HomeScene }) {
         {/* Copy */}
         <div className="craft-copy flex flex-col justify-center">
           <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
-            {scene.eyebrow}
+            {eyebrow}
           </p>
           <h2 className="mt-4 text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-            {scene.title}
+            {title}
           </h2>
-          <p className="mt-4 text-[var(--text-secondary)]">{scene.body}</p>
+          <p className="mt-4 text-[var(--text-secondary)]">{body}</p>
         </div>
       </div>
     </div>

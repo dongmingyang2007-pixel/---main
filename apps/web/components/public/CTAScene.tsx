@@ -3,9 +3,15 @@
 import { useRef, useEffect } from "react";
 import { gsap } from "@/lib/gsap-register";
 import { MagneticButton } from "@/components/MagneticButton";
-import type { HomeScene } from "@/lib/home-content";
 
-export function CTAScene({ scene }: { scene: HomeScene }) {
+interface CTASceneProps {
+  title: string;
+  body: string;
+  demoLabel: string;
+  productLabel: string;
+}
+
+export function CTAScene({ title, body, demoLabel, productLabel }: CTASceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,21 +32,21 @@ export function CTAScene({ scene }: { scene: HomeScene }) {
       className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center"
     >
       <h2 className="cta-title text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-        {scene.title}
+        {title}
       </h2>
-      <p className="mt-4 text-lg text-[var(--text-secondary)]">{scene.body}</p>
+      <p className="mt-4 text-lg text-[var(--text-secondary)]">{body}</p>
       <div className="mt-10 flex flex-wrap justify-center gap-4">
         <MagneticButton
           href="/demo"
           className="cta-btn inline-block rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-8 py-4 text-base font-semibold text-white"
         >
-          Try Demo
+          {demoLabel}
         </MagneticButton>
         <MagneticButton
           href="/product"
           className="cta-btn inline-block rounded-[var(--radius-full)] border border-[var(--border)] px-8 py-4 text-base font-semibold text-[var(--text-primary)]"
         >
-          View Product
+          {productLabel}
         </MagneticButton>
       </div>
     </div>

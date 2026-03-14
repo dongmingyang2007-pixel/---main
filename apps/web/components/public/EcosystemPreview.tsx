@@ -4,9 +4,24 @@ import { useRef, useEffect } from "react";
 import { gsap } from "@/lib/gsap-register";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 import { MagneticButton } from "@/components/MagneticButton";
-import type { HomeScene } from "@/lib/home-content";
 
-export function EcosystemPreview({ scene }: { scene: HomeScene }) {
+interface EcosystemPreviewProps {
+  eyebrow: string;
+  title: string;
+  body: string;
+  details?: { label: string; body: string }[];
+  learnMoreLabel: string;
+  imageAlt: string;
+}
+
+export function EcosystemPreview({
+  eyebrow,
+  title,
+  body,
+  details,
+  learnMoreLabel,
+  imageAlt,
+}: EcosystemPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,15 +47,15 @@ export function EcosystemPreview({ scene }: { scene: HomeScene }) {
       <div className="grid w-full max-w-5xl gap-12 md:grid-cols-2">
         <div className="eco-text flex flex-col justify-center">
           <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
-            {scene.eyebrow}
+            {eyebrow}
           </p>
           <h2 className="mt-4 text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
-            {scene.title}
+            {title}
           </h2>
-          <p className="mt-4 text-[var(--text-secondary)]">{scene.body}</p>
-          {scene.details && (
+          <p className="mt-4 text-[var(--text-secondary)]">{body}</p>
+          {details && (
             <ul className="mt-8 flex flex-col gap-4">
-              {scene.details.map((d) => (
+              {details.map((d) => (
                 <li key={d.label} className="flex gap-3">
                   <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[var(--brand-v2)]" />
                   <div>
@@ -53,12 +68,12 @@ export function EcosystemPreview({ scene }: { scene: HomeScene }) {
           )}
           <div className="mt-8">
             <MagneticButton href="/ecosystem" className="inline-block rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-6 py-3 text-sm font-medium text-white">
-              Learn More
+              {learnMoreLabel}
             </MagneticButton>
           </div>
         </div>
         <div className="eco-visual flex items-center justify-center">
-          <ImagePlaceholder label="AI Ecosystem Illustration" aspect="1/1" icon="image" />
+          <ImagePlaceholder label={imageAlt} aspect="1/1" icon="image" />
         </div>
       </div>
     </div>
