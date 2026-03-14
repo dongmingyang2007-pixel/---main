@@ -1,17 +1,14 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { gsap } from "@/lib/gsap-register";
-import { DOCS_PATH_RAIL } from "@/lib/public-story-content";
 
-const FAQ_ITEMS = [
-  { q: "QIHANG 支持哪些设备？", a: "目前支持 QIHANG 圆盘盒系列。更多设备适配即将推出。" },
-  { q: "数据安全如何保障？", a: "所有数据加密传输和存储，支持离线模式下完全本地处理。" },
-  { q: "训练任务需要多久？", a: "取决于数据集规模。典型任务 5-30 分钟，可在控制台实时查看进度。" },
-  { q: "如何开始使用？", a: "访问 Demo 页面即可免费体验核心功能，无需注册。" },
-];
+const DOC_KEYS = ["start", "product", "workflow", "security"] as const;
+const FAQ_INDICES = [0, 1, 2, 3] as const;
 
 export default function SupportPage() {
+  const t = useTranslations("support");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,41 +32,43 @@ export default function SupportPage() {
       );
     });
     return () => {
-      tweens.forEach((t) => {
-        t.scrollTrigger?.kill();
-        t.kill();
+      tweens.forEach((tw) => {
+        tw.scrollTrigger?.kill();
+        tw.kill();
       });
     };
   }, []);
+
+  const email = t("contact.email");
 
   return (
     <div ref={containerRef}>
       {/* Hero */}
       <section className="flex min-h-[40vh] flex-col items-center justify-center px-6 text-center">
         <h1 className="text-[var(--font-size-hero)] font-bold text-[var(--text-primary)]">
-          Support
+          {t("hero.eyebrow")}
         </h1>
         <p className="mt-4 max-w-xl text-lg text-[var(--text-secondary)]">
-          文档、常见问题和联系方式。
+          {t("hero.title")}
         </p>
       </section>
 
       {/* Documentation paths */}
       <section className="support-section mx-auto max-w-4xl px-6 py-16">
-        <h2 className="text-2xl font-bold text-[var(--text-primary)]">Documentation</h2>
+        <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("docs.title")}</h2>
         <div className="mt-8 grid gap-4 md:grid-cols-2">
-          {DOCS_PATH_RAIL.map((item) => (
+          {DOC_KEYS.map((key) => (
             <div
-              key={item.title}
+              key={key}
               className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-surface)] p-6"
             >
               <p className="text-xs font-medium tracking-wider text-[var(--text-secondary)] uppercase">
-                {item.label}
+                {t(`docs.${key}.label`)}
               </p>
               <h3 className="mt-2 text-lg font-semibold text-[var(--text-primary)]">
-                {item.title}
+                {t(`docs.${key}.title`)}
               </h3>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">{item.body}</p>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">{t(`docs.${key}.body`)}</p>
             </div>
           ))}
         </div>
@@ -78,12 +77,12 @@ export default function SupportPage() {
       {/* FAQ */}
       <section id="faq" className="support-section bg-[var(--bg-surface)] px-6 py-16">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold text-[var(--text-primary)]">FAQ</h2>
+          <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("faq.title")}</h2>
           <div className="mt-8 flex flex-col gap-6">
-            {FAQ_ITEMS.map((item) => (
-              <div key={item.q}>
-                <h3 className="font-semibold text-[var(--text-primary)]">{item.q}</h3>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">{item.a}</p>
+            {FAQ_INDICES.map((i) => (
+              <div key={i}>
+                <h3 className="font-semibold text-[var(--text-primary)]">{t(`faq.q${i}`)}</h3>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">{t(`faq.a${i}`)}</p>
               </div>
             ))}
           </div>
@@ -92,15 +91,15 @@ export default function SupportPage() {
 
       {/* Contact */}
       <section id="contact" className="support-section mx-auto max-w-3xl px-6 py-16 text-center">
-        <h2 className="text-2xl font-bold text-[var(--text-primary)]">Contact</h2>
+        <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("contact.title")}</h2>
         <p className="mt-4 text-[var(--text-secondary)]">
-          有问题或合作意向？发邮件给我们。
+          {t("contact.response")}
         </p>
         <a
-          href="mailto:hello@qihang.ai"
+          href={`mailto:${email}`}
           className="mt-6 inline-block rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-8 py-3 text-sm font-medium text-white transition-transform hover:scale-[1.02] active:scale-[0.98]"
         >
-          hello@qihang.ai
+          {email}
         </a>
       </section>
     </div>

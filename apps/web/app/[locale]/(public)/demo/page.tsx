@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { AdvancedDrawer } from "@/components/AdvancedDrawer";
 import { TextReveal } from "@/components/TextReveal";
@@ -493,6 +494,7 @@ function commandBtn(enabled: boolean, active = false): string {
 }
 
 export default function DemoPage() {
+  const td = useTranslations("demo");
   const demoShellRef = useRef<HTMLDivElement>(null);
   useScrollReveal(demoShellRef);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -886,8 +888,8 @@ export default function DemoPage() {
   const inferenceSummary = result
     ? summarizeResult(result)
     : busy
-      ? "模型正在处理中，结果摘要会在返回后出现在这里。"
-      : "选择图片并触发一次推理，这里会显示本次结果摘要。";
+      ? td("result.loading")
+      : td("result.empty");
   const diagnosticItems = [
     ["连接状态", connectionMeta.label],
     ["握手尝试", `${handshakeAttempts}/20`],
@@ -931,9 +933,9 @@ export default function DemoPage() {
 
       <div className="demo-status-bar">
         <div className="demo-status-copy">
-          <div className="site-kicker" data-reveal>Interactive Demo</div>
+          <div className="site-kicker" data-reveal>{td("hero.eyebrow")}</div>
           <TextReveal
-            text="在主舞台里直接试一次设备、隐私和推理闭环。"
+            text={td("hero.title")}
             tag="h1"
             className="display-face mt-3 text-[clamp(2rem,4vw,3.3rem)] leading-[0.96]"
             staggerMs={28}
@@ -947,7 +949,7 @@ export default function DemoPage() {
                 aria-pressed={task === "vqa"}
                 onClick={() => setTask("vqa")}
               >
-                VQA
+                {td("task.vqa")}
               </button>
               <button
                 type="button"
@@ -955,11 +957,11 @@ export default function DemoPage() {
                 aria-pressed={task === "ocr"}
                 onClick={() => setTask("ocr")}
               >
-                OCR
+                {td("task.ocr")}
               </button>
             </div>
             <button type="button" onClick={() => fileInputRef.current?.click()} className="console-button-secondary">
-              选择图片
+              {td("control.upload")}
             </button>
             <button
               type="button"

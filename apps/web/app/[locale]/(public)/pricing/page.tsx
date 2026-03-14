@@ -1,11 +1,15 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { gsap } from "@/lib/gsap-register";
 import { MagneticButton } from "@/components/MagneticButton";
-import { PRICING_COMPARE_RAIL } from "@/lib/public-story-content";
+
+const TIER_KEYS = ["explore", "studio", "team"] as const;
 
 export default function PricingPage() {
+  const t = useTranslations("pricing");
+  const tc = useTranslations("common");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,22 +34,30 @@ export default function PricingPage() {
     };
   }, []);
 
+  const plans = TIER_KEYS.map((key) => ({
+    key,
+    label: t(`tiers.${key}.label`),
+    title: t(`tiers.${key}.title`),
+    body: t(`tiers.${key}.body`),
+    meta: t(`tiers.${key}.meta`),
+  }));
+
   return (
     <div ref={containerRef}>
       <section className="flex min-h-[40vh] flex-col items-center justify-center px-6 text-center">
         <h1 className="text-[var(--font-size-hero)] font-bold text-[var(--text-primary)]">
-          Pricing
+          {t("hero.title")}
         </h1>
         <p className="mt-4 max-w-xl text-lg text-[var(--text-secondary)]">
-          选择适合你的方案。
+          {t("hero.body")}
         </p>
       </section>
 
       <section className="pricing-grid mx-auto max-w-5xl px-6 py-16">
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {PRICING_COMPARE_RAIL.map((plan) => (
+          {plans.map((plan) => (
             <div
-              key={plan.title}
+              key={plan.key}
               className="pricing-card flex flex-col rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-6"
             >
               <p className="text-xs font-medium tracking-wider text-[var(--text-secondary)] uppercase">
@@ -58,7 +70,7 @@ export default function PricingPage() {
                   href="/demo"
                   className="block w-full rounded-[var(--radius-md)] bg-[var(--brand-v2)] py-2.5 text-center text-sm font-medium text-white"
                 >
-                  Get Started
+                  {tc("nav.getStarted")}
                 </MagneticButton>
               </div>
             </div>
