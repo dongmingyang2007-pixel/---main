@@ -81,7 +81,7 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
     <div className="shell-grid console-frame">
       <aside className="console-aside">
         <div className="console-brand">
-          <div className="console-kicker text-white/70">QIHANG Studio</div>
+          <div className="console-kicker text-white/70">MingRun Studio</div>
           <div className="display-face mt-2">Control Console</div>
           <p className="mt-3 text-sm leading-6 text-white/72">把数据、训练和发布收在一套更安静的工作台里。</p>
           <div className="console-brand-pills">

@@ -3,9 +3,9 @@ export type EarbudPrintProfile = "general" | "fdm" | "sla";
 export type EarbudBuildTier = "display" | "prototype" | "engineering";
 
 export const EARBUD_BUILD_TIER: EarbudBuildTier = "engineering";
-export const QIHANG_EARBUD_SPEC_ENDPOINT = "/api/qihang-earbud-spec";
+export const EARBUD_SPEC_ENDPOINT = "/api/earbud-spec";
 
-export const QIHANG_EARBUD_SPEC = {
+export const EARBUD_SPEC = {
   revision: "tws-anc-prototype-v1",
   fitTarget: "universal_medium_ear_canal",
   envelopeMm: {
@@ -99,7 +99,7 @@ function fnv1aHashHex(input: string): string {
   return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
-export type QihangEarbudRuntimeSpecPayload = {
+export type EarbudRuntimeSpecPayload = {
   revision: string;
   buildTier: EarbudBuildTier;
   fitTarget: string;
@@ -146,35 +146,35 @@ export type QihangEarbudRuntimeSpecPayload = {
   generated_from: "qihang-earbud-spec.ts";
 };
 
-export function buildQihangEarbudRuntimeSpecPayload(): QihangEarbudRuntimeSpecPayload {
+export function buildEarbudRuntimeSpecPayload(): EarbudRuntimeSpecPayload {
   const runtimeSpec = {
-    revision: QIHANG_EARBUD_SPEC.revision,
+    revision: EARBUD_SPEC.revision,
     buildTier: EARBUD_BUILD_TIER,
-    fitTarget: QIHANG_EARBUD_SPEC.fitTarget,
-    envelopeMm: { ...QIHANG_EARBUD_SPEC.envelopeMm },
-    nozzle: { ...QIHANG_EARBUD_SPEC.nozzle },
-    acoustic: { ...QIHANG_EARBUD_SPEC.acoustic },
+    fitTarget: EARBUD_SPEC.fitTarget,
+    envelopeMm: { ...EARBUD_SPEC.envelopeMm },
+    nozzle: { ...EARBUD_SPEC.nozzle },
+    acoustic: { ...EARBUD_SPEC.acoustic },
     moduleEnvelopesMm: {
-      driver: { ...QIHANG_EARBUD_SPEC.moduleEnvelopesMm.driver },
-      battery: { ...QIHANG_EARBUD_SPEC.moduleEnvelopesMm.battery },
-      pcb: { ...QIHANG_EARBUD_SPEC.moduleEnvelopesMm.pcb },
+      driver: { ...EARBUD_SPEC.moduleEnvelopesMm.driver },
+      battery: { ...EARBUD_SPEC.moduleEnvelopesMm.battery },
+      pcb: { ...EARBUD_SPEC.moduleEnvelopesMm.pcb },
     },
     charging: {
-      contactPadDiameterMm: QIHANG_EARBUD_SPEC.charging.contactPadDiameterMm,
-      contactPadPitchMm: QIHANG_EARBUD_SPEC.charging.contactPadPitchMm,
-      compressionRangeMm: { ...QIHANG_EARBUD_SPEC.charging.compressionRangeMm },
+      contactPadDiameterMm: EARBUD_SPEC.charging.contactPadDiameterMm,
+      contactPadPitchMm: EARBUD_SPEC.charging.contactPadPitchMm,
+      compressionRangeMm: { ...EARBUD_SPEC.charging.compressionRangeMm },
     },
     fit: {
-      radialClearanceRangeMm: { ...QIHANG_EARBUD_SPEC.fit.radialClearanceRangeMm },
-      dockOffsetToleranceMm: QIHANG_EARBUD_SPEC.fit.dockOffsetToleranceMm,
+      radialClearanceRangeMm: { ...EARBUD_SPEC.fit.radialClearanceRangeMm },
+      dockOffsetToleranceMm: EARBUD_SPEC.fit.dockOffsetToleranceMm,
     },
-    ancLayout: QIHANG_EARBUD_SPEC.ancLayout,
+    ancLayout: EARBUD_SPEC.ancLayout,
     printProfiles: {
       general: { ...EARBUD_PRINT_PROFILE_SPEC.general },
       fdm: { ...EARBUD_PRINT_PROFILE_SPEC.fdm },
       sla: { ...EARBUD_PRINT_PROFILE_SPEC.sla },
     },
-  } satisfies Omit<QihangEarbudRuntimeSpecPayload, "spec_source_hash" | "generated_from">;
+  } satisfies Omit<EarbudRuntimeSpecPayload, "spec_source_hash" | "generated_from">;
 
   const specSourceHash = fnv1aHashHex(stableStringify(runtimeSpec as JsonLike));
   return {

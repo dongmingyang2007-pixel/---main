@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
+import { memo, useEffect, useMemo, useRef, type CSSProperties, type MutableRefObject } from "react";
 
 import { MagneticButton } from "@/components/MagneticButton";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
@@ -8,13 +8,9 @@ import { TextReveal } from "@/components/TextReveal";
 import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
 import { useParallax } from "@/lib/useParallax";
 import { useScrollReveal } from "@/lib/useScrollReveal";
+import { useStoryScroll, clamp } from "@/lib/useStoryScroll";
+import { useViewerBridge } from "@/lib/useViewerBridge";
 import {
-  QIHANG_VIEWER_SOURCE,
-  QIHANG_WEB_SOURCE,
-  VIEWER_MESSAGE_GET_STATE,
-  VIEWER_MESSAGE_READY,
-  VIEWER_MESSAGE_SET_STATE,
-  VIEWER_MESSAGE_STATE,
   VIEWER_STORY_SRC_BASE,
   appendParentOrigin,
   type ViewerCaseMode,
@@ -43,7 +39,7 @@ type StoryScene = {
 const STORY_SCENES: StoryScene[] = [
   {
     id: "intro",
-    eyebrow: "QIHANG / Environment AI",
+    eyebrow: "MingRun / Environment AI",
     title: "看见周围，理解周围。",
     summary:
       "一枚随身佩戴的 AI 设备——看见你所处的环境，即时给出反馈。无需掏出手机，无需打开应用。",
@@ -52,7 +48,7 @@ const STORY_SCENES: StoryScene[] = [
       { label: "即时反馈", body: "拍下画面，几秒内通过耳机收到 AI 语音回答。" },
       { label: "隐私可控", body: "你决定何时开始、何时停止，状态灯始终可见。" },
     ],
-    stageLabel: "QIHANG",
+    stageLabel: "MingRun",
     stageSummary: "环境 AI，从佩戴开始。",
     stageTags: ["可佩戴", "AI 视觉", "即时反馈"],
     assetSlots: ["产品主镜头", "盒体近景", "开场短动画"],
@@ -110,15 +106,6 @@ const STORY_SCENES: StoryScene[] = [
     tone: "obsidian",
   },
 ];
-
-function clamp(value: number, min = 0, max = 1): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function sameProgressArray(a: number[], b: number[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => Math.abs(value - b[index]) < 0.01);
-}
 
 function sceneModeFromProgress(progress: number): ViewerMode {
   if (progress > 0.72) return "online";
@@ -290,246 +277,35 @@ const HomeStoryNarrative = memo(function HomeStoryNarrative({
 });
 
 export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: string | null }) {
-  const sceneRefs = useRef<Array<HTMLElement | null>>([]);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const handshakeIntervalRef = useRef<number | null>(null);
-  const handshakeTimeoutRef = useRef<number | null>(null);
-  const latestPatchRef = useRef<Record<string, unknown>>({});
-  const lastPatchSignatureRef = useRef("");
-  const viewerReadyRef = useRef(false);
-  const [sceneProgress, setSceneProgress] = useState<number[]>(() => STORY_SCENES.map(() => 0));
-  const [activeSceneIndex, setActiveSceneIndex] = useState(0);
-  const [viewerSrc] = useState(() =>
-    viewerParentOrigin ? appendParentOrigin(VIEWER_STORY_SRC_BASE, viewerParentOrigin) : VIEWER_STORY_SRC_BASE,
-  );
+  const viewerSrc = viewerParentOrigin
+    ? appendParentOrigin(VIEWER_STORY_SRC_BASE, viewerParentOrigin)
+    : VIEWER_STORY_SRC_BASE;
   const deferredViewerSrc = useDeferredIframeSrc(viewerSrc, true);
-  const [viewerConnected, setViewerConnected] = useState(false);
-  const [viewerStatus, setViewerStatus] = useState("准备产品舞台...");
+
+  const { sceneRefs, sceneProgress, activeSceneIndex, activeProgress, timelineProgress } =
+    useStoryScroll(STORY_SCENES.length);
+
+  const viewer = useViewerBridge({ enabled: true, deferredSrc: deferredViewerSrc });
+
   const pageRef = useRef<HTMLDivElement>(null);
   useScrollReveal(pageRef);
   useParallax(pageRef);
 
   const activeScene = STORY_SCENES[activeSceneIndex] ?? STORY_SCENES[0];
-  const activeProgress = sceneProgress[activeSceneIndex] ?? 0;
-  const timelineProgress = clamp((activeSceneIndex + activeProgress) / STORY_SCENES.length);
 
   const stageStyle = {
     "--story-progress": timelineProgress.toFixed(3),
     "--scene-progress": activeProgress.toFixed(3),
   } as CSSProperties;
 
-  const clearHandshakeTimers = useCallback(() => {
-    if (handshakeIntervalRef.current !== null) {
-      window.clearInterval(handshakeIntervalRef.current);
-      handshakeIntervalRef.current = null;
-    }
-    if (handshakeTimeoutRef.current !== null) {
-      window.clearTimeout(handshakeTimeoutRef.current);
-      handshakeTimeoutRef.current = null;
-    }
-  }, []);
-
-  const suspendViewer = useCallback(() => {
-    clearHandshakeTimers();
-    viewerReadyRef.current = false;
-    setViewerConnected(false);
-    const frame = iframeRef.current;
-    if (frame && frame.src !== "about:blank") {
-      frame.src = "about:blank";
-    }
-  }, [clearHandshakeTimers]);
-
-  const postToViewer = useCallback((type: string, payload?: unknown): boolean => {
-    const targetWindow = iframeRef.current?.contentWindow;
-    if (!targetWindow) return false;
-    targetWindow.postMessage(
-      {
-        source: QIHANG_WEB_SOURCE,
-        type,
-        payload,
-      },
-      "*",
-    );
-    return true;
-  }, []);
-
-  const startHandshake = useCallback((reason: string) => {
-    clearHandshakeTimers();
-    viewerReadyRef.current = false;
-    setViewerConnected(false);
-    setViewerStatus("同步产品舞台...");
-
-    let attempts = 0;
-    const tick = () => {
-      attempts += 1;
-      if (attempts > 16) {
-        clearHandshakeTimers();
-        setViewerStatus("模型加载较慢，继续显示占位舞台。");
-        return;
-      }
-      postToViewer(VIEWER_MESSAGE_GET_STATE, { reason, attempt: attempts });
-    };
-
-    tick();
-    handshakeIntervalRef.current = window.setInterval(tick, 450);
-    handshakeTimeoutRef.current = window.setTimeout(() => {
-      if (!viewerReadyRef.current) {
-        setViewerStatus("模型尚未返回，先保留舞台占位。");
-      }
-    }, 7200);
-  }, [clearHandshakeTimers, postToViewer]);
+  const viewerPatch = useMemo(
+    () => buildViewerPatch(sceneProgress, activeScene),
+    [sceneProgress, activeScene],
+  );
 
   useEffect(() => {
-    let frame = 0;
-
-    // Cache element geometry — only update on resize, not every scroll frame.
-    // This avoids calling getBoundingClientRect() per scene per frame (layout thrashing in Chrome).
-    let cachedOffsets: Array<{ top: number; height: number } | null> = [];
-    let cachedVH = window.innerHeight;
-
-    const refreshGeometry = () => {
-      cachedVH = window.innerHeight;
-      const scrollY = window.scrollY;
-      cachedOffsets = STORY_SCENES.map((_, index) => {
-        const node = sceneRefs.current[index];
-        if (!node) return null;
-        const rect = node.getBoundingClientRect();
-        return { top: rect.top + scrollY, height: rect.height };
-      });
-    };
-
-    const measure = () => {
-      const scrollY = window.scrollY;
-      const vh = cachedVH;
-
-      const nextProgress = cachedOffsets.map((cached) => {
-        if (!cached) return 0;
-        const rectTop = cached.top - scrollY;
-        const distance = vh + cached.height;
-        return Math.round(clamp((vh - rectTop) / distance) * 50) / 50;
-      });
-
-      let nextActiveSceneIndex = 0;
-      let bestWeight = -1;
-      cachedOffsets.forEach((cached, index) => {
-        if (!cached) return;
-        const rectTop = cached.top - scrollY;
-        const centerOffset = Math.abs(rectTop + cached.height / 2 - vh * 0.48);
-        const weight = 1 - Math.min(centerOffset / (vh * 0.9), 1);
-        if (weight > bestWeight) {
-          bestWeight = weight;
-          nextActiveSceneIndex = index;
-        }
-      });
-
-      startTransition(() => {
-        setSceneProgress((previous) => (sameProgressArray(previous, nextProgress) ? previous : nextProgress));
-        setActiveSceneIndex((previous) => (previous === nextActiveSceneIndex ? previous : nextActiveSceneIndex));
-      });
-    };
-
-    const requestMeasure = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        measure();
-      });
-    };
-
-    const onResize = () => {
-      refreshGeometry();
-      requestMeasure();
-    };
-
-    refreshGeometry();
-    requestMeasure();
-    window.addEventListener("scroll", requestMeasure, { passive: true });
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      if (frame) {
-        window.cancelAnimationFrame(frame);
-      }
-      window.removeEventListener("scroll", requestMeasure);
-      window.removeEventListener("resize", onResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!deferredViewerSrc) return;
-
-    const onMessage = (event: MessageEvent) => {
-      const frameWindow = iframeRef.current?.contentWindow;
-      if (!frameWindow || event.source !== frameWindow || event.origin !== window.location.origin) {
-        return;
-      }
-
-      const data = event.data as
-        | {
-            source?: string;
-            type?: string;
-            payload?: unknown;
-          }
-        | undefined;
-      if (!data || data.source !== QIHANG_VIEWER_SOURCE) {
-        return;
-      }
-
-      if (data.type === VIEWER_MESSAGE_READY || data.type === VIEWER_MESSAGE_STATE) {
-        viewerReadyRef.current = true;
-        setViewerConnected(true);
-        setViewerStatus("产品舞台已联动");
-        clearHandshakeTimers();
-        postToViewer(VIEWER_MESSAGE_SET_STATE, latestPatchRef.current);
-      }
-    };
-
-    window.addEventListener("message", onMessage);
-    const frame = iframeRef.current;
-
-    return () => {
-      clearHandshakeTimers();
-      window.removeEventListener("message", onMessage);
-      viewerReadyRef.current = false;
-      if (frame) {
-        frame.src = "about:blank";
-      }
-    };
-  }, [clearHandshakeTimers, deferredViewerSrc, postToViewer]);
-
-  useEffect(() => {
-    if (!deferredViewerSrc) return;
-
-    const onViewerSuspend = () => {
-      suspendViewer();
-    };
-
-    window.addEventListener("qihang:viewer-suspend", onViewerSuspend);
-    return () => {
-      window.removeEventListener("qihang:viewer-suspend", onViewerSuspend);
-    };
-  }, [deferredViewerSrc, suspendViewer]);
-
-  const viewerPatch = useMemo(() => buildViewerPatch(sceneProgress, activeScene), [sceneProgress, activeScene]);
-
-  useEffect(() => {
-    latestPatchRef.current = viewerPatch;
-    const nextSignature = JSON.stringify(viewerPatch);
-    if (nextSignature === lastPatchSignatureRef.current) return;
-    lastPatchSignatureRef.current = nextSignature;
-
-    const targetWindow = iframeRef.current?.contentWindow;
-    if (!targetWindow || !viewerReadyRef.current) return;
-
-    targetWindow.postMessage(
-      {
-        source: QIHANG_WEB_SOURCE,
-        type: VIEWER_MESSAGE_SET_STATE,
-        payload: viewerPatch,
-      },
-      "*",
-    );
-  }, [viewerPatch]);
+    viewer.sendPatch(viewerPatch);
+  }, [viewerPatch, viewer]);
 
   return (
     <div className="home-story-page" ref={pageRef}>
@@ -542,7 +318,7 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
                 <span className="home-stage-divider" />
                 <span className="home-stage-caption">{activeScene.eyebrow}</span>
               </div>
-              <span className="home-stage-status">{viewerStatus}</span>
+              <span className="home-stage-status">{viewer.viewerStatus}</span>
             </div>
 
             <div className="home-stage-shell">
@@ -555,21 +331,18 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
 
               {deferredViewerSrc ? (
                 <iframe
-                  ref={iframeRef}
+                  ref={viewer.iframeRef}
                   src={deferredViewerSrc}
-                  title="QIHANG Story Viewer"
+                  title="MingRun Story Viewer"
                   className="home-story-iframe"
                   loading="lazy"
-                  onLoad={() => {
-                    viewerReadyRef.current = false;
-                    setViewerConnected(false);
-                    setViewerStatus("产品舞台载入中...");
-                    startHandshake("home-story-iframe-load");
-                  }}
+                  onLoad={viewer.onIframeLoad}
                 />
               ) : null}
 
-              {!viewerConnected && deferredViewerSrc ? <div className="home-stage-loader">产品舞台加载中</div> : null}
+              {!viewer.viewerConnected && deferredViewerSrc ? (
+                <div className="home-stage-loader">产品舞台加载中</div>
+              ) : null}
             </div>
 
             <div className="home-stage-copy">

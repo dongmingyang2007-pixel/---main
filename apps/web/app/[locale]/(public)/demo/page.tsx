@@ -8,7 +8,7 @@ import { TextReveal } from "@/components/TextReveal";
 import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
 import { useScrollReveal } from "@/lib/useScrollReveal";
 import { apiPost, uploadToPresignedUrl } from "@/lib/api";
-import { EARBUD_BUILD_TIER, QIHANG_EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
+import { EARBUD_BUILD_TIER, EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
 import { DemoInferResponse, DemoPresignResponse } from "@/lib/types";
 import {
   KNOWN_VIEWER_COMMANDS,
@@ -79,7 +79,7 @@ const INITIAL_VIEWER_STATE: ViewerState = {
   earbudContactEngagedR: false,
   earbudContactMeasurementValidL: false,
   earbudContactMeasurementValidR: false,
-  earbudAncLayout: QIHANG_EARBUD_SPEC.ancLayout,
+  earbudAncLayout: EARBUD_SPEC.ancLayout,
   earbudModuleOverlapCount: 0,
   caseMode: "office_mode",
   privacyLockHw: false,
@@ -1019,7 +1019,7 @@ export default function DemoPage() {
             <iframe
               ref={iframeRef}
               src={deferredViewerSrc}
-              title="QIHANG Demo Model"
+              title="MingRun Demo Model"
               className="demo-iframe"
               loading="lazy"
               onLoad={() => {

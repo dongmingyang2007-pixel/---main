@@ -59,7 +59,7 @@ export function StoryStage({
           <iframe
             ref={iframeRef}
             src={viewerSrc}
-            title={viewerTitle || "QIHANG Story Stage"}
+            title={viewerTitle || "MingRun Story Stage"}
             className="story-stage-iframe"
             loading="lazy"
             onLoad={onViewerLoad}

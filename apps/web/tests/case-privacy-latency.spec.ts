@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const DEMO_PATH = "/demo";
-const VIEWER_IFRAME = 'iframe[title="QIHANG Demo Model"]';
+const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
 
 type ViewerState = {
   camera_power_hw?: boolean;
@@ -75,7 +75,7 @@ async function viewerSetState(page: Page, patch: Record<string, unknown>): Promi
 
 async function postCaptureEventFromHost(page: Page, payload: Record<string, unknown>): Promise<void> {
   await page.evaluate((eventPayload) => {
-    const iframe = document.querySelector('iframe[title="QIHANG Demo Model"]') as HTMLIFrameElement | null;
+    const iframe = document.querySelector('iframe[title="MingRun Demo Model"]') as HTMLIFrameElement | null;
     iframe?.contentWindow?.postMessage(
       {
         source: "qihang-web",

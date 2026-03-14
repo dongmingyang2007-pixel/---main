@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const VIEWER_IFRAME = 'iframe[title="QIHANG Demo Model"]';
+const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
 const TARGET_REV = "20260307-tail-pivot-v37-glb-earbuds-symmetric-inspectfix";
 
 test.use({ viewport: { width: 1536, height: 960 } });

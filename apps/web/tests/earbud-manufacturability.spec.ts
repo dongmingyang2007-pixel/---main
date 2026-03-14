@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const DEMO_PATH = "/demo";
-const VIEWER_IFRAME = 'iframe[title="QIHANG Demo Model"]';
+const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
 
 type ViewerRuntimeSnapshot = {
   leftMeshCount: number;

@@ -7,8 +7,11 @@ const nextConfig = {
   async redirects() {
     return [
       { source: "/how-it-works", destination: "/product", permanent: true },
+      { source: "/en/how-it-works", destination: "/en/product", permanent: true },
       { source: "/docs", destination: "/support", permanent: true },
+      { source: "/en/docs", destination: "/en/support", permanent: true },
       { source: "/contact", destination: "/support#contact", permanent: true },
+      { source: "/en/contact", destination: "/en/support#contact", permanent: true },
     ];
   },
 };
