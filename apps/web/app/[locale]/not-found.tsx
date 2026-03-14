@@ -1,21 +1,24 @@
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
 
-export default function NotFound() {
+export default async function NotFound() {
+  const t = await getTranslations("error");
+
   return (
     <div className="site-container py-10">
       <section className="public-hero glass-panel">
         <div className="public-hero-copy">
-          <div className="site-kicker mx-auto w-fit">404</div>
-          <h1 className="site-title">这个页面不存在，或者你当前不该看到它。</h1>
+          <div className="site-kicker mx-auto w-fit">{t("notFound.kicker")}</div>
+          <h1 className="site-title">{t("notFound.title")}</h1>
           <p className="site-lead mx-auto">
-            如果你是从控制台深链进入，可能是资源已删除或当前 workspace 无权限；如果你在公开站里跳转，这通常只是一个无效链接。
+            {t("notFound.body")}
           </p>
           <div className="site-actions justify-center">
             <Link className="site-button" href="/">
-              返回首页
+              {t("notFound.home")}
             </Link>
             <Link className="site-button-secondary" href="/demo">
-              打开 Demo
+              {t("notFound.demo")}
             </Link>
           </div>
         </div>
