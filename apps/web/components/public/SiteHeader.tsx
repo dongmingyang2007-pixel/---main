@@ -2,26 +2,34 @@
 
 import { useState, useCallback } from "react";
 import clsx from "clsx";
-import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { usePathname } from "@/i18n/navigation";
 
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
 import { MobileNav } from "@/components/public/MobileNav";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useScrollNav } from "@/lib/useScrollNav";
 
-const NAV_ITEMS = [
-  { href: "/product", label: "Product" },
-  { href: "/ecosystem", label: "AI Ecosystem" },
-  { href: "/demo", label: "Demo" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/support", label: "Support" },
-];
+const NAV_KEYS = [
+  { href: "/product", key: "nav.product" },
+  { href: "/ecosystem", key: "nav.ecosystem" },
+  { href: "/demo", key: "nav.demo" },
+  { href: "/pricing", key: "nav.pricing" },
+  { href: "/support", key: "nav.support" },
+] as const;
 
 export function SiteHeader() {
+  const t = useTranslations("common");
   const pathname = usePathname();
   const { scrolled, hidden, progress } = useScrollNav();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  const navItems = NAV_KEYS.map((item) => ({
+    href: item.href,
+    label: t(item.key),
+  }));
 
   return (
     <>
@@ -33,15 +41,15 @@ export function SiteHeader() {
         )}
       >
         <div className="mx-auto flex h-full max-w-[var(--site-width)] items-center justify-between px-6">
-          {/* Brand */}
           <PublicDocumentLink href="/" className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[var(--brand-v2)]" />
-            <strong className="text-base font-semibold tracking-tight">QIHANG</strong>
+            <strong className="text-base font-semibold tracking-tight">
+              {t("brand.company")}
+            </strong>
           </PublicDocumentLink>
 
-          {/* Desktop nav */}
           <nav className="hidden items-center gap-8 md:flex">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <PublicDocumentLink
                 key={item.href}
                 href={item.href}
@@ -58,19 +66,19 @@ export function SiteHeader() {
                 )}
               </PublicDocumentLink>
             ))}
+            <LanguageSwitcher className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" />
             <PublicDocumentLink
               href="/demo"
               className="rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-5 py-2 text-sm font-medium text-white transition-transform hover:scale-[1.02] active:scale-[0.98]"
             >
-              Get Started
+              {t("nav.getStarted")}
             </PublicDocumentLink>
           </nav>
 
-          {/* Hamburger (mobile) */}
           <button
-            className="flex items-center justify-center p-2 md:hidden"
+            className="flex items-center justify-center p-2.5 md:hidden"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open menu"
+            aria-label={t("nav.openMenu")}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 6h16M4 12h16M4 18h16" />
@@ -78,7 +86,6 @@ export function SiteHeader() {
           </button>
         </div>
 
-        {/* Scroll progress indicator */}
         <div
           className="absolute bottom-0 left-0 h-[2px] bg-[var(--brand-v2)] transition-none"
           style={{ width: `${progress * 100}%` }}
@@ -89,7 +96,7 @@ export function SiteHeader() {
       <MobileNav
         open={mobileOpen}
         onClose={closeMobile}
-        items={NAV_ITEMS}
+        items={navItems}
         pathname={pathname}
       />
     </>

@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useTranslations } from "next-intl";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
 
 interface MobileNavProps {
@@ -11,6 +13,14 @@ interface MobileNavProps {
 }
 
 export function MobileNav({ open, onClose, items, pathname }: MobileNavProps) {
+  const t = useTranslations("common");
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -25,8 +35,8 @@ export function MobileNav({ open, onClose, items, pathname }: MobileNavProps) {
           <div className="flex justify-end p-6">
             <button
               onClick={onClose}
-              className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-2"
-              aria-label="Close menu"
+              className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-2.5"
+              aria-label={t("nav.closeMenu")}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
@@ -52,17 +62,14 @@ export function MobileNav({ open, onClose, items, pathname }: MobileNavProps) {
             ))}
           </nav>
 
-          {/* Bottom CTA
-              Note: spec says this should hide when CTA section is in view.
-              That behavior requires IntersectionObserver + scroll context
-              and will be added in the Convergence plan (mobile polish). */}
+          {/* Bottom CTA */}
           <div className="mt-auto p-8">
             <PublicDocumentLink
               href="/demo"
               className="block w-full rounded-[var(--radius-lg)] bg-[var(--brand-v2)] py-4 text-center text-lg font-semibold text-white"
               onClick={onClose}
             >
-              Try Demo
+              {t("nav.tryDemo")}
             </PublicDocumentLink>
           </div>
         </motion.div>
