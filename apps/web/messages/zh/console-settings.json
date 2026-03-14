@@ -1,0 +1,7 @@
+{
+  "kicker": "Settings",
+  "title": "账户与安全",
+  "description": "管理账户、安全和后续敏感操作入口。",
+  "panel.title": "账户操作",
+  "panel.description": "当前版本先保留登录管理和删除流程入口，后续会补上 API Key 与团队设置。"
+}

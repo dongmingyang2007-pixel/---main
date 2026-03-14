@@ -1,0 +1,8 @@
+{
+  "kicker": "Devices",
+  "title": "Devices & Firmware",
+  "description": "Device pairing, firmware versions, and hardware diagnostics.",
+  "panel.title": "Device workspace",
+  "panel.description": "Device pairing, firmware updates, and hardware diagnostics are not yet connected, but the layout is ready for what's next.",
+  "empty": "No paired devices yet. Serial numbers, firmware versions, battery levels, and privacy toggles will appear here."
+}

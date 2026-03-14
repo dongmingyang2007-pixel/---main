@@ -1,0 +1,7 @@
+{
+  "kicker": "Settings",
+  "title": "Account & Security",
+  "description": "Manage your account, security, and sensitive operations.",
+  "panel.title": "Account actions",
+  "panel.description": "Login management and account deletion for now. API keys and team settings coming later."
+}

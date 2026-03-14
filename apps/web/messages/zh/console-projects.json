@@ -1,0 +1,9 @@
+{
+  "kicker": "Projects",
+  "title": "项目",
+  "description": "按业务或实验边界组织工作。",
+  "detail.kicker": "Projects",
+  "detail.title": "项目详情",
+  "detail.description": "查看项目内容。",
+  "loading": "加载中..."
+}

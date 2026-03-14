@@ -1,0 +1,7 @@
+{
+  "notFound.kicker": "404",
+  "notFound.title": "This page doesn't exist, or you shouldn't be seeing it right now.",
+  "notFound.body": "If you followed a deep link from the console, the resource may have been deleted or your workspace may not have access. If you navigated from the public site, this is likely just a broken link.",
+  "notFound.home": "Back to home",
+  "notFound.demo": "Open Demo"
+}

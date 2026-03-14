@@ -1,0 +1,15 @@
+{
+  "meta.title": "在线体验 - 铭润科技",
+  "hero.eyebrow": "Demo",
+  "hero.title": "先试用，再决定。",
+  "hero.body": "上传一张照片或使用摄像头，立即看到 AI 的环境理解能力。",
+  "task.vqa": "视觉问答",
+  "task.ocr": "文字识别",
+  "status.offline": "离线",
+  "status.online": "在线",
+  "status.hybrid": "混合模式",
+  "result.empty": "上传图片或拍照开始体验。",
+  "result.loading": "正在分析...",
+  "control.upload": "上传图片",
+  "control.camera": "使用摄像头"
+}

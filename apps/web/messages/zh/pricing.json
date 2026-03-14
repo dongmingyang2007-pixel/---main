@@ -1,0 +1,18 @@
+{
+  "meta.title": "定价 - 铭润科技",
+  "hero.eyebrow": "Pricing",
+  "hero.title": "选择适合你的方案。",
+  "hero.body": "先用 Demo 感受产品能力，准备好了再进入完整工作流。按你的节奏来。",
+  "tiers.explore.label": "Explore",
+  "tiers.explore.title": "免费体验",
+  "tiers.explore.body": "公开 Demo、基础推理、无需注册。",
+  "tiers.explore.meta": "免费",
+  "tiers.studio.label": "Studio",
+  "tiers.studio.title": "完整工作流",
+  "tiers.studio.body": "项目、数据集、训练、模型仓、发布。",
+  "tiers.studio.meta": "候补中",
+  "tiers.team.label": "Team",
+  "tiers.team.title": "团队协作",
+  "tiers.team.body": "多人 workspace、弹性配额、权限管理。",
+  "tiers.team.meta": "即将推出"
+}

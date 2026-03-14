@@ -1,0 +1,9 @@
+{
+  "kicker": "Projects",
+  "title": "Projects",
+  "description": "Organize work by business line or experiment.",
+  "detail.kicker": "Projects",
+  "detail.title": "Project details",
+  "detail.description": "View project contents.",
+  "loading": "Loading..."
+}

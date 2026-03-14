@@ -1,0 +1,15 @@
+{
+  "meta.title": "Demo - Mingrun Tech",
+  "hero.eyebrow": "Demo",
+  "hero.title": "Try before you decide.",
+  "hero.body": "Upload a photo or use your camera to see the AI's environment understanding in action.",
+  "task.vqa": "Visual Q&A",
+  "task.ocr": "Text Recognition",
+  "status.offline": "Offline",
+  "status.online": "Online",
+  "status.hybrid": "Hybrid",
+  "result.empty": "Upload an image or take a photo to get started.",
+  "result.loading": "Analyzing...",
+  "control.upload": "Upload image",
+  "control.camera": "Use camera"
+}

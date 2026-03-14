@@ -1,0 +1,18 @@
+{
+  "meta.title": "Pricing - Mingrun Tech",
+  "hero.eyebrow": "Pricing",
+  "hero.title": "Pick the plan that fits.",
+  "hero.body": "Start with the free demo to see what it can do, then move to the full workflow when you're ready. At your own pace.",
+  "tiers.explore.label": "Explore",
+  "tiers.explore.title": "Free trial",
+  "tiers.explore.body": "Public demo, basic inference, no sign-up required.",
+  "tiers.explore.meta": "Free",
+  "tiers.studio.label": "Studio",
+  "tiers.studio.title": "Full workflow",
+  "tiers.studio.body": "Projects, datasets, training, model registry, deployment.",
+  "tiers.studio.meta": "Waitlist",
+  "tiers.team.label": "Team",
+  "tiers.team.title": "Team collaboration",
+  "tiers.team.body": "Multi-user workspace, elastic quotas, role-based access.",
+  "tiers.team.meta": "Coming soon"
+}

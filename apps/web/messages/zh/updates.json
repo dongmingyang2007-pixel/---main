@@ -1,0 +1,14 @@
+{
+  "meta.title": "动态 - 铭润科技",
+  "hero.eyebrow": "Updates",
+  "hero.title": "产品动态与更新日志。",
+  "timeline.0.label": "2026.03",
+  "timeline.0.title": "产品页升级",
+  "timeline.0.body": "全新视觉设计和交互体验。",
+  "timeline.1.label": "2026.03",
+  "timeline.1.title": "Demo 优化",
+  "timeline.1.body": "产品查看器前置，推理体验优化。",
+  "timeline.2.label": "2026.03",
+  "timeline.2.title": "安全加固",
+  "timeline.2.body": "CSRF、限流、签名访问全面上线。"
+}

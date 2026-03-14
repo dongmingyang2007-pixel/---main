@@ -1,0 +1,8 @@
+{
+  "kicker": "Billing",
+  "title": "Billing & Plans",
+  "description": "Compute, storage, and team quota management.",
+  "panel.title": "Billing & Quotas",
+  "panel.description": "No billing in v0.1, but this is where you'll manage compute, storage, and team quotas.",
+  "empty": "No real charges in the current version. Plan structures and quota rules will be finalized before the console opens publicly."
+}
