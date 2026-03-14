@@ -21,11 +21,11 @@ export function DataTable({
         <table className="min-w-full border-collapse text-sm">
           {caption ? <caption className="sr-only">{caption}</caption> : null}
           <thead>
-            <tr className="bg-[rgba(9,17,31,0.04)] text-left text-[var(--muted)]">
+            <tr className="bg-[rgba(9,17,31,0.04)] text-left text-[var(--text-secondary)]">
             {headers.map((header) => (
                 <th
                   key={header}
-                  className={compact ? "border-b border-[var(--line)] px-4 py-3 font-semibold" : "border-b border-[var(--line)] px-5 py-4 font-semibold"}
+                  className={compact ? "border-b border-[var(--border)] px-4 py-3 font-semibold" : "border-b border-[var(--border)] px-5 py-4 font-semibold"}
                 >
                 {header}
               </th>
@@ -46,8 +46,8 @@ export function DataTable({
               <tr>
                 <td className="px-5 py-12" colSpan={headers.length}>
                   <div className="console-empty">
-                    <div className="text-sm font-semibold text-[var(--fg)]">{emptyTitle}</div>
-                    <div className="mt-2 text-sm text-[var(--muted)]">{emptyBody}</div>
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">{emptyTitle}</div>
+                    <div className="mt-2 text-sm text-[var(--text-secondary)]">{emptyBody}</div>
                   </div>
                 </td>
               </tr>

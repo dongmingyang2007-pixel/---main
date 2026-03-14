@@ -59,7 +59,7 @@ export default function ModelDetailPage() {
   }, [modelId]);
 
   const uploadManagedArtifact = async (file: File): Promise<string> => {
-    setArtifactStatus("正在申请产物上传地址...");
+    setArtifactStatus(t("detail.presigning"));
     const presign = await apiPost<{
       artifact_upload_id: string;
       put_url: string;
@@ -69,7 +69,7 @@ export default function ModelDetailPage() {
       media_type: file.type || "application/octet-stream",
       size_bytes: file.size,
     });
-    setArtifactStatus("正在上传受管产物...");
+    setArtifactStatus(t("detail.uploading"));
     const putRes = await uploadToPresignedUrl(
       presign.put_url,
       {
@@ -80,9 +80,9 @@ export default function ModelDetailPage() {
       { authenticated: true },
     );
     if (!putRes.ok) {
-      throw new Error(`产物上传失败(${putRes.status})`);
+      throw new Error(t("detail.uploadFailed", { status: putRes.status }));
     }
-    setArtifactStatus(`已上传 ${file.name}`);
+    setArtifactStatus(t("detail.uploaded", { name: file.name }));
     return presign.artifact_upload_id;
   };
 
@@ -91,10 +91,10 @@ export default function ModelDetailPage() {
     setErrorMessage("");
     try {
       if (runId && artifactFile) {
-        throw new Error("run_id 与手工产物上传不能同时使用");
+        throw new Error(t("detail.conflictError"));
       }
       if (!runId && !artifactFile) {
-        throw new Error("请填写 run_id 或选择一个受管产物文件");
+        throw new Error(t("detail.missingInputError"));
       }
       const artifactUploadId = !runId && artifactFile ? await uploadManagedArtifact(artifactFile) : null;
       await apiPost(`/api/v1/models/${modelId}/versions`, {
@@ -108,7 +108,7 @@ export default function ModelDetailPage() {
       setArtifactStatus("");
       await load();
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "创建模型版本失败");
+      setErrorMessage(err instanceof Error ? err.message : t("detail.createError"));
     }
   };
 
@@ -125,7 +125,7 @@ export default function ModelDetailPage() {
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
               {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">模型详情</h1>
+            <h1 className="mt-2 text-2xl font-bold">{t("detail.title")}</h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
@@ -133,8 +133,8 @@ export default function ModelDetailPage() {
         <div className="console-panel">
           <div className="console-panel-header">
             <div>
-              <h2 className="console-panel-title">{modelName || "模型详情"}</h2>
-              <p className="console-panel-description">支持版本登记、alias 发布与回滚，所有操作会写入审计日志。</p>
+              <h2 className="console-panel-title">{modelName || t("detail.title")}</h2>
+              <p className="console-panel-description">{t("detail.panelDescription")}</p>
             </div>
           </div>
           <div className="console-panel-body">
@@ -146,11 +146,11 @@ export default function ModelDetailPage() {
                   className="console-input"
                   value={runId}
                   onChange={(e) => setRunId(e.target.value)}
-                  placeholder="已有训练 run 时可直接填写"
+                  placeholder={t("detail.runIdPlaceholder")}
                 />
               </div>
               <div>
-                <label className="console-label" htmlFor="artifact-file">受管产物文件</label>
+                <label className="console-label" htmlFor="artifact-file">{t("detail.artifactFile")}</label>
                 <input
                   id="artifact-file"
                   className="console-input pt-3"
@@ -159,11 +159,11 @@ export default function ModelDetailPage() {
                 />
               </div>
               <div className="flex items-end">
-                <button className="console-button w-full">创建版本</button>
+                <button className="console-button w-full">{t("detail.createVersion")}</button>
               </div>
             </form>
             <div className="mt-4 text-sm text-[var(--text-secondary)]">
-              {artifactStatus || "手工版本必须通过受管上传文件创建；如已有训练 run，可直接填写 run_id。"}
+              {artifactStatus || t("detail.versionHint")}
             </div>
             {errorMessage ? <div className="console-inline-notice is-error mt-4">{errorMessage}</div> : null}
           </div>
@@ -171,7 +171,7 @@ export default function ModelDetailPage() {
 
         <aside className="console-panel">
           <div className="console-panel-body">
-            <div className="console-kicker">Alias Pointers</div>
+            <div className="console-kicker">{t("detail.aliasKicker")}</div>
             <div className="mt-4 space-y-3">
               {["prod", "staging", "dev"].map((alias) => {
                 const pointer = aliases.find((item) => item.alias === alias);
@@ -190,10 +190,10 @@ export default function ModelDetailPage() {
       </section>
 
       <DataTable
-        caption="模型版本列表"
-        headers={["版本", "Run", "来源数据版本", "Recipe", "Artifact", "时间"]}
-        emptyTitle="暂无模型版本"
-        emptyBody="先从训练 run 或手工受管上传创建一个版本。"
+        caption={t("table.caption")}
+        headers={[t("table.version"), t("table.run"), t("table.sourceDataVersion"), t("table.recipe"), t("table.artifact"), t("table.time")]}
+        emptyTitle={t("table.emptyTitle")}
+        emptyBody={t("table.emptyBody")}
         rows={versions.map((version) => [
           `v${version.version}`,
           version.run_id ? `${version.run_id.slice(0, 8)}...` : "-",
@@ -201,7 +201,7 @@ export default function ModelDetailPage() {
           version.source?.recipe || "-",
           version.artifact_download_url ? (
             <a key={`${version.id}-artifact`} className="console-link" href={version.artifact_download_url} target="_blank" rel="noreferrer">
-              {version.artifact_filename || "下载产物"}
+              {version.artifact_filename || t("table.downloadArtifact")}
             </a>
           ) : (
             "-"
@@ -213,8 +213,8 @@ export default function ModelDetailPage() {
       <section className="console-panel">
         <div className="console-panel-header">
           <div>
-            <h2 className="console-panel-title">Alias 管理</h2>
-            <p className="console-panel-description">发布和回滚共用同一套版本选择器，显式控制 prod / staging / dev 指针。</p>
+            <h2 className="console-panel-title">{t("detail.aliasTitle")}</h2>
+            <p className="console-panel-description">{t("detail.aliasDescription")}</p>
           </div>
         </div>
         <div className="console-panel-body">
@@ -228,7 +228,7 @@ export default function ModelDetailPage() {
               </select>
             </div>
             <div>
-              <label className="console-label" htmlFor="alias-version">目标版本</label>
+              <label className="console-label" htmlFor="alias-version">{t("detail.targetVersion")}</label>
               <select id="alias-version" className="console-select" value={aliasVersionId} onChange={(e) => setAliasVersionId(e.target.value)}>
                 {versions.map((version) => (
                   <option key={version.id} value={version.id}>
@@ -248,7 +248,7 @@ export default function ModelDetailPage() {
                   await load();
                 }}
               >
-                发布
+                {t("detail.publish")}
               </button>
               <button
                 className="console-button-secondary w-full"
@@ -260,7 +260,7 @@ export default function ModelDetailPage() {
                   await load();
                 }}
               >
-                回滚
+                {t("detail.rollback")}
               </button>
             </div>
           </div>

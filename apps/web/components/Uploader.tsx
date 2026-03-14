@@ -75,7 +75,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
       <div className="console-panel-body">
         <div className="console-kicker">Dataset Upload</div>
         <div className="mt-2 text-lg font-semibold">拖入样本文件，或从本地选择上传</div>
-        <div className="mt-2 text-sm leading-6 text-[var(--muted)]">
+        <div className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
           仍然使用直传对象存储的现有流程；这里只重做交互反馈，不改变上传协议。
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -93,7 +93,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
           </label>
           <span className="console-pill">支持图片 / 文本 / 音频 / 视频</span>
         </div>
-        <div className="mt-4 text-sm text-[var(--muted)]">{message || "上传完成后会自动创建 Data Item 并触发后续处理。"}</div>
+        <div className="mt-4 text-sm text-[var(--text-secondary)]">{message || "上传完成后会自动创建 Data Item 并触发后续处理。"}</div>
       </div>
     </div>
   );

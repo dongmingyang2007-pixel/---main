@@ -49,5 +49,7 @@
   "scenes.engineering.detail1.body": "Each component labeled with material, process, and surface finish.",
   "scenes.engineering.detail2.label": "Manufacturing-ready",
   "scenes.engineering.detail2.body": "Export engineering files directly to start tooling.",
-  "scenes.engineering.tags": "Exploded,Material,Manufacturing"
+  "scenes.engineering.tags": "Exploded,Material,Manufacturing",
+  "hero.imageAlt": "Product Hero Shot",
+  "scene.imageAlt": "Product Image"
 }

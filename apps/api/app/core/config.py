@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     demo_prompt_max_chars: int = 400
     demo_max_infer_count: int = 3
     demo_max_concurrent_sessions_per_ip: int = 5
+
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = ""
+    smtp_from_name: str = "铭润科技"
+    verification_code_ttl_seconds: int = 600
+    verification_code_length: int = 6
+    verification_rate_limit_window_seconds: int = 60
+    verification_rate_limit_max: int = 3
     demo_allowed_media_types: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["image/jpeg", "image/png", "image/webp"]
     )

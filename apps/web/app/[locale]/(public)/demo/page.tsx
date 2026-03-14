@@ -870,20 +870,20 @@ export default function DemoPage() {
 
   const commandUnavailableReason = useMemo(() => {
     if (availableCommands.length > 0) return "";
-    if (connectionPhase === "timeout") return "连接超时，点击“重连模型”恢复命令。";
+    if (connectionPhase === "timeout") return td("advanced.connectionTimeout");
     if (connectionPhase === "connecting") return "模型握手中，命令暂不可用。";
     return "等待命令列表回传。";
   }, [availableCommands.length, connectionPhase]);
   const pivotPlugActionLabel = viewerState.pivotPlugAnimating
     ? "封帽移动中"
     : viewerState.pivotPlugReady
-      ? "收回封帽"
-      : "对准封帽";
+      ? td("pivot.retract")
+      : td("pivot.align");
   const pivotPlugStatusLabel = viewerState.pivotPlugInserted
-    ? "已插入"
+    ? td("pivot.inserted")
     : viewerState.pivotPlugReady
-      ? `待插入 ${Math.round(viewerState.pivotPlugSlideT * 100)}%`
-      : "外置";
+      ? td("pivot.readyPercent", { percent: Math.round(viewerState.pivotPlugSlideT * 100) })
+      : td("pivot.external");
   const canRunInference = Boolean(file) && !busy;
   const inferenceSummary = result
     ? summarizeResult(result)
@@ -891,25 +891,25 @@ export default function DemoPage() {
       ? td("result.loading")
       : td("result.empty");
   const diagnosticItems = [
-    ["连接状态", connectionMeta.label],
-    ["握手尝试", `${handshakeAttempts}/20`],
-    ["可用命令", `${availableCommands.length} 个`],
-    ["机械版本", viewerState.mechRevision],
-    ["打印配置", viewerState.printProfile],
-    ["耳机规格", viewerState.earbudSpecRevision],
-    ["隐私滑块", viewerState.privacyLockHw ? "LOCK" : "UNLOCK"],
-    ["采集事件", `${viewerState.captureLastEvent || "none"}${viewerState.captureBlockedReason ? ` (${viewerState.captureBlockedReason})` : ""}`],
+    [td("diag.connection"), connectionMeta.label],
+    [td("diag.handshake"), `${handshakeAttempts}/20`],
+    [td("diag.availableCommands"), td("diag.commandCount", { count: availableCommands.length })],
+    [td("diag.mechRevision"), viewerState.mechRevision],
+    [td("diag.printProfile"), viewerState.printProfile],
+    [td("diag.earbudSpec"), viewerState.earbudSpecRevision],
+    [td("diag.privacySlider"), viewerState.privacyLockHw ? td("diag.privacyLock") : td("diag.privacyUnlock")],
+    [td("diag.captureEvent"), `${viewerState.captureLastEvent || td("diag.none")}${viewerState.captureBlockedReason ? ` (${viewerState.captureBlockedReason})` : ""}`],
     [
-      "时延拆分",
+      td("diag.latencyBreakdown"),
       `upload ${viewerState.captureToUploadMs.toFixed(1)} / ai ${viewerState.uploadToAiMs.toFixed(1)} / tts ${viewerState.aiToTtsMs.toFixed(1)}`,
     ],
     [
-      "耳机配合",
-      `${viewerState.earbudFitClearanceMm.toFixed(3)}mm · ${viewerState.earbudFitMeasurementValid ? "有效" : "无效"}`,
+      td("diag.earbudFit"),
+      `${viewerState.earbudFitClearanceMm.toFixed(3)}mm · ${viewerState.earbudFitMeasurementValid ? td("diag.fitValid") : td("diag.fitInvalid")}`,
     ],
-    ["转轴状态", `${viewerState.pivotState} · ${viewerState.pivotAngleDeg.toFixed(1)}°`],
-    ["转轴布局", `${viewerState.pivotLayout} / ${viewerState.pivotSwingSide}`],
-  ] as const;
+    [td("diag.pivotStatus"), `${viewerState.pivotState} · ${viewerState.pivotAngleDeg.toFixed(1)}°`],
+    [td("diag.pivotLayout"), `${viewerState.pivotLayout} / ${viewerState.pivotSwingSide}`],
+  ] as [string, string][];
 
   return (
     <div className="demo-page" ref={demoShellRef}>
@@ -922,11 +922,11 @@ export default function DemoPage() {
           const picked = e.target.files?.[0] || null;
           setFile(picked);
           if (picked) {
-            setStatusMessage(`已选择图片：${picked.name}`);
-            patchViewerState({ demoHasImage: true, demoMessage: `Image ready: ${picked.name}` });
+            setStatusMessage(td("status.imageSelected", { name: picked.name }));
+            patchViewerState({ demoHasImage: true, demoMessage: td("status.imageReady", { name: picked.name }) });
           } else {
-            setStatusMessage("未选择图片");
-            patchViewerState({ demoHasImage: false, demoMessage: "No image selected" });
+            setStatusMessage(td("status.noImage"));
+            patchViewerState({ demoHasImage: false, demoMessage: td("status.noImageSelected") });
           }
         }}
       />
@@ -942,7 +942,7 @@ export default function DemoPage() {
           />
           <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">{statusMessage}</p>
           <div className="demo-status-actions">
-            <div className="demo-task-switch" role="tablist" aria-label="Select demo task">
+            <div className="demo-task-switch" role="tablist" aria-label={td("task.selectLabel")}>
               <button
                 type="button"
                 className={`demo-task-pill ${task === "vqa" ? "is-active" : ""}`}
@@ -971,45 +971,45 @@ export default function DemoPage() {
               disabled={!canRunInference}
               className="console-button"
             >
-              {busy ? "推理中" : "开始推理"}
+              {busy ? td("control.inferring") : td("control.startInference")}
             </button>
             {connectionPhase === "timeout" ? (
               <button type="button" onClick={retryViewerConnection} className="console-button-secondary">
-                重连模型
+                {td("control.reconnect")}
               </button>
             ) : null}
           </div>
         </div>
         <div className="demo-metric-grid w-full max-w-[360px]" data-reveal data-reveal-delay="2">
           <div className="demo-metric-card">
-            <div className="console-key-label">Viewer</div>
+            <div className="console-key-label">{td("metric.viewer")}</div>
             <strong>{connectionMeta.label}</strong>
           </div>
           <div className="demo-metric-card">
-            <div className="console-key-label">Task</div>
+            <div className="console-key-label">{td("metric.task")}</div>
             <strong>{task.toUpperCase()}</strong>
           </div>
           <div className="demo-metric-card">
-            <div className="console-key-label">Image</div>
-            <strong className="truncate">{file ? file.name : "未选择"}</strong>
+            <div className="console-key-label">{td("metric.image")}</div>
+            <strong className="truncate">{file ? file.name : td("metric.noImage")}</strong>
           </div>
           <div className="demo-metric-card">
-            <div className="console-key-label">Result</div>
-            <strong>{result ? `${result.latency_ms}ms` : busy ? "处理中" : "等待中"}</strong>
+            <div className="console-key-label">{td("metric.result")}</div>
+            <strong>{result ? `${result.latency_ms}ms` : busy ? td("metric.processing") : td("metric.waiting")}</strong>
           </div>
         </div>
       </div>
 
       <section className="demo-response-strip" data-reveal data-reveal-delay="1">
         <div>
-          <div className="console-kicker">Latest Response</div>
-          <h2 className="demo-response-title">结果摘要直接贴着主舞台展示。</h2>
+          <div className="console-kicker">{td("response.kicker")}</div>
+          <h2 className="demo-response-title">{td("response.title")}</h2>
           <p className="demo-response-summary">{inferenceSummary}</p>
         </div>
         <div className="demo-response-meta">
           <span>{viewerState.caseMode}</span>
-          <span>{file ? file.name : "等待图片"}</span>
-          <span>{result ? `${result.latency_ms}ms` : busy ? "处理中" : "等待推理"}</span>
+          <span>{file ? file.name : td("response.waitingImage")}</span>
+          <span>{result ? `${result.latency_ms}ms` : busy ? td("metric.processing") : td("response.waitingInference")}</span>
         </div>
       </section>
 
@@ -1019,7 +1019,7 @@ export default function DemoPage() {
             <iframe
               ref={iframeRef}
               src={deferredViewerSrc}
-              title="MingRun Demo Model"
+              title={td("viewer.title")}
               className="demo-iframe"
               loading="lazy"
               onLoad={() => {
@@ -1032,100 +1032,100 @@ export default function DemoPage() {
         <aside className="demo-sidebar">
           <section className="demo-panel">
             <div className="demo-panel-body">
-              <AdvancedDrawer title="设备与工程控制" summary="完整命令仍然都在，只是默认不把它们直接摊开。">
+              <AdvancedDrawer title={td("advanced.title")} summary={td("advanced.summary")} kicker={td("advanced.kicker")} toggleLabel={td("advanced.toggle")}>
                 {commandUnavailableReason ? <div className="text-xs text-[#8a5a18]">{commandUnavailableReason}</div> : null}
 
                 <div className="demo-advanced-group">
-                  <h3>主结构</h3>
-                  <p>直接控制盒盖、相机、耳机与主要展示效果。</p>
+                  <h3>{td("advanced.structure")}</h3>
+                  <p>{td("advanced.structureDesc")}</p>
                   <div className="demo-command-grid mt-4">
                     <button
                       className={commandBtn(commandSupported("toggle-open"), viewerState.isOpen)}
                       disabled={!commandSupported("toggle-open")}
                       onClick={() => sendViewerCommand("toggle-open")}
                     >
-                      {viewerState.isOpen ? "合上盒盖" : "打开盒盖"}
+                      {viewerState.isOpen ? td("advanced.closeLid") : td("advanced.openLid")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-camera"), viewerState.camDetached)}
                       disabled={!commandSupported("toggle-camera")}
                       onClick={() => sendViewerCommand("toggle-camera")}
                     >
-                      {viewerState.camDetached ? "相机归位" : "相机分离"}
+                      {viewerState.camDetached ? td("advanced.attachCam") : td("advanced.detachCam")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-earbuds"), viewerState.earbudsOut)}
                       disabled={!commandSupported("toggle-earbuds")}
                       onClick={() => sendViewerCommand("toggle-earbuds")}
                     >
-                      {viewerState.earbudsOut ? "耳机入仓" : "耳机取出"}
+                      {viewerState.earbudsOut ? td("advanced.earbudsIn") : td("advanced.earbudsOut")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-dream"), viewerState.dreamOn)}
                       disabled={!commandSupported("toggle-dream")}
                       onClick={() => sendViewerCommand("toggle-dream")}
                     >
-                      Dream {viewerState.dreamOn ? "ON" : "OFF"}
+                      {viewerState.dreamOn ? td("advanced.dreamOn") : td("advanced.dreamOff")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-spin"), viewerState.autoSpin)}
                       disabled={!commandSupported("toggle-spin")}
                       onClick={() => sendViewerCommand("toggle-spin")}
                     >
-                      Spin {viewerState.autoSpin ? "ON" : "OFF"}
+                      {viewerState.autoSpin ? td("advanced.spinOn") : td("advanced.spinOff")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-explode"), viewerState.exploded)}
                       disabled={!commandSupported("toggle-explode")}
                       onClick={() => sendViewerCommand("toggle-explode")}
                     >
-                      Exploded {viewerState.exploded ? "ON" : "OFF"}
+                      {viewerState.exploded ? td("advanced.explodedOn") : td("advanced.explodedOff")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-xray"), viewerState.xrayOn)}
                       disabled={!commandSupported("toggle-xray")}
                       onClick={() => sendViewerCommand("toggle-xray")}
                     >
-                      X-Ray {viewerState.xrayOn ? "ON" : "OFF"}
+                      {viewerState.xrayOn ? td("advanced.xrayOn") : td("advanced.xrayOff")}
                     </button>
                     <button
                       className={commandBtn(commandSupported("toggle-night"), viewerState.nightOn)}
                       disabled={!commandSupported("toggle-night")}
                       onClick={() => sendViewerCommand("toggle-night")}
                     >
-                      Night {viewerState.nightOn ? "ON" : "OFF"}
+                      {viewerState.nightOn ? td("advanced.nightOn") : td("advanced.nightOff")}
                     </button>
                   </div>
                 </div>
 
                 <div className="demo-advanced-group">
-                  <h3>视角与检视</h3>
-                  <p>把镜头切到结构重点，不需要在主流程里占据注意力。</p>
+                  <h3>{td("advanced.viewSection")}</h3>
+                  <p>{td("advanced.viewSectionDesc")}</p>
                   <div className="demo-command-grid mt-4">
-                    <button className={commandBtn(commandSupported("reset-view"))} disabled={!commandSupported("reset-view")} onClick={() => sendViewerCommand("reset-view")}>重置视角</button>
-                    <button className={commandBtn(commandSupported("focus-front-view"))} disabled={!commandSupported("focus-front-view")} onClick={() => sendViewerCommand("focus-front-view")}>正视机位</button>
-                    <button className={commandBtn(commandSupported("focus-rear-view"))} disabled={!commandSupported("focus-rear-view")} onClick={() => sendViewerCommand("focus-rear-view")}>背视机位</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-view"))} disabled={!commandSupported("focus-pivot-view")} onClick={() => sendViewerCommand("focus-pivot-view")}>转轴近景</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-front-view"))} disabled={!commandSupported("focus-pivot-front-view")} onClick={() => sendViewerCommand("focus-pivot-front-view")}>转轴正视</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-rear-view"))} disabled={!commandSupported("focus-pivot-rear-view")} onClick={() => sendViewerCommand("focus-pivot-rear-view")}>转轴背视</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-rear-corner-view"))} disabled={!commandSupported("focus-pivot-rear-corner-view")} onClick={() => sendViewerCommand("focus-pivot-rear-corner-view")}>后角近景</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-xray-view"))} disabled={!commandSupported("focus-pivot-xray-view")} onClick={() => sendViewerCommand("focus-pivot-xray-view")}>转轴 X-Ray</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-inspect-view"))} disabled={!commandSupported("focus-pivot-inspect-view")} onClick={() => sendViewerCommand("focus-pivot-inspect-view")}>检视对焦</button>
-                    <button className={commandBtn(commandSupported("focus-ear-left-view"))} disabled={!commandSupported("focus-ear-left-view")} onClick={() => sendViewerCommand("focus-ear-left-view")}>左耳近景</button>
-                    <button className={commandBtn(commandSupported("focus-ear-right-view"))} disabled={!commandSupported("focus-ear-right-view")} onClick={() => sendViewerCommand("focus-ear-right-view")}>右耳近景</button>
-                    <button className={commandBtn(commandSupported("focus-ear-dock-view"))} disabled={!commandSupported("focus-ear-dock-view")} onClick={() => sendViewerCommand("focus-ear-dock-view")}>入仓检视</button>
-                    <button className={commandBtn(commandSupported("toggle-earbud-xray"), viewerState.xrayOn)} disabled={!commandSupported("toggle-earbud-xray")} onClick={() => sendViewerCommand("toggle-earbud-xray")}>耳机 X-Ray</button>
-                    <button className={commandBtn(commandSupported("toggle-pivot-inspect"), viewerState.pivotInspectActive)} disabled={!commandSupported("toggle-pivot-inspect")} onClick={() => sendViewerCommand("toggle-pivot-inspect")}>转轴检视 {viewerState.pivotInspectActive ? "ON" : "OFF"}</button>
-                    <button className={commandBtn(commandSupported("toggle-pivot-explode"), viewerState.pivotExplodeActive)} disabled={!commandSupported("toggle-pivot-explode")} onClick={() => sendViewerCommand("toggle-pivot-explode")}>转轴分解 {viewerState.pivotExplodeActive ? "ON" : "OFF"}</button>
+                    <button className={commandBtn(commandSupported("reset-view"))} disabled={!commandSupported("reset-view")} onClick={() => sendViewerCommand("reset-view")}>{td("advanced.resetView")}</button>
+                    <button className={commandBtn(commandSupported("focus-front-view"))} disabled={!commandSupported("focus-front-view")} onClick={() => sendViewerCommand("focus-front-view")}>{td("advanced.frontView")}</button>
+                    <button className={commandBtn(commandSupported("focus-rear-view"))} disabled={!commandSupported("focus-rear-view")} onClick={() => sendViewerCommand("focus-rear-view")}>{td("advanced.rearView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-view"))} disabled={!commandSupported("focus-pivot-view")} onClick={() => sendViewerCommand("focus-pivot-view")}>{td("advanced.pivotView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-front-view"))} disabled={!commandSupported("focus-pivot-front-view")} onClick={() => sendViewerCommand("focus-pivot-front-view")}>{td("advanced.pivotFrontView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-rear-view"))} disabled={!commandSupported("focus-pivot-rear-view")} onClick={() => sendViewerCommand("focus-pivot-rear-view")}>{td("advanced.pivotRearView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-rear-corner-view"))} disabled={!commandSupported("focus-pivot-rear-corner-view")} onClick={() => sendViewerCommand("focus-pivot-rear-corner-view")}>{td("advanced.rearCornerView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-xray-view"))} disabled={!commandSupported("focus-pivot-xray-view")} onClick={() => sendViewerCommand("focus-pivot-xray-view")}>{td("advanced.pivotXrayView")}</button>
+                    <button className={commandBtn(commandSupported("focus-pivot-inspect-view"))} disabled={!commandSupported("focus-pivot-inspect-view")} onClick={() => sendViewerCommand("focus-pivot-inspect-view")}>{td("advanced.inspectFocus")}</button>
+                    <button className={commandBtn(commandSupported("focus-ear-left-view"))} disabled={!commandSupported("focus-ear-left-view")} onClick={() => sendViewerCommand("focus-ear-left-view")}>{td("advanced.earLeftView")}</button>
+                    <button className={commandBtn(commandSupported("focus-ear-right-view"))} disabled={!commandSupported("focus-ear-right-view")} onClick={() => sendViewerCommand("focus-ear-right-view")}>{td("advanced.earRightView")}</button>
+                    <button className={commandBtn(commandSupported("focus-ear-dock-view"))} disabled={!commandSupported("focus-ear-dock-view")} onClick={() => sendViewerCommand("focus-ear-dock-view")}>{td("advanced.earDockView")}</button>
+                    <button className={commandBtn(commandSupported("toggle-earbud-xray"), viewerState.xrayOn)} disabled={!commandSupported("toggle-earbud-xray")} onClick={() => sendViewerCommand("toggle-earbud-xray")}>{td("advanced.earbudXray")}</button>
+                    <button className={commandBtn(commandSupported("toggle-pivot-inspect"), viewerState.pivotInspectActive)} disabled={!commandSupported("toggle-pivot-inspect")} onClick={() => sendViewerCommand("toggle-pivot-inspect")}>{viewerState.pivotInspectActive ? td("advanced.pivotInspectOn") : td("advanced.pivotInspectOff")}</button>
+                    <button className={commandBtn(commandSupported("toggle-pivot-explode"), viewerState.pivotExplodeActive)} disabled={!commandSupported("toggle-pivot-explode")} onClick={() => sendViewerCommand("toggle-pivot-explode")}>{viewerState.pivotExplodeActive ? td("advanced.pivotExplodeOn") : td("advanced.pivotExplodeOff")}</button>
                   </div>
                 </div>
 
                 <div className="demo-advanced-group">
-                  <h3>模式与参数</h3>
-                  <p>保留模式切换、材质和场景控制，但默认折叠。</p>
+                  <h3>{td("advanced.modeSection")}</h3>
+                  <p>{td("advanced.modeSectionDesc")}</p>
                   <div className="mt-4 grid gap-3">
                     <label className="block text-xs text-[var(--muted)]">
-                      模式
+                      {td("advanced.modeLabel")}
                       <select className="console-select mt-1" value={viewerState.mode} onChange={(e) => patchViewerState({ mode: e.target.value as ViewerMode })}>
                         <option value="offline">offline</option>
                         <option value="online">online</option>
@@ -1133,7 +1133,7 @@ export default function DemoPage() {
                       </select>
                     </label>
                     <label className="block text-xs text-[var(--muted)]">
-                      场景模式
+                      {td("advanced.caseModeLabel")}
                       <select className="console-select mt-1" value={viewerState.caseMode} onChange={(e) => patchViewerState({ case_mode: e.target.value as ViewerCaseMode })}>
                         <option value="commute_mode">commute_mode</option>
                         <option value="office_mode">office_mode</option>
@@ -1141,7 +1141,7 @@ export default function DemoPage() {
                       </select>
                     </label>
                     <label className="block text-xs text-[var(--muted)]">
-                      训练层级
+                      {td("advanced.layerLabel")}
                       <select className="console-select mt-1" value={viewerState.layer} onChange={(e) => patchViewerState({ layer: clampLayer(Number(e.target.value)) })}>
                         <option value={1}>L1</option>
                         <option value={2}>L2</option>
@@ -1151,7 +1151,7 @@ export default function DemoPage() {
                     </label>
                     <div className="demo-command-grid">
                       <button className={commandBtn(true, viewerState.privacyLockHw)} onClick={() => patchViewerState({ privacy_lock_hw: !viewerState.privacyLockHw })}>
-                        隐私滑块 {viewerState.privacyLockHw ? "OFF" : "ON"}
+                        {viewerState.privacyLockHw ? td("advanced.privacyOff") : td("advanced.privacyOn")}
                       </button>
                       <button
                         className={commandBtn(true, viewerState.caseMode === "silent_privacy_mode")}
@@ -1161,43 +1161,43 @@ export default function DemoPage() {
                           })
                         }
                       >
-                        静默隐私拨键 {viewerState.caseMode === "silent_privacy_mode" ? "ON" : "OFF"}
+                        {viewerState.caseMode === "silent_privacy_mode" ? td("advanced.silentPrivacyOn") : td("advanced.silentPrivacyOff")}
                       </button>
                     </div>
                     <label className="block text-xs text-[var(--muted)]">
-                      配色
+                      {td("advanced.colorwayLabel")}
                       <select className="console-select mt-1" value={viewerState.colorway} onChange={(e) => patchViewerState({ colorway: e.target.value as ViewerColorway })}>
-                        <option value="pearl">Pearl White</option>
-                        <option value="graphite">Graphite</option>
-                        <option value="glacier">Glacier Blue</option>
+                        <option value="pearl">{td("colorway.pearl")}</option>
+                        <option value="graphite">{td("colorway.graphite")}</option>
+                        <option value="glacier">{td("colorway.glacier")}</option>
                       </select>
                     </label>
                     <label className="block text-xs text-[var(--muted)]">
-                      转轴开向
+                      {td("advanced.pivotSideLabel")}
                       <select className="console-select mt-1" value={viewerState.pivotSwingSide} onChange={(e) => patchViewerState({ pivot_swing_side: e.target.value as ViewerPivotSide })}>
-                        <option value="left">left</option>
-                        <option value="right">right</option>
+                        <option value="left">{td("side.left")}</option>
+                        <option value="right">{td("side.right")}</option>
                       </select>
                     </label>
                   </div>
                 </div>
 
                 <div className="demo-advanced-group">
-                  <h3>导出与结构操作</h3>
-                  <p>把更工程化的动作收在一起，不影响首次体验。</p>
+                  <h3>{td("advanced.exportSection")}</h3>
+                  <p>{td("advanced.exportSectionDesc")}</p>
                   <div className="demo-command-grid mt-4">
                     <button className={commandBtn(canSyncViewerState, viewerState.pivotPlugReady || viewerState.pivotPlugInserted)} disabled={!canSyncViewerState} onClick={() => patchViewerState(viewerState.pivotPlugReady || viewerState.pivotPlugInserted ? { pivot_plug_ready: false } : { pivot_plug_ready: true })}>
                       {pivotPlugActionLabel}
                     </button>
-                    <button className={commandBtn(commandSupported("toggle-task"))} disabled={!commandSupported("toggle-task")} onClick={() => sendViewerCommand("toggle-task")}>任务切换</button>
-                    <button className={commandBtn(commandSupported("cycle-mode"))} disabled={!commandSupported("cycle-mode")} onClick={() => sendViewerCommand("cycle-mode")}>轮换模式</button>
-                    <button className={commandBtn(commandSupported("cycle-layer"))} disabled={!commandSupported("cycle-layer")} onClick={() => sendViewerCommand("cycle-layer")}>轮换层级</button>
-                    <button className={commandBtn(commandSupported("export-glb"))} disabled={!commandSupported("export-glb")} onClick={() => sendViewerCommand("export-glb")}>导出 GLB</button>
-                    <button className={commandBtn(commandSupported("export-stl-pack"))} disabled={!commandSupported("export-stl-pack")} onClick={() => sendViewerCommand("export-stl-pack")}>导出 STL Pack</button>
+                    <button className={commandBtn(commandSupported("toggle-task"))} disabled={!commandSupported("toggle-task")} onClick={() => sendViewerCommand("toggle-task")}>{td("advanced.taskToggle")}</button>
+                    <button className={commandBtn(commandSupported("cycle-mode"))} disabled={!commandSupported("cycle-mode")} onClick={() => sendViewerCommand("cycle-mode")}>{td("advanced.cycleMode")}</button>
+                    <button className={commandBtn(commandSupported("cycle-layer"))} disabled={!commandSupported("cycle-layer")} onClick={() => sendViewerCommand("cycle-layer")}>{td("advanced.cycleLayer")}</button>
+                    <button className={commandBtn(commandSupported("export-glb"))} disabled={!commandSupported("export-glb")} onClick={() => sendViewerCommand("export-glb")}>{td("advanced.exportGlb")}</button>
+                    <button className={commandBtn(commandSupported("export-stl-pack"))} disabled={!commandSupported("export-stl-pack")} onClick={() => sendViewerCommand("export-stl-pack")}>{td("advanced.exportStl")}</button>
                   </div>
                   <div className="mt-4 rounded border border-[#d9e1ee] bg-[#f7f9fc] px-3 py-2">
                     <div className="flex items-center justify-between text-xs text-[#4f5768]">
-                      <span>封帽下压</span>
+                      <span>{td("advanced.capSliderLabel")}</span>
                       <span>{Math.round(viewerState.pivotPlugSlideT * 100)}%</span>
                     </div>
                     <input
@@ -1210,7 +1210,7 @@ export default function DemoPage() {
                       onChange={(event) => patchViewerState({ pivot_plug_slide_t: Number(event.target.value) / 100 })}
                       className="mt-2 w-full accent-[#1f8afa] disabled:cursor-not-allowed disabled:opacity-50"
                     />
-                    <div className="mt-1 text-[11px] text-[#6b7280]">先点击“对准封帽”，再拖动模型中的封帽或滑杆向下插入。</div>
+                    <div className="mt-1 text-[11px] text-[#6b7280]">{td("advanced.capSliderHint")}</div>
                   </div>
                 </div>
               </AdvancedDrawer>
@@ -1219,24 +1219,24 @@ export default function DemoPage() {
 
           <section className="demo-panel">
             <div className="demo-panel-body">
-              <div className="console-kicker">Diagnostics</div>
-              <h2 className="console-panel-title mt-2">状态与工程指标</h2>
+              <div className="console-kicker">{td("diag.kicker")}</div>
+              <h2 className="console-panel-title mt-2">{td("diag.title")}</h2>
 
               <div className="demo-metric-grid mt-4">
                 <div className="demo-metric-card">
-                  <div className="console-key-label">Case Mode</div>
+                  <div className="console-key-label">{td("diag.caseMode")}</div>
                   <strong>{viewerState.caseMode}</strong>
                 </div>
                 <div className="demo-metric-card">
-                  <div className="console-key-label">Pivot Plug</div>
+                  <div className="console-key-label">{td("diag.pivotPlug")}</div>
                   <strong>{pivotPlugStatusLabel}</strong>
                 </div>
                 <div className="demo-metric-card">
-                  <div className="console-key-label">Latency</div>
+                  <div className="console-key-label">{td("diag.latency")}</div>
                   <strong>{viewerState.e2eMs.toFixed(1)}ms</strong>
                 </div>
                 <div className="demo-metric-card">
-                  <div className="console-key-label">Model</div>
+                  <div className="console-key-label">{td("diag.model")}</div>
                   <strong>{viewerState.statusText}</strong>
                 </div>
               </div>
@@ -1249,21 +1249,21 @@ export default function DemoPage() {
                   </div>
                 ))}
                 <div className="demo-status-item">
-                  <span>已选图片</span>
-                  <strong>{file ? file.name : "未选择"}</strong>
+                  <span>{td("diag.selectedImage")}</span>
+                  <strong>{file ? file.name : td("metric.noImage")}</strong>
                 </div>
                 <div className="demo-status-item">
-                  <span>口袋误触抑制</span>
-                  <strong>{viewerState.pocketGuardActive ? "触发中" : "未触发"}</strong>
+                  <span>{td("diag.pocketGuard")}</span>
+                  <strong>{viewerState.pocketGuardActive ? td("diag.pocketActive") : td("diag.pocketInactive")}</strong>
                 </div>
                 <div className="demo-status-item">
-                  <span>触点接通</span>
+                  <span>{td("diag.contact")}</span>
                   <strong>
                     L {viewerState.earbudContactEngagedL ? "YES" : "NO"} / R {viewerState.earbudContactEngagedR ? "YES" : "NO"}
                   </strong>
                 </div>
                 <div className="demo-status-item">
-                  <span>关盖横向抖动</span>
+                  <span>{td("diag.lateralJitter")}</span>
                   <strong>{viewerState.closedLateralJitterMm.toFixed(3)}mm</strong>
                 </div>
               </div>

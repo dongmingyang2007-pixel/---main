@@ -1,4 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import createIntlMiddleware from "next-intl/middleware";
+import { routing } from "./i18n/routing";
+
+const intlMiddleware = createIntlMiddleware(routing);
+
+/** Routes that next-intl should handle (pages, not API/static/files). */
+function isPageRoute(pathname: string): boolean {
+  return !/^\/api\/|^\/_next\/|\./.test(pathname);
+}
 
 function normalizeOrigin(value?: string): string | null {
   if (!value) {
@@ -44,8 +53,12 @@ function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
 }
 
 export function proxy(request: NextRequest) {
-  const allowSameOriginFrame = isSameOriginEmbeddablePath(request.nextUrl.pathname);
-  if (isProtectedConsolePath(request.nextUrl.pathname) && !request.cookies.get("access_token")?.value) {
+  const { pathname } = request.nextUrl;
+  const allowSameOriginFrame = isSameOriginEmbeddablePath(pathname);
+
+  // Auth check — strip locale prefix so /en/app/* is also protected
+  const strippedPath = pathname.replace(/^\/en(?=\/|$)/, "") || "/";
+  if (isProtectedConsolePath(strippedPath) && !request.cookies.get("access_token")?.value) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
@@ -56,19 +69,19 @@ export function proxy(request: NextRequest) {
   let nonce: string | null = null;
   let response: NextResponse;
 
-  if (useNonceCsp) {
-    const requestHeaders = new Headers(request.headers);
-    nonce = btoa(crypto.randomUUID());
-    requestHeaders.set("x-nonce", nonce);
-    response = NextResponse.next({
-      request: {
-        headers: requestHeaders,
-      },
-    });
+  if (isPageRoute(pathname)) {
+    // Locale detection, prefix rewriting, and cookie handling
+    response = intlMiddleware(request) as NextResponse;
   } else {
     response = NextResponse.next();
   }
 
+  // Generate nonce for CSP (production only)
+  if (useNonceCsp) {
+    nonce = btoa(crypto.randomUUID());
+  }
+
+  // Security headers — applied to every response (including intl redirects)
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");

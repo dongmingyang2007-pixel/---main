@@ -1,5 +1,33 @@
 {
   "kicker": "Datasets",
   "title": "数据集",
-  "description": "上传、标注、管理你的训练数据。"
+  "description": "上传、标注、管理你的训练数据。",
+  "table": {
+    "caption": "样本表格",
+    "file": "文件",
+    "type": "类型",
+    "size": "尺寸",
+    "annotation": "标注",
+    "actions": "操作",
+    "emptyTitle": "暂无样本",
+    "emptyBody": "先上传文件，随后可以在这里快速打标签或通过签名链接打开原文件。",
+    "saveTag": "保存标签",
+    "download": "下载"
+  },
+  "detail": {
+    "title": "数据集详情",
+    "description": "浏览样本、上传文件和管理版本。",
+    "browseTitle": "样本浏览",
+    "browseDescription": "支持表格和图片墙两种视图，所有预览和下载都走签名 URL。",
+    "viewTable": "表格",
+    "viewGallery": "图片墙",
+    "commitLabel": "版本提交说明",
+    "commitButton": "Commit 数据版本",
+    "committed": "已提交版本 v{version}",
+    "historyKicker": "Version History",
+    "noVersions": "暂无版本，请先 Commit。",
+    "itemCount": "样本数",
+    "noPreview": "无预览",
+    "openFile": "打开原文件"
+  }
 }

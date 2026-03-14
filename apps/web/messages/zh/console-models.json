@@ -1,5 +1,38 @@
 {
   "kicker": "Models",
   "title": "模型仓",
-  "description": "管理模型版本和发布。"
+  "description": "管理模型版本和发布。",
+  "table": {
+    "caption": "模型版本列表",
+    "version": "版本",
+    "run": "Run",
+    "sourceDataVersion": "来源数据版本",
+    "recipe": "Recipe",
+    "artifact": "Artifact",
+    "time": "时间",
+    "emptyTitle": "暂无模型版本",
+    "emptyBody": "先从训练 run 或手工受管上传创建一个版本。",
+    "downloadArtifact": "下载产物"
+  },
+  "detail": {
+    "title": "模型详情",
+    "aliasKicker": "Alias Pointers",
+    "panelDescription": "支持版本登记、alias 发布与回滚，所有操作会写入审计日志。",
+    "runIdPlaceholder": "已有训练 run 时可直接填写",
+    "artifactFile": "受管产物文件",
+    "createVersion": "创建版本",
+    "versionHint": "手工版本必须通过受管上传文件创建；如已有训练 run，可直接填写 run_id。",
+    "presigning": "正在申请产物上传地址...",
+    "uploading": "正在上传受管产物...",
+    "uploaded": "已上传 {name}",
+    "uploadFailed": "产物上传失败({status})",
+    "conflictError": "run_id 与手工产物上传不能同时使用",
+    "missingInputError": "请填写 run_id 或选择一个受管产物文件",
+    "createError": "创建模型版本失败",
+    "aliasTitle": "Alias 管理",
+    "aliasDescription": "发布和回滚共用同一套版本选择器，显式控制 prod / staging / dev 指针。",
+    "targetVersion": "目标版本",
+    "publish": "发布",
+    "rollback": "回滚"
+  }
 }

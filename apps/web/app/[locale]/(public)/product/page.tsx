@@ -9,6 +9,7 @@ import { PRODUCT_SCENES } from "@/lib/product-data";
 
 export default function ProductPage() {
   const t = useTranslations("product");
+  const tc = useTranslations("common");
   const containerRef = useRef<HTMLDivElement>(null);
 
   const scenes = PRODUCT_SCENES.map((scene) => ({
@@ -64,7 +65,7 @@ export default function ProductPage() {
           {t("hero.title")}
         </p>
         <div className="mt-8 w-full max-w-2xl">
-          <ImagePlaceholder label="Product Hero Shot" aspect="16/9" icon="photo" />
+          <ImagePlaceholder label={t("hero.imageAlt")} aspect="16/9" icon="photo" />
         </div>
       </section>
 
@@ -97,7 +98,7 @@ export default function ProductPage() {
             </div>
             <div className="flex items-center justify-center">
               <ImagePlaceholder
-                label={scene.assetSlots[0] || "Product Image"}
+                label={scene.assetSlots[0] || t("scene.imageAlt")}
                 aspect="4/3"
                 icon="photo"
               />
@@ -111,10 +112,10 @@ export default function ProductPage() {
         <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("hero.cta")}</h2>
         <div className="mt-6 flex gap-4">
           <MagneticButton href="/demo" className="rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-6 py-3 text-sm font-medium text-white">
-            Try Demo
+            {tc("nav.tryDemo")}
           </MagneticButton>
           <MagneticButton href="/ecosystem" className="rounded-[var(--radius-full)] border border-[var(--border)] px-6 py-3 text-sm font-medium text-[var(--text-primary)]">
-            AI Ecosystem
+            {tc("nav.ecosystem")}
           </MagneticButton>
         </div>
       </section>

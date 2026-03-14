@@ -13,7 +13,7 @@ export function SiteFooter() {
 
   const columns = [
     {
-      titleKey: "footer.product",
+      titleKey: "footer.section.product",
       links: [
         { href: "/product", labelKey: "footer.product.overview" },
         { href: "/product#specs", labelKey: "footer.product.specs" },
@@ -21,7 +21,7 @@ export function SiteFooter() {
       ],
     },
     {
-      titleKey: "footer.ecosystem",
+      titleKey: "footer.section.ecosystem",
       links: [
         { href: "/ecosystem", labelKey: "footer.ecosystem.platform" },
         { href: "/demo", labelKey: "footer.ecosystem.demo" },
@@ -29,7 +29,7 @@ export function SiteFooter() {
       ],
     },
     {
-      titleKey: "footer.support",
+      titleKey: "footer.section.support",
       links: [
         { href: "/support", labelKey: "footer.support.docs" },
         { href: "/support#faq", labelKey: "footer.support.faq" },
@@ -37,7 +37,7 @@ export function SiteFooter() {
       ],
     },
     {
-      titleKey: "footer.about",
+      titleKey: "footer.section.about",
       links: [
         { href: "/updates", labelKey: "footer.about.updates" },
         { href: "mailto:hello@mingrun-tech.com", labelKey: "footer.about.email" },

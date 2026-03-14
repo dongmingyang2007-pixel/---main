@@ -4,21 +4,21 @@ test("public routes keep above-the-fold content visible during navigation", asyn
   await page.goto("/");
 
   await expect(
-    page.getByRole("heading", { name: /让环境 AI 先像产品，再像日常存在/ }),
+    page.getByRole("heading", { name: /看见周围/ }),
   ).toBeVisible({ timeout: 2000 });
-  await expect(page.getByRole("link", { name: "进入 Demo" }).first()).toBeVisible({ timeout: 2000 });
+  await expect(page.getByRole("link", { name: "在线体验" }).first()).toBeVisible({ timeout: 2000 });
 
-  await page.getByRole("link", { name: "查看产品页" }).first().click();
+  await page.getByRole("link", { name: "了解产品" }).first().click();
   await expect(page).toHaveURL(/\/product/);
   await expect(
-    page.getByRole("heading", { name: /先把硬件摆上舞台，再讲它能做什么/ }),
+    page.getByRole("heading", { name: /随身携带的 AI 感知系统/ }),
   ).toBeVisible({ timeout: 2000 });
-  await expect(page.getByText("产品页先让人看到一个真实对象")).toBeVisible({ timeout: 2000 });
+  await expect(page.getByText("圆盘盒、无线耳机、胸前相机")).toBeVisible({ timeout: 2000 });
 
-  await page.getByRole("link", { name: "进入 Demo" }).first().click();
+  await page.getByRole("link", { name: "在线体验" }).first().click();
   await expect(page).toHaveURL(/\/demo/);
   await expect(
-    page.getByRole("heading", { name: /在主舞台里直接试一次设备、隐私和推理闭环/ }),
+    page.getByRole("heading", { name: /先试用，再决定/ }),
   ).toBeVisible({ timeout: 2000 });
   await expect(page.getByText("Latest Response")).toBeVisible({ timeout: 2000 });
 });

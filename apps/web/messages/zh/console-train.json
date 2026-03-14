@@ -1,5 +1,46 @@
 {
   "kicker": "Train",
   "title": "训练",
-  "description": "提交训练任务，查看评测结果。"
+  "description": "提交训练任务，查看评测结果。",
+  "form": {
+    "title": "创建训练任务",
+    "description": "选择已经冻结的数据版本，随后进入日志、指标和产物的统一详情页。",
+    "project": "项目",
+    "datasetVersion": "数据版本",
+    "noVersions": "当前项目无可用数据版本",
+    "recipe": "训练配方",
+    "forceFail": "触发失败分支",
+    "submit": "创建训练任务",
+    "noVersionError": "当前项目还没有可用的数据版本，请先到数据集页面执行 Commit。",
+    "createError": "创建训练任务失败"
+  },
+  "table": {
+    "caption": "训练任务列表",
+    "id": "ID",
+    "recipe": "Recipe",
+    "datasetVersion": "Dataset Version",
+    "status": "状态",
+    "createdAt": "创建时间",
+    "detail": "详情",
+    "emptyTitle": "还没有训练任务",
+    "emptyBody": "先准备一个数据版本，再创建训练作业。",
+    "viewDetail": "查看详情"
+  },
+  "detail": {
+    "title": "训练详情",
+    "description": "查看日志、指标和产物。",
+    "jobKicker": "Training Job",
+    "jobId": "Job ID:",
+    "run": "Run:",
+    "noRun": "尚未创建",
+    "runStatus": "Run 状态:",
+    "sseToggle": "使用 SSE 实时流，关闭后退回 2 秒轮询。",
+    "params": "参数",
+    "paramsDescription": "保留原始训练参数，方便复盘失败或回放成功配置。",
+    "artifacts": "产物列表",
+    "artifactsDescription": "下载链接来自后端签名，前端不暴露原始对象 key。",
+    "noArtifacts": "暂无产物",
+    "openArtifact": "打开产物",
+    "loading": "加载中..."
+  }
 }

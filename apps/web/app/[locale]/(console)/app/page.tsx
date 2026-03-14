@@ -81,37 +81,37 @@ export default function DashboardPage() {
         <div className="p-6 space-y-6">
           <div>
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              Studio Overview
+              {t("dashboard.overview")}
             </p>
             <h1 className="mt-2 text-2xl font-bold">{t("nav.dashboard")}</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">先看状态，再决定下一步进入项目、数据集、训练还是模型仓。</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("dashboard.overviewBody")}</p>
           </div>
 
       <ContentRail
-        eyebrow="Live Summary"
-        title="工作台状态先看成一条信号带。"
-        summary="总览页优先回答当前 workspace 里有什么、跑到了哪一步，而不是先把信息切成四张统计卡。"
+        eyebrow={t("dashboard.liveSummary")}
+        title={t("dashboard.liveSummaryTitle")}
+        summary={t("dashboard.liveSummaryBody")}
         items={[
-          { label: "Projects", title: String(summary.projects), body: "当前 workspace 下的项目容器。", meta: "项目数" },
-          { label: "Datasets", title: String(summary.datasets), body: "可继续扩充和冻结版本的数据入口。", meta: "数据集数" },
-          { label: "Jobs", title: String(summary.jobs), body: "已经创建的训练作业。", meta: "训练任务" },
-          { label: "Prod", title: summary.modelVersion, body: "当前正式发布版本。", meta: "当前 Prod" },
+          { label: t("dashboard.metric.projects"), title: String(summary.projects), body: t("dashboard.metric.projectsBody"), meta: t("dashboard.metric.projectsMeta") },
+          { label: t("dashboard.metric.datasets"), title: String(summary.datasets), body: t("dashboard.metric.datasetsBody"), meta: t("dashboard.metric.datasetsMeta") },
+          { label: t("dashboard.metric.jobs"), title: String(summary.jobs), body: t("dashboard.metric.jobsBody"), meta: t("dashboard.metric.jobsMeta") },
+          { label: t("dashboard.metric.prod"), title: summary.modelVersion, body: t("dashboard.metric.prodBody"), meta: t("dashboard.metric.prodMeta") },
         ]}
         variant="metrics"
       />
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
         <StudioSection
-          eyebrow="Quick Flow"
-          title="快捷入口"
-          description="从数据到发布，保持在同一条操作线上。"
+          eyebrow={t("dashboard.quickFlow")}
+          title={t("dashboard.quickFlowTitle")}
+          description={t("dashboard.quickFlowBody")}
         >
             <div className="grid gap-3 md:grid-cols-2">
               {[
-                ["/app/projects", "项目", "先确定工作边界。"],
-                ["/app/datasets", "数据集", "上传、整理、冻结版本。"],
-                ["/app/train", "训练", "创建任务并查看过程。"],
-                ["/app/models", "模型仓", "登记版本并发布。"],
+                ["/app/projects", t("dashboard.quick.projects"), t("dashboard.quick.projectsBody")],
+                ["/app/datasets", t("dashboard.quick.datasets"), t("dashboard.quick.datasetsBody")],
+                ["/app/train", t("dashboard.quick.train"), t("dashboard.quick.trainBody")],
+                ["/app/models", t("dashboard.quick.models"), t("dashboard.quick.modelsBody")],
               ].map(([href, title, body]) => (
                 <Link key={href} href={href} className="console-key-item">
                   <div className="console-key-label">{title}</div>
@@ -122,14 +122,14 @@ export default function DashboardPage() {
         </StudioSection>
 
         <StudioSection
-          eyebrow="Operating Rules"
-          title="当前控制台原则"
-          description="这套工作台优先保证边界、回滚和复盘链路始终可见。"
+          eyebrow={t("dashboard.rules")}
+          title={t("dashboard.rulesTitle")}
+          description={t("dashboard.rulesBody")}
         >
           <div className="console-note-stack">
-            <div className="console-note-item">上传和模型产物都走受管签名路径。</div>
-            <div className="console-note-item">敏感操作要求 Cookie、workspace 和 CSRF 同时成立。</div>
-            <div className="console-note-item">训练、评测和发布默认保留复盘信息。</div>
+            <div className="console-note-item">{t("dashboard.rule0")}</div>
+            <div className="console-note-item">{t("dashboard.rule1")}</div>
+            <div className="console-note-item">{t("dashboard.rule2")}</div>
           </div>
         </StudioSection>
       </section>

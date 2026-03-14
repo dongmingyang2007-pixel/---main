@@ -4711,3 +4711,475 @@ button {
   text-align: center;
   max-width: 80%;
 }
+
+/* ── Console Shell v2 ──────────────────────────── */
+
+.console-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.console-shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.console-shell-workspace {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ── ActivityBar ──────────────────────────────── */
+
+.activity-bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 48px;
+  flex-shrink: 0;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.activity-bar-top,
+.activity-bar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.activity-bar-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+
+.activity-bar-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-raised);
+}
+
+.activity-bar-item.is-active {
+  color: var(--brand-v2);
+  background: var(--brand-soft);
+}
+
+/* ── TopBar ──────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.topbar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.topbar-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.topbar-project-switcher {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.topbar-project-switcher:hover {
+  background: var(--bg-raised);
+}
+
+.topbar-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.topbar-avatar:hover {
+  background: var(--brand-soft);
+  color: var(--brand-v2);
+}
+
+.topbar-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.topbar-hamburger:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+/* ── StatusBar ───────────────────────────────── */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-base);
+  flex-shrink: 0;
+}
+
+.statusbar-left,
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusbar-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success-v2);
+}
+
+/* ── Panel Layout ────────────────────────────── */
+
+.panel-group {
+  height: 100%;
+}
+
+.panel-content {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.panel-list {
+  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.panel-content-main {
+  background: var(--bg-base);
+}
+
+.panel-inspector {
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.panel-resize-handle {
+  position: relative;
+  width: 4px;
+  cursor: col-resize;
+}
+
+.panel-resize-handle-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+  transition: width var(--duration-fast), background var(--duration-fast);
+}
+
+.panel-resize-handle:hover .panel-resize-handle-bar,
+.panel-resize-handle[data-resize-handle-active] .panel-resize-handle-bar {
+  width: 3px;
+  background: var(--brand-v2);
+}
+
+/* ── Console component dark overrides ─────────── */
+
+[data-theme="console"] .console-panel,
+[data-theme="console"] .demo-panel {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-theme="console"] .console-panel::before {
+  display: none;
+}
+
+[data-theme="console"] .studio-section {
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-theme="console"] .studio-section::before {
+  display: none;
+}
+
+[data-theme="console"] .studio-section-title {
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .studio-section-description {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-input,
+[data-theme="console"] .console-select,
+[data-theme="console"] .console-textarea {
+  border-color: var(--border);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .console-input::placeholder,
+[data-theme="console"] .console-select::placeholder,
+[data-theme="console"] .console-textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-input:focus,
+[data-theme="console"] .console-select:focus,
+[data-theme="console"] .console-textarea:focus {
+  border-color: var(--brand-v2);
+  outline: none;
+}
+
+[data-theme="console"] .console-button {
+  background: var(--brand-v2);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+[data-theme="console"] .console-button-secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .console-button-danger {
+  background: var(--error);
+  color: #ffffff;
+}
+
+[data-theme="console"] .console-key-item {
+  border-color: var(--border);
+  background: var(--bg-raised);
+}
+
+[data-theme="console"] .console-key-label {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-key-value {
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .console-kicker {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-title {
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .console-description {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-empty {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .console-table-surface {
+  border-color: var(--border);
+  background: var(--bg-surface);
+}
+
+[data-theme="console"] .console-table-surface thead tr {
+  background: var(--bg-raised);
+}
+
+[data-theme="console"] .console-table-surface th {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+[data-theme="console"] .console-table-surface td {
+  border-color: var(--border);
+}
+
+[data-theme="console"] .content-rail.is-metrics .content-rail-track {
+  border-color: var(--border);
+  background: var(--bg-surface);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-theme="console"] .content-rail-item:not(:last-child) {
+  border-color: var(--border);
+}
+
+[data-theme="console"] .content-rail-item-label {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .content-rail-item-meta {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .content-rail-item h3 {
+  color: var(--text-primary);
+}
+
+[data-theme="console"] .content-rail-item p {
+  color: var(--text-secondary);
+}
+
+[data-theme="console"] .content-rail-track {
+  border-color: var(--border);
+}
+
+[data-theme="console"] .console-note-item {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+/* ── Console mobile ──────────────────────────── */
+
+@media (max-width: 1023px) {
+  .activity-bar {
+    display: none;
+  }
+  .panel-list,
+  .panel-inspector,
+  .panel-resize-handle {
+    display: none;
+  }
+  .topbar-hamburger {
+    display: flex;
+  }
+}
+
+@media (min-width: 1024px) {
+  .topbar-hamburger {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .statusbar {
+    display: none;
+  }
+  .topbar-breadcrumb {
+    display: none;
+  }
+}
+
+/* ── Touch & Accessibility ───────────────────── */
+
+@media (hover: none) {
+  .hover-effect,
+  .activity-bar-item:hover,
+  .topbar-avatar:hover,
+  .topbar-project-switcher:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* Minimum touch target size (Apple HIG: 44x44px) */
+@media (pointer: coarse) {
+  .activity-bar-item {
+    width: 44px;
+    height: 44px;
+  }
+  .topbar-avatar {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* ── Safe Viewport Height ─────────────────────── */
+/* Use svh on supporting browsers for Safari iOS compatibility */
+@supports (min-height: 100svh) {
+  .min-h-screen {
+    min-height: 100svh;
+  }
+}
+
+/* ── Reduced Motion ──────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

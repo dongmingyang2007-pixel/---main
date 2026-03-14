@@ -123,7 +123,7 @@ export default function TrainDetailPage() {
   }, [job]);
 
   if (!job) {
-    return <PanelLayout><div className="console-panel"><div className="console-panel-body">加载中...</div></div></PanelLayout>;
+    return <PanelLayout><div className="console-panel"><div className="console-panel-body">{t("detail.loading")}</div></div></PanelLayout>;
   }
 
   return (
@@ -134,23 +134,23 @@ export default function TrainDetailPage() {
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
               {t("kicker")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">训练详情</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">查看日志、指标和产物。</p>
+            <h1 className="mt-2 text-2xl font-bold">{t("detail.title")}</h1>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("detail.description")}</p>
           </div>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="console-panel">
           <div className="console-panel-body">
-            <div className="console-kicker">Training Job</div>
+            <div className="console-kicker">{t("detail.jobKicker")}</div>
             <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h2 className="console-panel-title">{job.recipe}</h2>
                 <p className="console-panel-description">
-                  Job ID: {job.id}
+                  {t("detail.jobId")} {job.id}
                   <br />
-                  Run: {job.summary_json.run_id ? `${job.summary_json.run_id.slice(0, 8)}...` : "尚未创建"}
+                  {t("detail.run")} {job.summary_json.run_id ? `${job.summary_json.run_id.slice(0, 8)}...` : t("detail.noRun")}
                   {" · "}
-                  Run 状态: {job.summary_json.run_status || "pending"}
+                  {t("detail.runStatus")} {job.summary_json.run_status || "pending"}
                 </p>
               </div>
               <StatusBadge status={job.status} />
@@ -162,7 +162,7 @@ export default function TrainDetailPage() {
           <div className="console-panel-body">
             <label className="console-key-item flex items-center gap-3">
               <input type="checkbox" checked={useSse} onChange={(e) => setUseSse(e.target.checked)} />
-              <span>使用 SSE 实时流，关闭后退回 2 秒轮询。</span>
+              <span>{t("detail.sseToggle")}</span>
             </label>
           </div>
         </aside>
@@ -177,8 +177,8 @@ export default function TrainDetailPage() {
         <div className="console-panel">
           <div className="console-panel-header">
             <div>
-              <h2 className="console-panel-title">参数</h2>
-              <p className="console-panel-description">保留原始训练参数，方便复盘失败或回放成功配置。</p>
+              <h2 className="console-panel-title">{t("detail.params")}</h2>
+              <p className="console-panel-description">{t("detail.paramsDescription")}</p>
             </div>
           </div>
           <div className="console-panel-body">
@@ -189,20 +189,20 @@ export default function TrainDetailPage() {
         <aside className="console-panel">
           <div className="console-panel-header">
             <div>
-              <h2 className="console-panel-title">产物列表</h2>
-              <p className="console-panel-description">下载链接来自后端签名，前端不暴露原始对象 key。</p>
+              <h2 className="console-panel-title">{t("detail.artifacts")}</h2>
+              <p className="console-panel-description">{t("detail.artifactsDescription")}</p>
             </div>
           </div>
           <div className="console-panel-body">
             {!job.summary_json.artifacts?.length ? (
-              <div className="console-empty">暂无产物</div>
+              <div className="console-empty">{t("detail.noArtifacts")}</div>
             ) : (
               <div className="space-y-3">
                 {job.summary_json.artifacts.map((artifact) => (
                   <div key={artifact.id} className="console-key-item">
                     <div className="console-key-label">{artifact.name}</div>
                     <a className="console-link mt-2 inline-flex" href={artifact.download_url} target="_blank" rel="noreferrer">
-                      打开产物
+                      {t("detail.openArtifact")}
                     </a>
                   </div>
                 ))}

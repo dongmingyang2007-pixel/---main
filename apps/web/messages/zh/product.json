@@ -49,5 +49,7 @@
   "scenes.engineering.detail1.body": "每个部件标注材料、工艺和表面处理。",
   "scenes.engineering.detail2.label": "制造就绪",
   "scenes.engineering.detail2.body": "可直接导出工程文件，进入开模流程。",
-  "scenes.engineering.tags": "爆炸图,材质,制造"
+  "scenes.engineering.tags": "爆炸图,材质,制造",
+  "hero.imageAlt": "产品主图",
+  "scene.imageAlt": "产品展示图"
 }

@@ -91,7 +91,7 @@ export default function TrainPage() {
     event.preventDefault();
     setErrorMessage("");
     if (!datasetVersionId) {
-      setErrorMessage("当前项目还没有可用的数据版本，请先到数据集页面执行 Commit。");
+      setErrorMessage(t("form.noVersionError"));
       return;
     }
     try {
@@ -103,7 +103,7 @@ export default function TrainPage() {
       });
       await loadJobs(projectId);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "创建训练任务失败");
+      setErrorMessage(err instanceof Error ? err.message : t("form.createError"));
     }
   };
 
@@ -122,14 +122,14 @@ export default function TrainPage() {
       <section className="console-panel">
         <div className="console-panel-header">
           <div>
-            <h2 className="console-panel-title">创建训练任务</h2>
-            <p className="console-panel-description">选择已经冻结的数据版本，随后进入日志、指标和产物的统一详情页。</p>
+            <h2 className="console-panel-title">{t("form.title")}</h2>
+            <p className="console-panel-description">{t("form.description")}</p>
           </div>
         </div>
         <div className="console-panel-body">
           <form onSubmit={onCreate} className="console-form-grid columns-5">
             <div>
-              <label className="console-label" htmlFor="train-project">项目</label>
+              <label className="console-label" htmlFor="train-project">{t("form.project")}</label>
               <select
                 id="train-project"
                 className="console-select"
@@ -146,7 +146,7 @@ export default function TrainPage() {
               </select>
             </div>
             <div>
-              <label className="console-label" htmlFor="train-version">数据版本</label>
+              <label className="console-label" htmlFor="train-version">{t("form.datasetVersion")}</label>
               <select
                 id="train-version"
                 className="console-select"
@@ -155,7 +155,7 @@ export default function TrainPage() {
                 required
               >
                 {!versionOptions.length ? (
-                  <option value="">当前项目无可用数据版本</option>
+                  <option value="">{t("form.noVersions")}</option>
                 ) : (
                   versionOptions.map((version) => (
                     <option key={version.id} value={version.id}>
@@ -166,23 +166,23 @@ export default function TrainPage() {
               </select>
             </div>
             <div>
-              <label className="console-label" htmlFor="train-recipe">训练配方</label>
+              <label className="console-label" htmlFor="train-recipe">{t("form.recipe")}</label>
               <input
                 id="train-recipe"
                 className="console-input"
                 value={recipe}
                 onChange={(e) => setRecipe(e.target.value)}
-                placeholder="训练配方"
+                placeholder={t("form.recipe")}
               />
             </div>
             <div className="flex items-end">
               <label className="console-key-item flex min-h-[48px] w-full items-center gap-3">
                 <input type="checkbox" checked={forceFail} onChange={(e) => setForceFail(e.target.checked)} />
-                <span>触发失败分支</span>
+                <span>{t("form.forceFail")}</span>
               </label>
             </div>
             <div className="flex items-end">
-              <button className="console-button w-full">创建训练任务</button>
+              <button className="console-button w-full">{t("form.submit")}</button>
             </div>
           </form>
           {errorMessage ? <div className="console-inline-notice is-error mt-4">{errorMessage}</div> : null}
@@ -190,10 +190,10 @@ export default function TrainPage() {
       </section>
 
       {loading ? <ConsoleTableSkeleton cols={5} rows={4} /> : <DataTable
-        caption="训练任务列表"
-        headers={["ID", "Recipe", "Dataset Version", "状态", "创建时间", "详情"]}
-        emptyTitle="还没有训练任务"
-        emptyBody="先准备一个数据版本，再创建训练作业。"
+        caption={t("table.caption")}
+        headers={[t("table.id"), t("table.recipe"), t("table.datasetVersion"), t("table.status"), t("table.createdAt"), t("table.detail")]}
+        emptyTitle={t("table.emptyTitle")}
+        emptyBody={t("table.emptyBody")}
         rows={jobs.map((job) => [
           <span key={job.id} className="text-xs font-medium">{job.id.slice(0, 8)}...</span>,
           job.recipe,
@@ -201,7 +201,7 @@ export default function TrainPage() {
           <StatusBadge key={`${job.id}-status`} status={job.status} />,
           new Date(job.created_at).toLocaleString(),
           <Link key={`${job.id}-link`} href={`/app/train/${job.id}`} className="console-link">
-            查看详情
+            {t("table.viewDetail")}
           </Link>,
         ])}
       />}

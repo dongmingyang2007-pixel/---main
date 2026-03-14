@@ -87,6 +87,11 @@ export default function LoginPage() {
             {error ? <div className="console-inline-notice is-error">{error}</div> : null}
           </form>
           <div className="auth-helper" data-reveal="fade" data-reveal-delay="4">
+            <Link href="/forgot-password" className="console-link">
+              {t("login.forgotPassword")}
+            </Link>
+          </div>
+          <div className="auth-helper" data-reveal="fade" data-reveal-delay="4">
             {t("login.noAccount")}{" "}
             <Link href="/register" className="console-link">
               {t("login.register")}

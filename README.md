@@ -164,6 +164,28 @@ uv pip install --python .venv/bin/python -e '.[dev]'
 5. 在 `/app/models/{id}` 设置 alias=prod，并执行 rollback。
 6. 删除数据集后，列表不可见，后端保留软删与异步清理入口。
 
+## 图片素材占位（ImagePlaceholder）
+
+部分品牌图片素材（Logo、广告图、耳机特写等）尚未就绪，代码中使用 `<ImagePlaceholder>` 组件占位。
+
+使用方式：
+```tsx
+import { ImagePlaceholder } from "@/components/ImagePlaceholder";
+
+<ImagePlaceholder label="品牌 Logo" aspect="3/1" icon="logo" />
+<ImagePlaceholder label="耳机正面特写" aspect="16/9" icon="photo" />
+```
+
+- `label`：素材描述，标注该位置需要什么图
+- `aspect`：宽高比（如 `"16/9"`、`"1/1"`、`"3/1"`）
+- `icon`：占位图标类型 — `image` | `logo` | `photo` | `video`
+
+渲染效果：品牌蓝虚线边框 + 图标 + 标签文字，自动适配亮/暗主题。
+
+**注意：** 现有的 `AssetPlaceholder` 组件是内容卡片占位（`eyebrow/title/summary/specs`），用于产品特性描述，和 `ImagePlaceholder` 用途不同。
+
+**替换素材时：** 全局搜索 `ImagePlaceholder` 找到所有待替换位置，将组件替换为 `<Image>` 或 `<img>` 即可。
+
 ## 常见问题
 
 - `./scripts/dev.sh` 报 `zsh: permission denied: ./scripts/dev.sh`：执行 `chmod +x ./scripts/dev.sh` 后重试。

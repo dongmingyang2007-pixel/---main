@@ -1,76 +1,41 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
-import { apiGet } from "@/lib/api";
+import { useProjectContext, type ProjectOption } from "@/lib/ProjectContext";
 
-export type ProjectOption = {
-  id: string;
-  name: string;
-};
-
-let cachedProjects: ProjectOption[] = [];
-let cachedProjectId = "";
+export type { ProjectOption };
 
 export function useProjectSelection(
   onProjectChange?: (projectId: string) => Promise<void> | void,
 ) {
-  const [projects, setProjects] = useState<ProjectOption[]>(() => cachedProjects);
-  const [projectId, setProjectIdState] = useState(() => cachedProjectId);
-  const projectIdRef = useRef(projectId);
+  const ctx = useProjectContext();
   const onProjectChangeRef = useRef(onProjectChange);
+  const lastNotifiedIdRef = useRef("");
 
   useEffect(() => {
     onProjectChangeRef.current = onProjectChange;
   }, [onProjectChange]);
 
-  const syncProjectSelection = async (nextProjectId: string) => {
-    cachedProjectId = nextProjectId;
-    projectIdRef.current = nextProjectId;
-    setProjectIdState(nextProjectId);
+  useEffect(() => {
+    if (ctx.projectId && ctx.projectId !== lastNotifiedIdRef.current) {
+      lastNotifiedIdRef.current = ctx.projectId;
+      void onProjectChangeRef.current?.(ctx.projectId);
+    }
+  }, [ctx.projectId]);
+
+  const selectProject = async (nextProjectId: string) => {
+    await ctx.selectProject(nextProjectId);
+    lastNotifiedIdRef.current = nextProjectId;
     if (nextProjectId) {
       await onProjectChangeRef.current?.(nextProjectId);
     }
   };
 
-  const loadProjects = async (options: { revalidateOnly?: boolean } = {}) => {
-    const data = await apiGet<{ items: ProjectOption[] }>("/api/v1/projects");
-    const list = data.items || [];
-    cachedProjects = list;
-    setProjects(list);
-
-    const preferredProjectId = projectIdRef.current || cachedProjectId;
-    const currentProjectStillExists = list.some((project) => project.id === preferredProjectId);
-    const nextProjectId = currentProjectStillExists ? preferredProjectId : (list[0]?.id ?? "");
-
-    if (nextProjectId !== projectIdRef.current) {
-      await syncProjectSelection(nextProjectId);
-      return;
-    }
-
-    if (nextProjectId && !options.revalidateOnly) {
-      await onProjectChangeRef.current?.(nextProjectId);
-    }
-  };
-
-  useEffect(() => {
-    if (cachedProjects.length) {
-      setProjects(cachedProjects);
-    }
-    if (cachedProjectId) {
-      projectIdRef.current = cachedProjectId;
-      setProjectIdState(cachedProjectId);
-      void onProjectChangeRef.current?.(cachedProjectId);
-      void loadProjects({ revalidateOnly: true });
-      return;
-    }
-    void loadProjects();
-  }, []);
-
   return {
-    projectId,
-    projects,
-    loadProjects,
-    selectProject: syncProjectSelection,
+    projectId: ctx.projectId,
+    projects: ctx.projects,
+    loadProjects: ctx.loadProjects,
+    selectProject,
   };
 }

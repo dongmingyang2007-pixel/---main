@@ -17,11 +17,48 @@ from app.core.errors import ApiError
 from app.core.security import create_access_token, hash_password, verify_password
 from app.core.config import settings
 from app.models import Membership, User, Workspace
-from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserOut, WorkspaceOut
+from app.schemas.auth import (
+    AuthResponse,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    SendCodeRequest,
+    UserOut,
+    WorkspaceOut,
+)
 from app.services.audit import write_audit_log
+from app.services.email import send_verification_email, store_verification_code, verify_code
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+@router.post("/send-code")
+def send_code(
+    payload: SendCodeRequest,
+    request: Request,
+) -> dict[str, bool]:
+    """Send a verification code to the given email address."""
+    require_allowed_origin(request)
+    client_ip = get_client_ip(request)
+    enforce_rate_limit(
+        request,
+        scope="auth:send_code:ip",
+        identifier=client_ip,
+        limit=settings.verification_rate_limit_max,
+        window_seconds=settings.verification_rate_limit_window_seconds,
+    )
+    enforce_rate_limit(
+        request,
+        scope="auth:send_code:email",
+        identifier=payload.email,
+        limit=settings.verification_rate_limit_max,
+        window_seconds=settings.verification_rate_limit_window_seconds,
+    )
+
+    code = store_verification_code(payload.email, payload.purpose)
+    send_verification_email(payload.email, code, payload.purpose)
+    return {"ok": True}
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -47,6 +84,11 @@ def register(
         limit=settings.auth_rate_limit_email_ip_max,
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
+
+    # Verify the email code
+    if not verify_code(payload.email, "register", payload.code):
+        raise ApiError("invalid_code", "验证码无效或已过期", status_code=400)
+
     exists = db.query(User).filter(User.email == payload.email).first()
     if exists:
         raise ApiError("email_exists", "Email already registered", status_code=409)
@@ -78,6 +120,35 @@ def register(
         user=UserOut.model_validate(user, from_attributes=True),
         workspace=WorkspaceOut.model_validate(workspace, from_attributes=True),
     )
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db_session),
+) -> dict[str, bool]:
+    """Verify code and set a new password."""
+    require_allowed_origin(request)
+    client_ip = get_client_ip(request)
+    enforce_rate_limit(
+        request,
+        scope="auth:reset:ip",
+        identifier=client_ip,
+        limit=settings.auth_rate_limit_ip_max,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+
+    if not verify_code(payload.email, "reset", payload.code):
+        raise ApiError("invalid_code", "验证码无效或已过期", status_code=400)
+
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user:
+        raise ApiError("user_not_found", "用户不存在", status_code=404)
+
+    user.password_hash = hash_password(payload.password)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/login", response_model=AuthResponse)

@@ -10,17 +10,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        /* ── Legacy colors (remove after full migration) ── */
-        ink: "#1A1B1F",
-        surf: "#F5F6F8",
-        electric: "#1F8AFA",
-        mint: "#00A885",
-        amber: "#F6A609",
-        brand: "#0f76ff",
-        "brand-strong": "#0a4ed1",
-        "accent-legacy": "#19d6bf",
-
-        /* ── New token-mapped colors (v2) ── */
+        /* ── Token-mapped colors ── */
         base: "var(--bg-base)",
         surface: "var(--bg-surface)",
         raised: "var(--bg-raised)",
