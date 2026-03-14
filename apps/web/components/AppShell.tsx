@@ -1,11 +1,10 @@
 "use client";
 
 import clsx from "clsx";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, usePathname } from "@/i18n/navigation";
 import { ReactNode } from "react";
 
-const nav = [
+const nav: Array<{ href: string; label: string; meta: string; comingSoon?: boolean }> = [
   { href: "/app", label: "总览", meta: "Dashboard" },
   { href: "/app/projects", label: "项目", meta: "Projects" },
   { href: "/app/datasets", label: "数据集", meta: "Datasets" },
@@ -13,8 +12,8 @@ const nav = [
   { href: "/app/models", label: "模型仓", meta: "Models" },
   { href: "/app/eval", label: "评测", meta: "Eval" },
   { href: "/app/settings", label: "设置", meta: "Settings" },
-  { href: "/app/devices", label: "设备", meta: "Devices" },
-  { href: "/app/billing", label: "计费", meta: "Billing" },
+  { href: "/app/devices", label: "设备", meta: "Devices", comingSoon: true },
+  { href: "/app/billing", label: "计费", meta: "Billing", comingSoon: true },
 ];
 
 const routeMeta = [
@@ -102,8 +101,11 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
                 aria-current={isActive ? "page" : undefined}
                 className={clsx("console-nav-link", isActive && "is-active")}
               >
-                <span>{item.label}</span>
-                <span className="text-xs text-[var(--muted-soft)]">{item.meta}</span>
+                <span className="flex items-center gap-2">
+                  {item.label}
+                  {item.comingSoon && <span className="console-coming-soon">即将上线</span>}
+                </span>
+                <span className="text-xs text-[var(--text-secondary)]">{item.meta}</span>
               </Link>
             );
           })}
@@ -112,8 +114,8 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
         <div className="console-panel">
           <div className="console-panel-body">
             <div className="console-kicker">Workspace</div>
-            <div className="mt-2 text-sm font-semibold text-[var(--fg)]">Personal AI Studio</div>
-            <div className="mt-2 text-sm leading-6 text-[var(--muted)]">当前以单 workspace 为主，权限边界仍以后端校验为准。</div>
+            <div className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Personal AI Studio</div>
+            <div className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">当前以单 workspace 为主，权限边界仍以后端校验为准。</div>
             <div className="console-side-metadata">
               <span>Signed Access</span>
               <span>Workspace Bound</span>
