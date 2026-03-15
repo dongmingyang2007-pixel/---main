@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { DataTable } from "@/components/DataTable";
@@ -41,18 +41,31 @@ export default function DatasetDetailPage() {
   const [commitResult, setCommitResult] = useState("");
   const t = useTranslations("console-datasets");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [data, versionData] = await Promise.all([
       apiGet<DataItem[]>(`/api/v1/datasets/${datasetId}/items?limit=50&offset=0`),
       apiGet<DatasetVersion[]>(`/api/v1/datasets/${datasetId}/versions`).catch(() => []),
     ]);
     setItems(data);
     setVersions(versionData);
-  };
+  }, [datasetId]);
 
   useEffect(() => {
     if (!datasetId) return;
-    void load();
+    let active = true;
+
+    void Promise.all([
+      apiGet<DataItem[]>(`/api/v1/datasets/${datasetId}/items?limit=50&offset=0`),
+      apiGet<DatasetVersion[]>(`/api/v1/datasets/${datasetId}/versions`).catch(() => []),
+    ]).then(([data, versionData]) => {
+      if (!active) return;
+      setItems(data);
+      setVersions(versionData);
+    });
+
+    return () => {
+      active = false;
+    };
   }, [datasetId]);
 
   return (

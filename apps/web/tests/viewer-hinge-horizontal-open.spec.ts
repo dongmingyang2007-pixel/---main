@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { ViewerWindow } from "./helpers/viewer-runtime";
 
 const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
 const TARGET_REV = "20260307-tail-pivot-v37-glb-earbuds-symmetric-inspectfix";
@@ -22,7 +23,7 @@ async function viewerGetState(page: Page): Promise<ViewerState | null> {
     }
     try {
       return await frame.evaluate(() => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         return win?.QIHANG_MODEL?.getState?.() || null;
       });
     } catch {
@@ -41,7 +42,7 @@ async function viewerSetState(page: Page, patch: Record<string, unknown>): Promi
     }
     try {
       await frame.evaluate((statePatch) => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         win?.QIHANG_MODEL?.setState?.(statePatch);
       }, patch);
       return;
@@ -60,7 +61,7 @@ async function viewerCommand(page: Page, name: string): Promise<void> {
     }
     try {
       await frame.evaluate((commandName) => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         win?.QIHANG_MODEL?.command?.(commandName);
       }, name);
       return;
@@ -92,7 +93,7 @@ async function viewerCenterOffsetMm(page: Page): Promise<number> {
     }
     try {
       return await frame.evaluate(() => {
-        const dbg = (window as any).__QIHANG_DEBUG;
+        const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
         const px = Number(dbg?.lidPivot?.position?.x);
         if (!Number.isFinite(px)) return Number.POSITIVE_INFINITY;
         return Math.abs(px) * 1000;
@@ -113,7 +114,7 @@ async function viewerPivotHoleAxisDistanceMm(page: Page): Promise<number> {
     }
     try {
       return await frame.evaluate(() => {
-        const dbg = (window as any).__QIHANG_DEBUG;
+        const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
         const pin = dbg?.product?.getObjectByName?.("Pivot_Pin_Printable");
         const hole = dbg?.product?.getObjectByName?.("Lid_Pivot_Hole_Center");
         if (!pin || !hole) return Number.POSITIVE_INFINITY;

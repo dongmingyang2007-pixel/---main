@@ -1,15 +1,14 @@
 "use client";
 
 import { Link } from "@/i18n/navigation";
-import { useRouter } from "@/i18n/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { gsap } from "@/lib/gsap-register";
 
-import { WorkbenchHero } from "@/components/WorkbenchHero";
+import { MagneticButton } from "@/components/MagneticButton";
 import { apiPost } from "@/lib/api";
 
 export default function ForgotPasswordPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -18,10 +17,19 @@ export default function ForgotPasswordPage() {
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Step: "email" = enter email, "code" = enter code + new password
   const [step, setStep] = useState<"email" | "code">("email");
   const [success, setSuccess] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const t = useTranslations("auth");
+
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+    tl.from(el.querySelector(".auth-heading"), { opacity: 0, y: 20, duration: 0.6 });
+    tl.from(el.querySelector(".auth-form-card"), { opacity: 0, y: 30, duration: 0.6 }, "<0.15");
+    return () => { tl.kill(); };
+  }, []);
 
   useEffect(() => {
     if (countdown <= 0) {
@@ -72,137 +80,147 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  if (success) {
-    return (
-      <div className="auth-shell">
-        <div className="auth-card">
-          <WorkbenchHero
-            eyebrow={t("reset.eyebrow")}
-            title={t("reset.successTitle")}
-            summary={t("reset.successSummary")}
-            statusLabel={t("reset.studioAccess")}
-            points={[]}
-          />
-          <section className="auth-panel">
-            <div>
-              <div className="console-kicker">{t("reset.successKicker")}</div>
-              <h2 className="display-face mt-3 text-4xl">{t("reset.successHeading")}</h2>
-              <p className="auth-helper mt-3">{t("reset.successHelper")}</p>
-            </div>
-            <Link href="/login" className="console-button w-full text-center mt-4">
-              {t("reset.goLogin")}
-            </Link>
-          </section>
-        </div>
-      </div>
-    );
-  }
+  const inputClass = "w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] px-4 py-3 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:border-[var(--brand-v2)] focus:outline-none";
+
+  const getHeading = () => {
+    if (success) {
+      return { kicker: t("reset.successKicker"), title: t("reset.successHeading"), desc: t("reset.successHelper") };
+    }
+    if (step === "email") {
+      return { kicker: t("reset.kicker"), title: t("reset.title"), desc: t("reset.helper") };
+    }
+    return { kicker: t("reset.verifyKicker"), title: t("reset.verifyTitle"), desc: t("reset.verifyHelper", { email }) };
+  };
+
+  const heading = getHeading();
 
   return (
-    <div className="auth-shell">
-      <div className="auth-card">
-        <WorkbenchHero
-          eyebrow={t("reset.eyebrow")}
-          title={t("reset.heroTitle")}
-          summary={t("reset.heroSummary")}
-          statusLabel={t("reset.studioAccess")}
-          points={[
-            { label: t("reset.point0.label"), detail: t("reset.point0.detail") },
-            { label: t("reset.point1.label"), detail: t("reset.point1.detail") },
-          ]}
-        />
-
-        <section className="auth-panel">
-          {step === "email" ? (
-            <>
-              <div>
-                <div className="console-kicker">{t("reset.kicker")}</div>
-                <h2 className="display-face mt-3 text-4xl">{t("reset.title")}</h2>
-                <p className="auth-helper mt-3">{t("reset.helper")}</p>
-              </div>
-              <form className="space-y-4" onSubmit={handleEmailSubmit}>
-                <div>
-                  <label className="console-label" htmlFor="reset-email">{t("reset.email.label")}</label>
-                  <input
-                    id="reset-email"
-                    type="email"
-                    required
-                    className="console-input"
-                    placeholder={t("reset.email.placeholder")}
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <button className="console-button w-full" disabled={codeSending}>
-                  {codeSending ? t("reset.sending") : t("reset.getCode")}
-                </button>
-                {error ? <div className="console-inline-notice is-error">{error}</div> : null}
-              </form>
-              <div className="auth-helper">
-                <Link href="/login" className="console-link">
-                  {t("reset.backToLogin")}
-                </Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <div className="console-kicker">{t("reset.verifyKicker")}</div>
-                <h2 className="display-face mt-3 text-4xl">{t("reset.verifyTitle")}</h2>
-                <p className="auth-helper mt-3">{t("reset.verifyHelper", { email })}</p>
-              </div>
-              <form className="space-y-4" onSubmit={handleResetSubmit}>
-                <div>
-                  <label className="console-label" htmlFor="reset-code">{t("reset.code.label")}</label>
-                  <input
-                    id="reset-code"
-                    required
-                    className="console-input text-center text-2xl tracking-[0.3em]"
-                    placeholder="000000"
-                    maxLength={6}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <label className="console-label" htmlFor="reset-password">{t("reset.newPassword.label")}</label>
-                  <input
-                    id="reset-password"
-                    type="password"
-                    required
-                    minLength={12}
-                    className="console-input"
-                    placeholder={t("reset.newPassword.placeholder")}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                <button className="console-button w-full">{t("reset.submit")}</button>
-                {error ? <div className="console-inline-notice is-error">{error}</div> : null}
-                <div className="flex items-center justify-between text-sm">
-                  <button
-                    type="button"
-                    className="console-link"
-                    onClick={() => { setStep("email"); setCode(""); setPassword(""); setError(""); }}
-                  >
-                    {t("reset.backToEmail")}
-                  </button>
-                  <button
-                    type="button"
-                    className="console-link"
-                    disabled={countdown > 0}
-                    onClick={sendCode}
-                  >
-                    {countdown > 0 ? t("reset.resendCountdown", { seconds: countdown }) : t("reset.resend")}
-                  </button>
-                </div>
-              </form>
-            </>
-          )}
-        </section>
+    <section
+      ref={sectionRef}
+      className="flex min-h-[70vh] flex-col items-center justify-center px-6 py-20 text-center"
+    >
+      <div className="auth-heading">
+        <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
+          {heading.kicker}
+        </p>
+        <h1 className="mt-3 text-3xl font-bold text-[var(--text-primary)]">
+          {heading.title}
+        </h1>
+        <p className="mx-auto mt-3 max-w-md text-[var(--text-secondary)]">
+          {heading.desc}
+        </p>
       </div>
-    </div>
+
+      <div className="auth-form-card mt-8 w-full max-w-md rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-8 text-left">
+        {success ? (
+          <MagneticButton
+            href="/login"
+            className="block w-full rounded-[var(--radius-full)] bg-[var(--brand-v2)] py-3 text-center text-sm font-medium text-white"
+            strength={0.15}
+          >
+            {t("reset.goLogin")}
+          </MagneticButton>
+        ) : step === "email" ? (
+          <>
+            <form className="space-y-4" onSubmit={handleEmailSubmit}>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-secondary)]" htmlFor="reset-email">
+                  {t("reset.email.label")}
+                </label>
+                <input
+                  id="reset-email"
+                  type="email"
+                  required
+                  className={inputClass}
+                  placeholder={t("reset.email.placeholder")}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <button
+                className="w-full rounded-[var(--radius-full)] bg-[var(--brand-v2)] py-3 text-sm font-medium text-white transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                disabled={codeSending}
+              >
+                {codeSending ? t("reset.sending") : t("reset.getCode")}
+              </button>
+              {error && (
+                <div className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+            </form>
+            <div className="mt-6 text-center text-sm text-[var(--text-secondary)]">
+              <Link href="/login" className="font-medium text-[var(--brand-v2)] hover:underline">
+                {t("reset.backToLogin")}
+              </Link>
+            </div>
+          </>
+        ) : (
+          <>
+            <form className="space-y-4" onSubmit={handleResetSubmit}>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-secondary)]" htmlFor="reset-code">
+                  {t("reset.code.label")}
+                </label>
+                <input
+                  id="reset-code"
+                  required
+                  className={`${inputClass} text-center text-2xl tracking-[0.3em]`}
+                  placeholder="000000"
+                  maxLength={6}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-secondary)]" htmlFor="reset-password">
+                  {t("reset.newPassword.label")}
+                </label>
+                <input
+                  id="reset-password"
+                  type="password"
+                  required
+                  minLength={12}
+                  className={inputClass}
+                  placeholder={t("reset.newPassword.placeholder")}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <MagneticButton
+                className="w-full rounded-[var(--radius-full)] bg-[var(--brand-v2)] py-3 text-sm font-medium text-white"
+                strength={0.15}
+              >
+                {t("reset.submit")}
+              </MagneticButton>
+              {error && (
+                <div className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
+            </form>
+            <div className="mt-6 flex items-center justify-between text-sm">
+              <button
+                type="button"
+                className="font-medium text-[var(--brand-v2)] hover:underline"
+                onClick={() => { setStep("email"); setCode(""); setPassword(""); setError(""); }}
+              >
+                {t("reset.backToEmail")}
+              </button>
+              <button
+                type="button"
+                className="font-medium text-[var(--brand-v2)] hover:underline disabled:opacity-50"
+                disabled={countdown > 0}
+                onClick={sendCode}
+              >
+                {countdown > 0 ? t("reset.resendCountdown", { seconds: countdown }) : t("reset.resend")}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }

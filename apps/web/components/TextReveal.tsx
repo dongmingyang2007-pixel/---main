@@ -29,10 +29,22 @@ export const TextReveal = memo(function TextReveal({
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let cancelled = false;
+
+    const commitState = (next: { enhanced: boolean; revealed: boolean }) => {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setEnhanced((previous) =>
+          previous === next.enhanced ? previous : next.enhanced,
+        );
+        setRevealed((previous) =>
+          previous === next.revealed ? previous : next.revealed,
+        );
+      });
+    };
 
     const revealImmediately = (animate = false) => {
-      setEnhanced(animate);
-      setRevealed(true);
+      commitState({ enhanced: animate, revealed: true });
     };
 
     if (
@@ -49,7 +61,7 @@ export const TextReveal = memo(function TextReveal({
       return;
     }
 
-    setEnhanced(true);
+    commitState({ enhanced: true, revealed: false });
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -64,7 +76,10 @@ export const TextReveal = memo(function TextReveal({
     );
 
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
   }, []);
 
   const chars = useMemo(() => Array.from(text), [text]);

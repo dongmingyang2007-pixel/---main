@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import type {
+  ViewerObject3D,
+  ViewerWindow,
+} from "./helpers/viewer-runtime";
 
 const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
 const TARGET_REV = "20260307-tail-pivot-v37-glb-earbuds-symmetric-inspectfix";
@@ -44,7 +48,7 @@ async function viewerGetState(page: Page): Promise<ViewerState | null> {
     }
     try {
       return await frame.evaluate(() => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         if (!win?.QIHANG_MODEL?.getState) return null;
         return win.QIHANG_MODEL.getState() || null;
       });
@@ -64,7 +68,7 @@ async function viewerSetState(page: Page, patch: Record<string, unknown>): Promi
     }
     try {
       await frame.evaluate((statePatch) => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         win?.QIHANG_MODEL?.setState?.(statePatch);
       }, patch);
       return;
@@ -83,7 +87,7 @@ async function viewerCommand(page: Page, name: string): Promise<void> {
     }
     try {
       await frame.evaluate((commandName) => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         win?.QIHANG_MODEL?.command?.(commandName);
       }, name);
       return;
@@ -114,7 +118,7 @@ async function viewerPivotHoleAxisDistanceMm(page: Page): Promise<number> {
     }
     try {
       return await frame.evaluate(() => {
-        const dbg = (window as any).__QIHANG_DEBUG;
+        const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
         const pin = dbg?.product?.getObjectByName?.("Pivot_Pin_Printable");
         const hole = dbg?.product?.getObjectByName?.("Lid_Pivot_Hole_Center");
         if (!pin || !hole) return Number.POSITIVE_INFINITY;
@@ -143,7 +147,7 @@ async function viewerPivotVisualSnapshot(page: Page): Promise<PivotVisualSnapsho
     }
     try {
       return await frame.evaluate(() => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         const dbg = win?.__QIHANG_DEBUG;
         if (!dbg?.product || !dbg?.baseShell || !dbg?.lidShell) return null;
         const coreNames = [
@@ -158,7 +162,7 @@ async function viewerPivotVisualSnapshot(page: Page): Promise<PivotVisualSnapsho
           if (node && node.visible) visibleCoreCount += 1;
         }
         let probeVisibleCount = 0;
-        dbg.product.traverse((node: any) => {
+        dbg.product.traverse((node: ViewerObject3D) => {
           const n = String(node?.name || "").toLowerCase();
           if ((n.includes("probe") || n === "pivot_pick_volume") && node?.visible) {
             probeVisibleCount += 1;
@@ -197,13 +201,14 @@ async function viewerPivotPinWorldSnapshot(page: Page): Promise<PivotPinWorldSna
     }
     try {
       return await frame.evaluate(() => {
-        const dbg = (window as any).__QIHANG_DEBUG;
-        const pin = dbg?.product?.getObjectByName?.("Pivot_Pin_Printable");
-        if (!pin) return null;
+        const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
+        const product = dbg?.product;
+        const pin = product?.getObjectByName("Pivot_Pin_Printable");
+        if (!product || !pin) return null;
         pin.updateMatrixWorld(true);
         const e = pin.matrixWorld.elements as number[];
         let legacyVisiblePinPartCount = 0;
-        dbg.product.traverse((node: any) => {
+        product.traverse((node: ViewerObject3D) => {
           if (!node?.visible) return;
           const n = String(node?.name || "");
           if (!n.startsWith("Pivot_Pin_")) return;
@@ -248,7 +253,7 @@ async function viewerClosedLateralJitterMm(page: Page, sampleCount = 24, interva
     }
     try {
       const x = await frame.evaluate(() => {
-        const dbg = (window as any).__QIHANG_DEBUG;
+        const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
         const px = dbg?.lidPivot?.position?.x;
         return typeof px === "number" && Number.isFinite(px) ? px : null;
       });

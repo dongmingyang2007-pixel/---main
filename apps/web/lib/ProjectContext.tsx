@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { apiGet } from "@/lib/api";
 
 export type ProjectOption = {
@@ -35,24 +43,45 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setProjectIdState(nextProjectId);
   }, []);
 
+  const applyProjects = useCallback(
+    (list: ProjectOption[], options: { revalidateOnly?: boolean } = {}) => {
+      const preferredProjectId = projectIdRef.current;
+      const currentProjectStillExists = list.some(
+        (project) => project.id === preferredProjectId,
+      );
+      const nextProjectId = currentProjectStillExists
+        ? preferredProjectId
+        : (list[0]?.id ?? "");
+
+      if (nextProjectId !== projectIdRef.current || !options.revalidateOnly) {
+        projectIdRef.current = nextProjectId;
+        setProjectIdState(nextProjectId);
+      }
+    },
+    [],
+  );
+
   const loadProjects = useCallback(async (options: { revalidateOnly?: boolean } = {}) => {
     const data = await apiGet<{ items: ProjectOption[] }>("/api/v1/projects");
     const list = data.items || [];
     setProjects(list);
-
-    const preferredProjectId = projectIdRef.current;
-    const currentProjectStillExists = list.some((project) => project.id === preferredProjectId);
-    const nextProjectId = currentProjectStillExists ? preferredProjectId : (list[0]?.id ?? "");
-
-    if (nextProjectId !== projectIdRef.current || !options.revalidateOnly) {
-      projectIdRef.current = nextProjectId;
-      setProjectIdState(nextProjectId);
-    }
-  }, []);
+    applyProjects(list, options);
+  }, [applyProjects]);
 
   useEffect(() => {
-    void loadProjects();
-  }, [loadProjects]);
+    let active = true;
+
+    void apiGet<{ items: ProjectOption[] }>("/api/v1/projects").then((data) => {
+      if (!active) return;
+      const list = data.items || [];
+      setProjects(list);
+      applyProjects(list);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [applyProjects]);
 
   return (
     <ProjectContext.Provider

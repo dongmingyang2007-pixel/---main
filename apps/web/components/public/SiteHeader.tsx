@@ -68,10 +68,10 @@ export function SiteHeader() {
             ))}
             <LanguageSwitcher className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" />
             <PublicDocumentLink
-              href="/demo"
+              href="/login"
               className="rounded-[var(--radius-full)] bg-[var(--brand-v2)] px-5 py-2 text-sm font-medium text-white transition-transform hover:scale-[1.02] active:scale-[0.98]"
             >
-              {t("nav.getStarted")}
+              {t("nav.console")}
             </PublicDocumentLink>
           </nav>
 

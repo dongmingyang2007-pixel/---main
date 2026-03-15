@@ -1,35 +1,45 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { installWorkbenchApiMock } from "./helpers/mockWorkbenchApi";
+
+test.use({ locale: "zh-CN" });
 
 test.describe("Foundation design system", () => {
   test("public site loads Inter font", async ({ page }) => {
     await page.goto("/");
-    const fontFamily = await page.evaluate(() =>
-      getComputedStyle(document.body).fontFamily
-    );
+    const fontFamily = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
     expect(fontFamily).toContain("Inter");
   });
 
   test("public site has light tokens", async ({ page }) => {
     await page.goto("/");
     const bgBase = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim()
+      getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim(),
     );
-    expect(bgBase).toBe("#ffffff");
+    expect(["#fff", "#ffffff"]).toContain(bgBase.toLowerCase());
   });
 
-  test("console applies dark theme", async ({ page }) => {
+  test("console applies dark theme when the session is authenticated", async ({ page }) => {
+    await installWorkbenchApiMock(page, { authenticated: true });
     await page.goto("/app");
-    // Wait for client-side effect to apply theme
     await page.waitForSelector("html[data-theme='console']");
-    const hasDark = await page.evaluate(() =>
-      document.documentElement.classList.contains("dark")
-    );
-    expect(hasDark).toBe(true);
+
+    const html = page.locator("html");
+    await expect(html).toHaveAttribute("data-theme", "console");
+    await expect(html).toHaveClass(/dark/);
+    await expect(page.getByRole("heading", { name: "仪表盘" })).toBeVisible();
 
     const bgBase = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim()
+      getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim(),
     );
     expect(bgBase).toBe("#020617");
+  });
+
+  test("unauthenticated console routes redirect with locale preserved", async ({ page }) => {
+    await page.goto("/app");
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.goto("/en/app");
+    await expect(page).toHaveURL(/\/en\/login$/);
   });
 
   test("redirects work for removed routes", async ({ page }) => {

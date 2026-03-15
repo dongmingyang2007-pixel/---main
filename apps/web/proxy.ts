@@ -1,8 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import createIntlMiddleware from "next-intl/middleware";
-import { routing } from "./i18n/routing";
-
-const intlMiddleware = createIntlMiddleware(routing);
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
 function isPageRoute(pathname: string): boolean {
@@ -29,6 +25,15 @@ function isProtectedConsolePath(pathname: string): boolean {
   return pathname === "/app" || pathname.startsWith("/app/");
 }
 
+function isEnglishPath(pathname: string): boolean {
+  return pathname === "/en" || pathname.startsWith("/en/");
+}
+
+function getLocalePrefix(request: NextRequest): string {
+  const rawPathname = new URL(request.url).pathname;
+  return isEnglishPath(rawPathname) ? "/en" : "";
+}
+
 function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
   const apiOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL) || "'self'";
   const assetOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN);
@@ -53,13 +58,13 @@ function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
 }
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const allowSameOriginFrame = isSameOriginEmbeddablePath(pathname);
+  const rawPathname = new URL(request.url).pathname;
+  const allowSameOriginFrame = isSameOriginEmbeddablePath(rawPathname);
 
   // Auth check — strip locale prefix so /en/app/* is also protected
-  const strippedPath = pathname.replace(/^\/en(?=\/|$)/, "") || "/";
+  const strippedPath = rawPathname.replace(/^\/(en|zh)(?=\/|$)/, "") || "/";
   if (isProtectedConsolePath(strippedPath) && !request.cookies.get("access_token")?.value) {
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = new URL(`${getLocalePrefix(request)}/login`, request.url);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -69,9 +74,8 @@ export function proxy(request: NextRequest) {
   let nonce: string | null = null;
   let response: NextResponse;
 
-  if (isPageRoute(pathname)) {
-    // Locale detection, prefix rewriting, and cookie handling
-    response = intlMiddleware(request) as NextResponse;
+  if (isPageRoute(rawPathname)) {
+    response = NextResponse.next();
   } else {
     response = NextResponse.next();
   }

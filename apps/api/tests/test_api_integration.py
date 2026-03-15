@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 
 import atexit
+import hashlib
 import importlib
 import os
 from pathlib import Path
@@ -53,6 +54,24 @@ def public_headers() -> dict[str, str]:
     return {"origin": ORIGIN}
 
 
+def verification_code_key(email: str, purpose: str) -> str:
+    raw = f"{email.lower().strip()}:{purpose}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def issue_verification_code(client: TestClient, email: str, purpose: str = "register") -> str:
+    resp = client.post(
+        "/api/v1/auth/send-code",
+        json={"email": email, "purpose": purpose},
+        headers=public_headers(),
+    )
+    assert resp.status_code == 200
+
+    entry = runtime_state.get_json("verify_code", verification_code_key(email, purpose))
+    assert entry is not None
+    return str(entry["code"])
+
+
 def csrf_headers(client: TestClient, workspace_id: str | None = None) -> dict[str, str]:
     resp = client.get("/api/v1/auth/csrf", headers=public_headers())
     assert resp.status_code == 200
@@ -63,9 +82,15 @@ def csrf_headers(client: TestClient, workspace_id: str | None = None) -> dict[st
 
 
 def register_user(client: TestClient, email: str, display_name: str = "User") -> dict:
+    code = issue_verification_code(client, email, "register")
     resp = client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "pass1234pass", "display_name": display_name},
+        json={
+            "email": email,
+            "password": "pass1234pass",
+            "display_name": display_name,
+            "code": code,
+        },
         headers=public_headers(),
     )
     assert resp.status_code == 200
@@ -164,9 +189,15 @@ def upload_model_artifact(client: TestClient, model_id: str, filename: str) -> s
 
 def test_auth_cookie_and_me() -> None:
     client = TestClient(main_module.app)
+    code = issue_verification_code(client, "u1@example.com", "register")
     resp = client.post(
         "/api/v1/auth/register",
-        json={"email": "u1@example.com", "password": "pass1234pass", "display_name": "U1"},
+        json={
+            "email": "u1@example.com",
+            "password": "pass1234pass",
+            "display_name": "U1",
+            "code": code,
+        },
         headers=public_headers(),
     )
     assert resp.status_code == 200
@@ -489,7 +520,12 @@ def test_origin_required_for_public_mutations() -> None:
     client = TestClient(main_module.app)
     resp = client.post(
         "/api/v1/auth/register",
-        json={"email": "origin@example.com", "password": "pass1234pass", "display_name": "Origin"},
+        json={
+            "email": "origin@example.com",
+            "password": "pass1234pass",
+            "display_name": "Origin",
+            "code": "123456",
+        },
     )
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "origin_required"

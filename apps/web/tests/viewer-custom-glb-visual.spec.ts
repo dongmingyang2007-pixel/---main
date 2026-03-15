@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
+import type { ViewerWindow } from "./helpers/viewer-runtime";
 
 const MODEL_PATH = process.env.PLAYWRIGHT_VIEWER_MODEL || "/qihang_product_pearl_capsule.glb";
 const SHOT_PREFIX =
@@ -11,21 +12,21 @@ test.use({ viewport: { width: 1400, height: 1100 } });
 
 async function viewerGetState(page: Page): Promise<Record<string, unknown> | null> {
   return page.evaluate(() => {
-    const win = window as any;
+    const win = window as unknown as ViewerWindow;
     return win?.QIHANG_MODEL?.getState?.() || null;
   });
 }
 
 async function viewerSetState(page: Page, patch: Record<string, unknown>): Promise<void> {
   await page.evaluate((statePatch) => {
-    const win = window as any;
+    const win = window as unknown as ViewerWindow;
     win?.QIHANG_MODEL?.setState?.(statePatch);
   }, patch);
 }
 
 async function viewerCommand(page: Page, name: string): Promise<void> {
   await page.evaluate((commandName) => {
-    const win = window as any;
+    const win = window as unknown as ViewerWindow;
     win?.QIHANG_MODEL?.command?.(commandName);
   }, name);
 }
@@ -42,7 +43,7 @@ test("capture custom GLB viewer screenshots", async ({ page }) => {
   await page.goto(VIEWER_URL);
 
   await expect
-    .poll(async () => await page.evaluate(() => (window as any).__QIHANG_RENDER_MODE || null), {
+    .poll(async () => await page.evaluate(() => (window as unknown as ViewerWindow).__QIHANG_RENDER_MODE || null), {
       timeout: 45_000,
     })
     .toBe("webgl");

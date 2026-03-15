@@ -9,19 +9,16 @@ type IdleWindow = Window &
   };
 
 export function useDeferredIframeSrc(src: string, enabled = true, delayMs = 180) {
-  const [deferredSrc, setDeferredSrc] = useState(() => (enabled ? "" : ""));
+  const [deferredSrc, setDeferredSrc] = useState("");
 
   useEffect(() => {
     if (!enabled || !src) {
-      setDeferredSrc("");
       return;
     }
 
     const idleWindow = window as IdleWindow;
     let timeoutId: number | null = null;
     let idleId: number | null = null;
-
-    setDeferredSrc("");
 
     const activate = () => {
       setDeferredSrc((current) => (current === src ? current : src));
@@ -52,5 +49,5 @@ export function useDeferredIframeSrc(src: string, enabled = true, delayMs = 180)
     };
   }, [delayMs, enabled, src]);
 
-  return deferredSrc;
+  return enabled && src && deferredSrc === src ? deferredSrc : "";
 }

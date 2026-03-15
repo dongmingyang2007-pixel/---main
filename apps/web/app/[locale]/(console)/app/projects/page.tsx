@@ -1,7 +1,7 @@
 "use client";
 
 import { Link } from "@/i18n/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { ConsoleTableSkeleton } from "@/components/ConsoleSkeleton";
@@ -19,13 +19,28 @@ export default function ProjectsPage() {
   const [description, setDescription] = useState("");
   const t = useTranslations("console-projects");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
     setItems(data.items || []);
-  };
+  }, []);
 
   useEffect(() => {
-    void load().finally(() => setLoading(false));
+    let active = true;
+
+    void apiGet<{ items: Project[] }>("/api/v1/projects")
+      .then((data) => {
+        if (!active) return;
+        setItems(data.items || []);
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const onCreate = async (event: FormEvent) => {
@@ -48,60 +63,64 @@ export default function ProjectsPage() {
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
           </div>
 
-      <section className="console-panel">
-        <div className="console-panel-header">
-          <div>
-            <h2 className="console-panel-title">新建项目</h2>
-            <p className="console-panel-description">用项目隔离数据、训练和模型仓库，后续也便于按业务线拆分。</p>
-          </div>
-        </div>
-        <div className="console-panel-body">
-          <form onSubmit={onCreate} className="console-form-grid columns-3">
-            <div>
-              <label className="console-label" htmlFor="project-name">项目名</label>
-              <input
-                id="project-name"
-                className="console-input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="例如：Home Vision"
-                required
-              />
+          <section className="console-panel">
+            <div className="console-panel-header">
+              <div>
+                <h2 className="console-panel-title">新建项目</h2>
+                <p className="console-panel-description">用项目隔离数据、训练和模型仓库，后续也便于按业务线拆分。</p>
+              </div>
             </div>
-            <div>
-              <label className="console-label" htmlFor="project-description">描述</label>
-              <input
-                id="project-description"
-                className="console-input"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="这个项目解决什么问题"
-              />
+            <div className="console-panel-body">
+              <form onSubmit={onCreate} className="console-form-grid columns-3">
+                <div>
+                  <label className="console-label" htmlFor="project-name">项目名</label>
+                  <input
+                    id="project-name"
+                    className="console-input"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="例如：Home Vision"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="console-label" htmlFor="project-description">描述</label>
+                  <input
+                    id="project-description"
+                    className="console-input"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="这个项目解决什么问题"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button className="console-button w-full">新建项目</button>
+                </div>
+              </form>
             </div>
-            <div className="flex items-end">
-              <button className="console-button w-full">新建项目</button>
-            </div>
-          </form>
-        </div>
-      </section>
+          </section>
 
-      {loading ? <ConsoleTableSkeleton cols={3} rows={4} /> : <DataTable
-        caption="项目列表"
-        headers={["名称", "描述", "创建时间", "操作"]}
-        emptyTitle="还没有项目"
-        emptyBody="先创建一个项目，后续的数据集、训练作业和模型都挂在它下面。"
-        rows={items.map((project) => [
-          <div key={project.id}>
-            <div className="font-semibold text-[var(--text-primary)]">{project.name}</div>
-            <div className="mt-1 text-xs text-[var(--text-secondary)]">{project.id.slice(0, 8)}...</div>
-          </div>,
-          project.description || "暂无描述",
-          new Date(project.created_at).toLocaleString(),
-          <Link key={`${project.id}-detail`} href={`/app/projects/${project.id}`} className="console-link">
-            查看详情
-          </Link>,
-        ])}
-      />}
+          {loading ? (
+            <ConsoleTableSkeleton cols={3} rows={4} />
+          ) : (
+            <DataTable
+              caption="项目列表"
+              headers={["名称", "描述", "创建时间", "操作"]}
+              emptyTitle="还没有项目"
+              emptyBody="先创建一个项目，后续的数据集、训练作业和模型都挂在它下面。"
+              rows={items.map((project) => [
+                <div key={project.id}>
+                  <div className="font-semibold text-[var(--text-primary)]">{project.name}</div>
+                  <div className="mt-1 text-xs text-[var(--text-secondary)]">{project.id.slice(0, 8)}...</div>
+                </div>,
+                project.description || "暂无描述",
+                new Date(project.created_at).toLocaleString(),
+                <Link key={`${project.id}-detail`} href={`/app/projects/${project.id}`} className="console-link">
+                  查看详情
+                </Link>,
+              ])}
+            />
+          )}
         </div>
       </PageTransition>
     </PanelLayout>

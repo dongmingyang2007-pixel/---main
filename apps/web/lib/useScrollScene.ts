@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { gsap, ScrollTrigger } from "@/lib/gsap-register";
+import { ScrollTrigger } from "@/lib/gsap-register";
 
 export interface ScrollSceneOptions {
   /** Pin the scene while scrubbing (desktop only). Default: true */
@@ -31,7 +31,10 @@ export function useScrollScene(options: ScrollSceneOptions = {}) {
   const sceneRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<ScrollTrigger | null>(null);
   const onProgressRef = useRef(onProgress);
-  onProgressRef.current = onProgress;
+
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
 
   // Serialize snap to avoid reference equality issues in deps
   const snapKey = snap ? JSON.stringify(snap) : "false";
@@ -69,7 +72,6 @@ export function useScrollScene(options: ScrollSceneOptions = {}) {
       triggerRef.current?.kill();
       triggerRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin, scrub, scrollPad, snapKey, disablePinOnMobile]);
 
   /** Imperatively get current progress (0–1) */

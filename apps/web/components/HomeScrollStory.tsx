@@ -285,7 +285,13 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
   const { sceneRefs, sceneProgress, activeSceneIndex, activeProgress, timelineProgress } =
     useStoryScroll(STORY_SCENES.length);
 
-  const viewer = useViewerBridge({ enabled: true, deferredSrc: deferredViewerSrc });
+  const {
+    iframeRef,
+    onIframeLoad,
+    sendPatch,
+    viewerConnected,
+    viewerStatus,
+  } = useViewerBridge({ enabled: true, deferredSrc: deferredViewerSrc });
 
   const pageRef = useRef<HTMLDivElement>(null);
   useScrollReveal(pageRef);
@@ -304,8 +310,8 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
   );
 
   useEffect(() => {
-    viewer.sendPatch(viewerPatch);
-  }, [viewerPatch, viewer]);
+    sendPatch(viewerPatch);
+  }, [sendPatch, viewerPatch]);
 
   return (
     <div className="home-story-page" ref={pageRef}>
@@ -318,7 +324,7 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
                 <span className="home-stage-divider" />
                 <span className="home-stage-caption">{activeScene.eyebrow}</span>
               </div>
-              <span className="home-stage-status">{viewer.viewerStatus}</span>
+              <span className="home-stage-status">{viewerStatus}</span>
             </div>
 
             <div className="home-stage-shell">
@@ -331,16 +337,16 @@ export function HomeScrollStory({ viewerParentOrigin }: { viewerParentOrigin: st
 
               {deferredViewerSrc ? (
                 <iframe
-                  ref={viewer.iframeRef}
+                  ref={iframeRef}
                   src={deferredViewerSrc}
                   title="MingRun Story Viewer"
                   className="home-story-iframe"
                   loading="lazy"
-                  onLoad={viewer.onIframeLoad}
+                  onLoad={onIframeLoad}
                 />
               ) : null}
 
-              {!viewer.viewerConnected && deferredViewerSrc ? (
+              {!viewerConnected && deferredViewerSrc ? (
                 <div className="home-stage-loader">产品舞台加载中</div>
               ) : null}
             </div>

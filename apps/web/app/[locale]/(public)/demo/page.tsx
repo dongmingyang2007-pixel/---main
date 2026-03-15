@@ -3,10 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { AdvancedDrawer } from "@/components/AdvancedDrawer";
-import { TextReveal } from "@/components/TextReveal";
 import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
-import { useScrollReveal } from "@/lib/useScrollReveal";
+import { gsap } from "@/lib/gsap-register";
 import { apiPost, uploadToPresignedUrl } from "@/lib/api";
 import { EARBUD_BUILD_TIER, EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
 import { DemoInferResponse, DemoPresignResponse } from "@/lib/types";
@@ -486,19 +484,22 @@ function modeFromIcons(icons: string[]): "offline" | "online" | "hybrid" {
 }
 
 function commandBtn(enabled: boolean, active = false): string {
-  const tone = active
-    ? "border-[var(--brand-v2)] bg-[var(--brand-v2)] text-white shadow-[0_16px_30px_rgba(17,115,255,0.18)]"
-    : "border-[rgba(17,24,39,0.12)] bg-white text-[var(--fg)]";
-  const disabled = enabled ? "" : " cursor-not-allowed opacity-45";
-  return `min-h-[42px] rounded-2xl border px-3 py-2 text-xs font-semibold transition-colors ${tone}${disabled}`;
+  const base = "min-h-[44px] rounded-[var(--radius-md)] border px-3 py-2 text-xs font-medium transition-colors";
+  if (!enabled) {
+    return `${base} border-[var(--border)] bg-[var(--bg-raised)] text-[var(--text-secondary)] cursor-not-allowed`;
+  }
+  if (active) {
+    return `${base} border-[var(--brand-v2)] bg-[var(--brand-v2)] text-white shadow-[0_0_0_3px_var(--brand-soft)]`;
+  }
+  return `${base} border-[var(--border)] bg-[var(--bg-base)] text-[var(--text-primary)] hover:border-[var(--brand-v2)] hover:text-[var(--brand-v2)]`;
 }
 
 export default function DemoPage() {
   const td = useTranslations("demo");
-  const demoShellRef = useRef<HTMLDivElement>(null);
-  useScrollReveal(demoShellRef);
+  const sectionRef = useRef<HTMLElement>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showViewerHint, setShowViewerHint] = useState(true);
   const [viewerReady, setViewerReady] = useState(false);
   const [availableCommands, setAvailableCommands] = useState<ViewerCommand[]>([]);
   const [connectionPhase, setConnectionPhase] = useState<ViewerConnectionPhase>("connecting");
@@ -518,6 +519,16 @@ export default function DemoPage() {
 
   useEffect(() => {
     setViewerSrc(appendParentOrigin(VIEWER_DEMO_SRC_BASE, window.location.origin));
+  }, []);
+
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+    tl.from(el.querySelector(".demo-hero"), { opacity: 0, y: 20, duration: 0.6 });
+    tl.from(el.querySelector(".demo-controls"), { opacity: 0, y: 20, duration: 0.5 }, "<0.12");
+    tl.from(el.querySelector(".demo-viewer"), { opacity: 0, y: 30, duration: 0.6 }, "<0.12");
+    return () => { tl.kill(); };
   }, []);
 
   const clearHandshakeTimers = useCallback(() => {
@@ -824,7 +835,6 @@ export default function DemoPage() {
     };
 
     window.addEventListener("message", onMessage);
-    const frame = iframeRef.current;
     return () => {
       clearHandshakeTimers();
       window.removeEventListener("message", onMessage);
@@ -873,7 +883,7 @@ export default function DemoPage() {
     if (connectionPhase === "timeout") return td("advanced.connectionTimeout");
     if (connectionPhase === "connecting") return "模型握手中，命令暂不可用。";
     return "等待命令列表回传。";
-  }, [availableCommands.length, connectionPhase]);
+  }, [availableCommands.length, connectionPhase, td]);
   const pivotPlugActionLabel = viewerState.pivotPlugAnimating
     ? "封帽移动中"
     : viewerState.pivotPlugReady
@@ -911,12 +921,15 @@ export default function DemoPage() {
     [td("diag.pivotLayout"), `${viewerState.pivotLayout} / ${viewerState.pivotSwingSide}`],
   ] as [string, string][];
 
+  const selectClass = "mt-1 block w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-[var(--brand-v2)] focus:outline-none";
+
   return (
-    <div className="demo-page" ref={demoShellRef}>
+    <section ref={sectionRef} className="mx-auto max-w-6xl px-6 pb-24 pt-8">
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        aria-label={td("control.upload")}
         className="hidden"
         onChange={(e) => {
           const picked = e.target.files?.[0] || null;
@@ -931,346 +944,333 @@ export default function DemoPage() {
         }}
       />
 
-      <div className="demo-status-bar">
-        <div className="demo-status-copy">
-          <div className="site-kicker" data-reveal>{td("hero.eyebrow")}</div>
-          <TextReveal
-            text={td("hero.title")}
-            tag="h1"
-            className="display-face mt-3 text-[clamp(2rem,4vw,3.3rem)] leading-[0.96]"
-            staggerMs={28}
-          />
-          <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--muted)]">{statusMessage}</p>
-          <div className="demo-status-actions">
-            <div className="demo-task-switch" role="tablist" aria-label={td("task.selectLabel")}>
-              <button
-                type="button"
-                className={`demo-task-pill ${task === "vqa" ? "is-active" : ""}`}
-                aria-pressed={task === "vqa"}
-                onClick={() => setTask("vqa")}
-              >
-                {td("task.vqa")}
-              </button>
-              <button
-                type="button"
-                className={`demo-task-pill ${task === "ocr" ? "is-active" : ""}`}
-                aria-pressed={task === "ocr"}
-                onClick={() => setTask("ocr")}
-              >
-                {td("task.ocr")}
-              </button>
-            </div>
-            <button type="button" onClick={() => fileInputRef.current?.click()} className="console-button-secondary">
-              {td("control.upload")}
-            </button>
+      {/* ── Hero ── */}
+      <div className="demo-hero text-center">
+        <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
+          {td("hero.eyebrow")}
+        </p>
+        <h1 className="mt-3 text-3xl font-bold text-[var(--text-primary)] sm:text-4xl">
+          {td("hero.title")}
+        </h1>
+        <p className="mx-auto mt-3 max-w-lg text-[var(--text-secondary)]">
+          {td("hero.body")}
+        </p>
+      </div>
+
+      {/* ── Controls ── */}
+      <div className="demo-controls mt-8 flex flex-wrap items-center justify-center gap-3">
+        {/* 任务模式切换 */}
+        <div className="inline-flex gap-1 rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-surface)] p-1" role="tablist" aria-label={td("task.selectLabel")}>
+          <button
+            type="button"
+            className={`min-h-[44px] rounded-[var(--radius-full)] px-5 py-2 text-sm font-medium transition-colors ${task === "vqa" ? "bg-[var(--text-primary)] text-[var(--bg-base)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
+            aria-pressed={task === "vqa"}
+            onClick={() => setTask("vqa")}
+          >
+            {td("task.vqa")}
+          </button>
+          <button
+            type="button"
+            className={`min-h-[44px] rounded-[var(--radius-full)] px-5 py-2 text-sm font-medium transition-colors ${task === "ocr" ? "bg-[var(--text-primary)] text-[var(--bg-base)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
+            aria-pressed={task === "ocr"}
+            onClick={() => setTask("ocr")}
+          >
+            {td("task.ocr")}
+          </button>
+        </div>
+
+        {/* 分隔线 */}
+        <span className="hidden h-6 w-px bg-[var(--border)] sm:block" aria-hidden="true" />
+
+        {/* 操作按钮 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="min-h-[44px] rounded-[var(--radius-full)] border border-[var(--border)] bg-[var(--bg-base)] px-5 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-surface)]"
+          >
+            {td("control.upload")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { void runInference(); }}
+            disabled={!canRunInference}
+            className={`min-h-[44px] rounded-[var(--radius-full)] px-5 py-2 text-sm font-medium transition-transform ${canRunInference ? "bg-[var(--brand-v2)] text-white hover:scale-[1.02] active:scale-[0.98]" : "bg-[var(--bg-raised)] text-[var(--text-secondary)] cursor-not-allowed"}`}
+          >
+            {busy ? td("control.inferring") : td("control.startInference")}
+          </button>
+          {connectionPhase === "timeout" && (
             <button
               type="button"
-              onClick={() => {
-                void runInference();
-              }}
-              disabled={!canRunInference}
-              className="console-button"
+              onClick={retryViewerConnection}
+              className="min-h-[44px] rounded-[var(--radius-full)] border border-[var(--error)] px-4 py-2 text-sm font-medium text-[var(--error)] transition-colors hover:bg-red-50"
             >
-              {busy ? td("control.inferring") : td("control.startInference")}
+              {td("control.reconnect")}
             </button>
-            {connectionPhase === "timeout" ? (
-              <button type="button" onClick={retryViewerConnection} className="console-button-secondary">
-                {td("control.reconnect")}
-              </button>
-            ) : null}
-          </div>
+          )}
         </div>
-        <div className="demo-metric-grid w-full max-w-[360px]" data-reveal data-reveal-delay="2">
-          <div className="demo-metric-card">
-            <div className="console-key-label">{td("metric.viewer")}</div>
-            <strong>{connectionMeta.label}</strong>
-          </div>
-          <div className="demo-metric-card">
-            <div className="console-key-label">{td("metric.task")}</div>
-            <strong>{task.toUpperCase()}</strong>
-          </div>
-          <div className="demo-metric-card">
-            <div className="console-key-label">{td("metric.image")}</div>
-            <strong className="truncate">{file ? file.name : td("metric.noImage")}</strong>
-          </div>
-          <div className="demo-metric-card">
-            <div className="console-key-label">{td("metric.result")}</div>
-            <strong>{result ? `${result.latency_ms}ms` : busy ? td("metric.processing") : td("metric.waiting")}</strong>
-          </div>
-        </div>
+
+        {/* 分隔线 */}
+        <span className="hidden h-6 w-px bg-[var(--border)] sm:block" aria-hidden="true" />
+
+        {/* 状态指示器 */}
+        <span className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-[var(--radius-full)] px-3 py-1 text-xs font-medium ${connectionMeta.tone}`}>
+          <span className={`inline-block h-2 w-2 rounded-full ${connectionPhase === "connected" ? "bg-[var(--success-v2)]" : connectionPhase === "timeout" ? "bg-[var(--error)]" : "bg-[var(--warning-v2)]"}`} />
+          {connectionMeta.label}
+        </span>
       </div>
 
-      <section className="demo-response-strip" data-reveal data-reveal-delay="1">
-        <div>
-          <div className="console-kicker">{td("response.kicker")}</div>
-          <h2 className="demo-response-title">{td("response.title")}</h2>
-          <p className="demo-response-summary">{inferenceSummary}</p>
-        </div>
-        <div className="demo-response-meta">
-          <span>{viewerState.caseMode}</span>
-          <span>{file ? file.name : td("response.waitingImage")}</span>
-          <span>{result ? `${result.latency_ms}ms` : busy ? td("metric.processing") : td("response.waitingInference")}</span>
-        </div>
-      </section>
+      {/* ── Status message ── */}
+      <p className="mt-4 text-center text-sm text-[var(--text-secondary)]">{statusMessage}</p>
 
-      <div className="demo-grid">
-        <section className="demo-stage">
-          {deferredViewerSrc ? (
-            <iframe
-              ref={iframeRef}
-              src={deferredViewerSrc}
-              title={td("viewer.title")}
-              className="demo-iframe"
-              loading="lazy"
-              onLoad={() => {
-                startHandshake("iframe-load");
-              }}
-            />
-          ) : null}
-        </section>
+      {/* ── 3D Viewer ── */}
+      <div
+        className="demo-viewer relative mt-6 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--border)] bg-black"
+        onMouseEnter={() => showViewerHint && setShowViewerHint(false)}
+        onTouchStart={() => showViewerHint && setShowViewerHint(false)}
+      >
+        {deferredViewerSrc ? (
+          <iframe
+            ref={iframeRef}
+            src={deferredViewerSrc}
+            title={td("viewer.title")}
+            className="demo-iframe block w-full"
+            loading="lazy"
+            onLoad={() => {
+              startHandshake("iframe-load");
+              setTimeout(() => setShowViewerHint(false), 4000);
+            }}
+          />
+        ) : null}
 
-        <aside className="demo-sidebar">
-          <section className="demo-panel">
-            <div className="demo-panel-body">
-              <AdvancedDrawer title={td("advanced.title")} summary={td("advanced.summary")} kicker={td("advanced.kicker")} toggleLabel={td("advanced.toggle")}>
-                {commandUnavailableReason ? <div className="text-xs text-[#8a5a18]">{commandUnavailableReason}</div> : null}
-
-                <div className="demo-advanced-group">
-                  <h3>{td("advanced.structure")}</h3>
-                  <p>{td("advanced.structureDesc")}</p>
-                  <div className="demo-command-grid mt-4">
-                    <button
-                      className={commandBtn(commandSupported("toggle-open"), viewerState.isOpen)}
-                      disabled={!commandSupported("toggle-open")}
-                      onClick={() => sendViewerCommand("toggle-open")}
-                    >
-                      {viewerState.isOpen ? td("advanced.closeLid") : td("advanced.openLid")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-camera"), viewerState.camDetached)}
-                      disabled={!commandSupported("toggle-camera")}
-                      onClick={() => sendViewerCommand("toggle-camera")}
-                    >
-                      {viewerState.camDetached ? td("advanced.attachCam") : td("advanced.detachCam")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-earbuds"), viewerState.earbudsOut)}
-                      disabled={!commandSupported("toggle-earbuds")}
-                      onClick={() => sendViewerCommand("toggle-earbuds")}
-                    >
-                      {viewerState.earbudsOut ? td("advanced.earbudsIn") : td("advanced.earbudsOut")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-dream"), viewerState.dreamOn)}
-                      disabled={!commandSupported("toggle-dream")}
-                      onClick={() => sendViewerCommand("toggle-dream")}
-                    >
-                      {viewerState.dreamOn ? td("advanced.dreamOn") : td("advanced.dreamOff")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-spin"), viewerState.autoSpin)}
-                      disabled={!commandSupported("toggle-spin")}
-                      onClick={() => sendViewerCommand("toggle-spin")}
-                    >
-                      {viewerState.autoSpin ? td("advanced.spinOn") : td("advanced.spinOff")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-explode"), viewerState.exploded)}
-                      disabled={!commandSupported("toggle-explode")}
-                      onClick={() => sendViewerCommand("toggle-explode")}
-                    >
-                      {viewerState.exploded ? td("advanced.explodedOn") : td("advanced.explodedOff")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-xray"), viewerState.xrayOn)}
-                      disabled={!commandSupported("toggle-xray")}
-                      onClick={() => sendViewerCommand("toggle-xray")}
-                    >
-                      {viewerState.xrayOn ? td("advanced.xrayOn") : td("advanced.xrayOff")}
-                    </button>
-                    <button
-                      className={commandBtn(commandSupported("toggle-night"), viewerState.nightOn)}
-                      disabled={!commandSupported("toggle-night")}
-                      onClick={() => sendViewerCommand("toggle-night")}
-                    >
-                      {viewerState.nightOn ? td("advanced.nightOn") : td("advanced.nightOff")}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="demo-advanced-group">
-                  <h3>{td("advanced.viewSection")}</h3>
-                  <p>{td("advanced.viewSectionDesc")}</p>
-                  <div className="demo-command-grid mt-4">
-                    <button className={commandBtn(commandSupported("reset-view"))} disabled={!commandSupported("reset-view")} onClick={() => sendViewerCommand("reset-view")}>{td("advanced.resetView")}</button>
-                    <button className={commandBtn(commandSupported("focus-front-view"))} disabled={!commandSupported("focus-front-view")} onClick={() => sendViewerCommand("focus-front-view")}>{td("advanced.frontView")}</button>
-                    <button className={commandBtn(commandSupported("focus-rear-view"))} disabled={!commandSupported("focus-rear-view")} onClick={() => sendViewerCommand("focus-rear-view")}>{td("advanced.rearView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-view"))} disabled={!commandSupported("focus-pivot-view")} onClick={() => sendViewerCommand("focus-pivot-view")}>{td("advanced.pivotView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-front-view"))} disabled={!commandSupported("focus-pivot-front-view")} onClick={() => sendViewerCommand("focus-pivot-front-view")}>{td("advanced.pivotFrontView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-rear-view"))} disabled={!commandSupported("focus-pivot-rear-view")} onClick={() => sendViewerCommand("focus-pivot-rear-view")}>{td("advanced.pivotRearView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-rear-corner-view"))} disabled={!commandSupported("focus-pivot-rear-corner-view")} onClick={() => sendViewerCommand("focus-pivot-rear-corner-view")}>{td("advanced.rearCornerView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-xray-view"))} disabled={!commandSupported("focus-pivot-xray-view")} onClick={() => sendViewerCommand("focus-pivot-xray-view")}>{td("advanced.pivotXrayView")}</button>
-                    <button className={commandBtn(commandSupported("focus-pivot-inspect-view"))} disabled={!commandSupported("focus-pivot-inspect-view")} onClick={() => sendViewerCommand("focus-pivot-inspect-view")}>{td("advanced.inspectFocus")}</button>
-                    <button className={commandBtn(commandSupported("focus-ear-left-view"))} disabled={!commandSupported("focus-ear-left-view")} onClick={() => sendViewerCommand("focus-ear-left-view")}>{td("advanced.earLeftView")}</button>
-                    <button className={commandBtn(commandSupported("focus-ear-right-view"))} disabled={!commandSupported("focus-ear-right-view")} onClick={() => sendViewerCommand("focus-ear-right-view")}>{td("advanced.earRightView")}</button>
-                    <button className={commandBtn(commandSupported("focus-ear-dock-view"))} disabled={!commandSupported("focus-ear-dock-view")} onClick={() => sendViewerCommand("focus-ear-dock-view")}>{td("advanced.earDockView")}</button>
-                    <button className={commandBtn(commandSupported("toggle-earbud-xray"), viewerState.xrayOn)} disabled={!commandSupported("toggle-earbud-xray")} onClick={() => sendViewerCommand("toggle-earbud-xray")}>{td("advanced.earbudXray")}</button>
-                    <button className={commandBtn(commandSupported("toggle-pivot-inspect"), viewerState.pivotInspectActive)} disabled={!commandSupported("toggle-pivot-inspect")} onClick={() => sendViewerCommand("toggle-pivot-inspect")}>{viewerState.pivotInspectActive ? td("advanced.pivotInspectOn") : td("advanced.pivotInspectOff")}</button>
-                    <button className={commandBtn(commandSupported("toggle-pivot-explode"), viewerState.pivotExplodeActive)} disabled={!commandSupported("toggle-pivot-explode")} onClick={() => sendViewerCommand("toggle-pivot-explode")}>{viewerState.pivotExplodeActive ? td("advanced.pivotExplodeOn") : td("advanced.pivotExplodeOff")}</button>
-                  </div>
-                </div>
-
-                <div className="demo-advanced-group">
-                  <h3>{td("advanced.modeSection")}</h3>
-                  <p>{td("advanced.modeSectionDesc")}</p>
-                  <div className="mt-4 grid gap-3">
-                    <label className="block text-xs text-[var(--muted)]">
-                      {td("advanced.modeLabel")}
-                      <select className="console-select mt-1" value={viewerState.mode} onChange={(e) => patchViewerState({ mode: e.target.value as ViewerMode })}>
-                        <option value="offline">offline</option>
-                        <option value="online">online</option>
-                        <option value="hybrid">hybrid</option>
-                      </select>
-                    </label>
-                    <label className="block text-xs text-[var(--muted)]">
-                      {td("advanced.caseModeLabel")}
-                      <select className="console-select mt-1" value={viewerState.caseMode} onChange={(e) => patchViewerState({ case_mode: e.target.value as ViewerCaseMode })}>
-                        <option value="commute_mode">commute_mode</option>
-                        <option value="office_mode">office_mode</option>
-                        <option value="silent_privacy_mode">silent_privacy_mode</option>
-                      </select>
-                    </label>
-                    <label className="block text-xs text-[var(--muted)]">
-                      {td("advanced.layerLabel")}
-                      <select className="console-select mt-1" value={viewerState.layer} onChange={(e) => patchViewerState({ layer: clampLayer(Number(e.target.value)) })}>
-                        <option value={1}>L1</option>
-                        <option value={2}>L2</option>
-                        <option value={3}>L3</option>
-                        <option value={4}>L4</option>
-                      </select>
-                    </label>
-                    <div className="demo-command-grid">
-                      <button className={commandBtn(true, viewerState.privacyLockHw)} onClick={() => patchViewerState({ privacy_lock_hw: !viewerState.privacyLockHw })}>
-                        {viewerState.privacyLockHw ? td("advanced.privacyOff") : td("advanced.privacyOn")}
-                      </button>
-                      <button
-                        className={commandBtn(true, viewerState.caseMode === "silent_privacy_mode")}
-                        onClick={() =>
-                          patchViewerState({
-                            case_mode: viewerState.caseMode === "silent_privacy_mode" ? "office_mode" : "silent_privacy_mode",
-                          })
-                        }
-                      >
-                        {viewerState.caseMode === "silent_privacy_mode" ? td("advanced.silentPrivacyOn") : td("advanced.silentPrivacyOff")}
-                      </button>
-                    </div>
-                    <label className="block text-xs text-[var(--muted)]">
-                      {td("advanced.colorwayLabel")}
-                      <select className="console-select mt-1" value={viewerState.colorway} onChange={(e) => patchViewerState({ colorway: e.target.value as ViewerColorway })}>
-                        <option value="pearl">{td("colorway.pearl")}</option>
-                        <option value="graphite">{td("colorway.graphite")}</option>
-                        <option value="glacier">{td("colorway.glacier")}</option>
-                      </select>
-                    </label>
-                    <label className="block text-xs text-[var(--muted)]">
-                      {td("advanced.pivotSideLabel")}
-                      <select className="console-select mt-1" value={viewerState.pivotSwingSide} onChange={(e) => patchViewerState({ pivot_swing_side: e.target.value as ViewerPivotSide })}>
-                        <option value="left">{td("side.left")}</option>
-                        <option value="right">{td("side.right")}</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="demo-advanced-group">
-                  <h3>{td("advanced.exportSection")}</h3>
-                  <p>{td("advanced.exportSectionDesc")}</p>
-                  <div className="demo-command-grid mt-4">
-                    <button className={commandBtn(canSyncViewerState, viewerState.pivotPlugReady || viewerState.pivotPlugInserted)} disabled={!canSyncViewerState} onClick={() => patchViewerState(viewerState.pivotPlugReady || viewerState.pivotPlugInserted ? { pivot_plug_ready: false } : { pivot_plug_ready: true })}>
-                      {pivotPlugActionLabel}
-                    </button>
-                    <button className={commandBtn(commandSupported("toggle-task"))} disabled={!commandSupported("toggle-task")} onClick={() => sendViewerCommand("toggle-task")}>{td("advanced.taskToggle")}</button>
-                    <button className={commandBtn(commandSupported("cycle-mode"))} disabled={!commandSupported("cycle-mode")} onClick={() => sendViewerCommand("cycle-mode")}>{td("advanced.cycleMode")}</button>
-                    <button className={commandBtn(commandSupported("cycle-layer"))} disabled={!commandSupported("cycle-layer")} onClick={() => sendViewerCommand("cycle-layer")}>{td("advanced.cycleLayer")}</button>
-                    <button className={commandBtn(commandSupported("export-glb"))} disabled={!commandSupported("export-glb")} onClick={() => sendViewerCommand("export-glb")}>{td("advanced.exportGlb")}</button>
-                    <button className={commandBtn(commandSupported("export-stl-pack"))} disabled={!commandSupported("export-stl-pack")} onClick={() => sendViewerCommand("export-stl-pack")}>{td("advanced.exportStl")}</button>
-                  </div>
-                  <div className="mt-4 rounded border border-[#d9e1ee] bg-[#f7f9fc] px-3 py-2">
-                    <div className="flex items-center justify-between text-xs text-[#4f5768]">
-                      <span>{td("advanced.capSliderLabel")}</span>
-                      <span>{Math.round(viewerState.pivotPlugSlideT * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={Math.round(viewerState.pivotPlugSlideT * 100)}
-                      disabled={!canSyncViewerState || !viewerState.pivotPlugReady || viewerState.pivotPlugAnimating}
-                      onChange={(event) => patchViewerState({ pivot_plug_slide_t: Number(event.target.value) / 100 })}
-                      className="mt-2 w-full accent-[#1f8afa] disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                    <div className="mt-1 text-[11px] text-[#6b7280]">{td("advanced.capSliderHint")}</div>
-                  </div>
-                </div>
-              </AdvancedDrawer>
+        {/* 交互引导覆层 */}
+        {showViewerHint && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity duration-700">
+            <div className="flex flex-col items-center gap-3 text-white/90">
+              {/* 拖拽图标 */}
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-80">
+                <path d="M14 4.1 12 6l-2-1.9" /><path d="M12 2v4" />
+                <path d="m4.1 10-1.9 2 1.9 2" /><path d="M2 12h4" />
+                <path d="m19.9 10 1.9 2-1.9 2" /><path d="M22 12h-4" />
+                <path d="m10 19.9 2 1.9 2-1.9" /><path d="M12 22v-4" />
+              </svg>
+              <span className="text-sm font-medium">{td("viewer.hint.drag")}</span>
+              <span className="text-xs opacity-70">{td("viewer.hint.scroll")}</span>
             </div>
-          </section>
-
-          <section className="demo-panel">
-            <div className="demo-panel-body">
-              <div className="console-kicker">{td("diag.kicker")}</div>
-              <h2 className="console-panel-title mt-2">{td("diag.title")}</h2>
-
-              <div className="demo-metric-grid mt-4">
-                <div className="demo-metric-card">
-                  <div className="console-key-label">{td("diag.caseMode")}</div>
-                  <strong>{viewerState.caseMode}</strong>
-                </div>
-                <div className="demo-metric-card">
-                  <div className="console-key-label">{td("diag.pivotPlug")}</div>
-                  <strong>{pivotPlugStatusLabel}</strong>
-                </div>
-                <div className="demo-metric-card">
-                  <div className="console-key-label">{td("diag.latency")}</div>
-                  <strong>{viewerState.e2eMs.toFixed(1)}ms</strong>
-                </div>
-                <div className="demo-metric-card">
-                  <div className="console-key-label">{td("diag.model")}</div>
-                  <strong>{viewerState.statusText}</strong>
-                </div>
-              </div>
-
-              <div className="demo-status-list">
-                {diagnosticItems.map(([label, value]) => (
-                  <div key={label} className="demo-status-item">
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                  </div>
-                ))}
-                <div className="demo-status-item">
-                  <span>{td("diag.selectedImage")}</span>
-                  <strong>{file ? file.name : td("metric.noImage")}</strong>
-                </div>
-                <div className="demo-status-item">
-                  <span>{td("diag.pocketGuard")}</span>
-                  <strong>{viewerState.pocketGuardActive ? td("diag.pocketActive") : td("diag.pocketInactive")}</strong>
-                </div>
-                <div className="demo-status-item">
-                  <span>{td("diag.contact")}</span>
-                  <strong>
-                    L {viewerState.earbudContactEngagedL ? "YES" : "NO"} / R {viewerState.earbudContactEngagedR ? "YES" : "NO"}
-                  </strong>
-                </div>
-                <div className="demo-status-item">
-                  <span>{td("diag.lateralJitter")}</span>
-                  <strong>{viewerState.closedLateralJitterMm.toFixed(3)}mm</strong>
-                </div>
-              </div>
-            </div>
-          </section>
-        </aside>
+          </div>
+        )}
       </div>
-    </div>
+
+      {/* ── Result card ── */}
+      {(result || busy) && (
+        <div className="mt-6 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">{td("response.kicker")}</p>
+              <p className="mt-2 text-lg font-semibold text-[var(--text-primary)]">{inferenceSummary}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className="inline-flex items-center rounded-[var(--radius-full)] bg-[var(--bg-raised)] px-3 py-1 text-xs text-[var(--text-secondary)]">{viewerState.caseMode}</span>
+              <span className="inline-flex items-center rounded-[var(--radius-full)] bg-[var(--bg-raised)] px-3 py-1 text-xs text-[var(--text-secondary)]">{file ? file.name : td("response.waitingImage")}</span>
+              {result && <span className="inline-flex items-center rounded-[var(--radius-full)] bg-[var(--brand-soft)] px-3 py-1 text-xs font-medium text-[var(--brand-v2)]">{result.latency_ms}ms</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Advanced Controls (collapsed) ── */}
+      <details className="mt-8 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)]">
+        <summary className="cursor-pointer select-none px-6 py-5">
+          <h2 className="inline text-base font-semibold text-[var(--text-primary)]">
+            <span className="mr-3 text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">{td("advanced.kicker")}</span>
+            {td("advanced.title")}
+          </h2>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">{td("advanced.summary")}</p>
+        </summary>
+
+        <div className="space-y-6 border-t border-[var(--border)] px-6 py-6">
+          {commandUnavailableReason && <p className="text-sm text-[var(--warning-v2)]">{commandUnavailableReason}</p>}
+
+          {/* Structure */}
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">{td("advanced.structure")}</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{td("advanced.structureDesc")}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <button className={commandBtn(commandSupported("toggle-open"), viewerState.isOpen)} disabled={!commandSupported("toggle-open")} onClick={() => sendViewerCommand("toggle-open")}>{viewerState.isOpen ? td("advanced.closeLid") : td("advanced.openLid")}</button>
+              <button className={commandBtn(commandSupported("toggle-camera"), viewerState.camDetached)} disabled={!commandSupported("toggle-camera")} onClick={() => sendViewerCommand("toggle-camera")}>{viewerState.camDetached ? td("advanced.attachCam") : td("advanced.detachCam")}</button>
+              <button className={commandBtn(commandSupported("toggle-earbuds"), viewerState.earbudsOut)} disabled={!commandSupported("toggle-earbuds")} onClick={() => sendViewerCommand("toggle-earbuds")}>{viewerState.earbudsOut ? td("advanced.earbudsIn") : td("advanced.earbudsOut")}</button>
+              <button className={commandBtn(commandSupported("toggle-dream"), viewerState.dreamOn)} disabled={!commandSupported("toggle-dream")} onClick={() => sendViewerCommand("toggle-dream")}>{viewerState.dreamOn ? td("advanced.dreamOn") : td("advanced.dreamOff")}</button>
+              <button className={commandBtn(commandSupported("toggle-spin"), viewerState.autoSpin)} disabled={!commandSupported("toggle-spin")} onClick={() => sendViewerCommand("toggle-spin")}>{viewerState.autoSpin ? td("advanced.spinOn") : td("advanced.spinOff")}</button>
+              <button className={commandBtn(commandSupported("toggle-explode"), viewerState.exploded)} disabled={!commandSupported("toggle-explode")} onClick={() => sendViewerCommand("toggle-explode")}>{viewerState.exploded ? td("advanced.explodedOn") : td("advanced.explodedOff")}</button>
+              <button className={commandBtn(commandSupported("toggle-xray"), viewerState.xrayOn)} disabled={!commandSupported("toggle-xray")} onClick={() => sendViewerCommand("toggle-xray")}>{viewerState.xrayOn ? td("advanced.xrayOn") : td("advanced.xrayOff")}</button>
+              <button className={commandBtn(commandSupported("toggle-night"), viewerState.nightOn)} disabled={!commandSupported("toggle-night")} onClick={() => sendViewerCommand("toggle-night")}>{viewerState.nightOn ? td("advanced.nightOn") : td("advanced.nightOff")}</button>
+            </div>
+          </div>
+
+          {/* Views */}
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">{td("advanced.viewSection")}</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{td("advanced.viewSectionDesc")}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <button className={commandBtn(commandSupported("reset-view"))} disabled={!commandSupported("reset-view")} onClick={() => sendViewerCommand("reset-view")}>{td("advanced.resetView")}</button>
+              <button className={commandBtn(commandSupported("focus-front-view"))} disabled={!commandSupported("focus-front-view")} onClick={() => sendViewerCommand("focus-front-view")}>{td("advanced.frontView")}</button>
+              <button className={commandBtn(commandSupported("focus-rear-view"))} disabled={!commandSupported("focus-rear-view")} onClick={() => sendViewerCommand("focus-rear-view")}>{td("advanced.rearView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-view"))} disabled={!commandSupported("focus-pivot-view")} onClick={() => sendViewerCommand("focus-pivot-view")}>{td("advanced.pivotView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-front-view"))} disabled={!commandSupported("focus-pivot-front-view")} onClick={() => sendViewerCommand("focus-pivot-front-view")}>{td("advanced.pivotFrontView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-rear-view"))} disabled={!commandSupported("focus-pivot-rear-view")} onClick={() => sendViewerCommand("focus-pivot-rear-view")}>{td("advanced.pivotRearView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-rear-corner-view"))} disabled={!commandSupported("focus-pivot-rear-corner-view")} onClick={() => sendViewerCommand("focus-pivot-rear-corner-view")}>{td("advanced.rearCornerView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-xray-view"))} disabled={!commandSupported("focus-pivot-xray-view")} onClick={() => sendViewerCommand("focus-pivot-xray-view")}>{td("advanced.pivotXrayView")}</button>
+              <button className={commandBtn(commandSupported("focus-pivot-inspect-view"))} disabled={!commandSupported("focus-pivot-inspect-view")} onClick={() => sendViewerCommand("focus-pivot-inspect-view")}>{td("advanced.inspectFocus")}</button>
+              <button className={commandBtn(commandSupported("focus-ear-left-view"))} disabled={!commandSupported("focus-ear-left-view")} onClick={() => sendViewerCommand("focus-ear-left-view")}>{td("advanced.earLeftView")}</button>
+              <button className={commandBtn(commandSupported("focus-ear-right-view"))} disabled={!commandSupported("focus-ear-right-view")} onClick={() => sendViewerCommand("focus-ear-right-view")}>{td("advanced.earRightView")}</button>
+              <button className={commandBtn(commandSupported("focus-ear-dock-view"))} disabled={!commandSupported("focus-ear-dock-view")} onClick={() => sendViewerCommand("focus-ear-dock-view")}>{td("advanced.earDockView")}</button>
+              <button className={commandBtn(commandSupported("toggle-earbud-xray"), viewerState.xrayOn)} disabled={!commandSupported("toggle-earbud-xray")} onClick={() => sendViewerCommand("toggle-earbud-xray")}>{td("advanced.earbudXray")}</button>
+              <button className={commandBtn(commandSupported("toggle-pivot-inspect"), viewerState.pivotInspectActive)} disabled={!commandSupported("toggle-pivot-inspect")} onClick={() => sendViewerCommand("toggle-pivot-inspect")}>{viewerState.pivotInspectActive ? td("advanced.pivotInspectOn") : td("advanced.pivotInspectOff")}</button>
+              <button className={commandBtn(commandSupported("toggle-pivot-explode"), viewerState.pivotExplodeActive)} disabled={!commandSupported("toggle-pivot-explode")} onClick={() => sendViewerCommand("toggle-pivot-explode")}>{viewerState.pivotExplodeActive ? td("advanced.pivotExplodeOn") : td("advanced.pivotExplodeOff")}</button>
+            </div>
+          </div>
+
+          {/* Modes */}
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">{td("advanced.modeSection")}</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{td("advanced.modeSectionDesc")}</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="block text-xs text-[var(--text-secondary)]">
+                {td("advanced.modeLabel")}
+                <select className={selectClass} value={viewerState.mode} onChange={(e) => patchViewerState({ mode: e.target.value as ViewerMode })}>
+                  <option value="offline">{td("status.offline")}</option>
+                  <option value="online">{td("status.online")}</option>
+                  <option value="hybrid">{td("status.hybrid")}</option>
+                </select>
+              </label>
+              <label className="block text-xs text-[var(--text-secondary)]">
+                {td("advanced.caseModeLabel")}
+                <select className={selectClass} value={viewerState.caseMode} onChange={(e) => patchViewerState({ case_mode: e.target.value as ViewerCaseMode })}>
+                  <option value="commute_mode">{td("caseMode.commute")}</option>
+                  <option value="office_mode">{td("caseMode.office")}</option>
+                  <option value="silent_privacy_mode">{td("caseMode.silentPrivacy")}</option>
+                </select>
+              </label>
+              <label className="block text-xs text-[var(--text-secondary)]">
+                {td("advanced.layerLabel")}
+                <select className={selectClass} value={viewerState.layer} onChange={(e) => patchViewerState({ layer: clampLayer(Number(e.target.value)) })}>
+                  <option value={1}>L1</option>
+                  <option value={2}>L2</option>
+                  <option value={3}>L3</option>
+                  <option value={4}>L4</option>
+                </select>
+              </label>
+              <label className="block text-xs text-[var(--text-secondary)]">
+                {td("advanced.colorwayLabel")}
+                <select className={selectClass} value={viewerState.colorway} onChange={(e) => patchViewerState({ colorway: e.target.value as ViewerColorway })}>
+                  <option value="pearl">{td("colorway.pearl")}</option>
+                  <option value="graphite">{td("colorway.graphite")}</option>
+                  <option value="glacier">{td("colorway.glacier")}</option>
+                </select>
+              </label>
+              <label className="block text-xs text-[var(--text-secondary)]">
+                {td("advanced.pivotSideLabel")}
+                <select className={selectClass} value={viewerState.pivotSwingSide} onChange={(e) => patchViewerState({ pivot_swing_side: e.target.value as ViewerPivotSide })}>
+                  <option value="left">{td("side.left")}</option>
+                  <option value="right">{td("side.right")}</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <button className={commandBtn(true, viewerState.privacyLockHw)} onClick={() => patchViewerState({ privacy_lock_hw: !viewerState.privacyLockHw })}>{viewerState.privacyLockHw ? td("advanced.privacyOff") : td("advanced.privacyOn")}</button>
+              <button className={commandBtn(true, viewerState.caseMode === "silent_privacy_mode")} onClick={() => patchViewerState({ case_mode: viewerState.caseMode === "silent_privacy_mode" ? "office_mode" : "silent_privacy_mode" })}>{viewerState.caseMode === "silent_privacy_mode" ? td("advanced.silentPrivacyOn") : td("advanced.silentPrivacyOff")}</button>
+            </div>
+          </div>
+
+          {/* Export */}
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">{td("advanced.exportSection")}</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{td("advanced.exportSectionDesc")}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <button className={commandBtn(canSyncViewerState, viewerState.pivotPlugReady || viewerState.pivotPlugInserted)} disabled={!canSyncViewerState} onClick={() => patchViewerState(viewerState.pivotPlugReady || viewerState.pivotPlugInserted ? { pivot_plug_ready: false } : { pivot_plug_ready: true })}>{pivotPlugActionLabel}</button>
+              <button className={commandBtn(commandSupported("toggle-task"))} disabled={!commandSupported("toggle-task")} onClick={() => sendViewerCommand("toggle-task")}>{td("advanced.taskToggle")}</button>
+              <button className={commandBtn(commandSupported("cycle-mode"))} disabled={!commandSupported("cycle-mode")} onClick={() => sendViewerCommand("cycle-mode")}>{td("advanced.cycleMode")}</button>
+              <button className={commandBtn(commandSupported("cycle-layer"))} disabled={!commandSupported("cycle-layer")} onClick={() => sendViewerCommand("cycle-layer")}>{td("advanced.cycleLayer")}</button>
+              <button className={commandBtn(commandSupported("export-glb"))} disabled={!commandSupported("export-glb")} onClick={() => sendViewerCommand("export-glb")}>{td("advanced.exportGlb")}</button>
+              <button className={commandBtn(commandSupported("export-stl-pack"))} disabled={!commandSupported("export-stl-pack")} onClick={() => sendViewerCommand("export-stl-pack")}>{td("advanced.exportStl")}</button>
+            </div>
+            <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-raised)] px-4 py-3">
+              <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
+                <span>{td("advanced.capSliderLabel")}</span>
+                <span>{Math.round(viewerState.pivotPlugSlideT * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                aria-label={td("advanced.capSliderLabel")}
+                value={Math.round(viewerState.pivotPlugSlideT * 100)}
+                disabled={!canSyncViewerState || !viewerState.pivotPlugReady || viewerState.pivotPlugAnimating}
+                onChange={(event) => patchViewerState({ pivot_plug_slide_t: Number(event.target.value) / 100 })}
+                className="mt-2 w-full accent-[var(--brand-v2)] disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">{td("advanced.capSliderHint")}</p>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      {/* ── Diagnostics (collapsed) ── */}
+      <details className="mt-4 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)]">
+        <summary className="cursor-pointer select-none px-6 py-5">
+          <h2 className="inline text-base font-semibold text-[var(--text-primary)]">
+            <span className="mr-3 text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">{td("diag.kicker")}</span>
+            {td("diag.title")}
+          </h2>
+        </summary>
+
+        <div className="border-t border-[var(--border)] px-6 py-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] p-4">
+              <div className="text-xs text-[var(--text-secondary)]">{td("diag.caseMode")}</div>
+              <div className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{viewerState.caseMode}</div>
+            </div>
+            <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] p-4">
+              <div className="text-xs text-[var(--text-secondary)]">{td("diag.pivotPlug")}</div>
+              <div className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{pivotPlugStatusLabel}</div>
+            </div>
+            <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] p-4">
+              <div className="text-xs text-[var(--text-secondary)]">{td("diag.latency")}</div>
+              <div className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{viewerState.e2eMs.toFixed(1)}ms</div>
+            </div>
+            <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-base)] p-4">
+              <div className="text-xs text-[var(--text-secondary)]">{td("diag.model")}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-[var(--text-primary)]">{viewerState.statusText}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-1">
+            {diagnosticItems.map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between rounded-[var(--radius-sm)] px-3 py-2 text-sm odd:bg-[var(--bg-raised)]">
+                <span className="text-[var(--text-secondary)]">{label}</span>
+                <span className="font-medium text-[var(--text-primary)]">{value}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] px-3 py-2 text-sm odd:bg-[var(--bg-raised)]">
+              <span className="text-[var(--text-secondary)]">{td("diag.selectedImage")}</span>
+              <span className="font-medium text-[var(--text-primary)]">{file ? file.name : td("metric.noImage")}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] px-3 py-2 text-sm odd:bg-[var(--bg-raised)]">
+              <span className="text-[var(--text-secondary)]">{td("diag.pocketGuard")}</span>
+              <span className="font-medium text-[var(--text-primary)]">{viewerState.pocketGuardActive ? td("diag.pocketActive") : td("diag.pocketInactive")}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] px-3 py-2 text-sm odd:bg-[var(--bg-raised)]">
+              <span className="text-[var(--text-secondary)]">{td("diag.contact")}</span>
+              <span className="font-medium text-[var(--text-primary)]">L {viewerState.earbudContactEngagedL ? "YES" : "NO"} / R {viewerState.earbudContactEngagedR ? "YES" : "NO"}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-[var(--radius-sm)] px-3 py-2 text-sm odd:bg-[var(--bg-raised)]">
+              <span className="text-[var(--text-secondary)]">{td("diag.lateralJitter")}</span>
+              <span className="font-medium text-[var(--text-primary)]">{viewerState.closedLateralJitterMm.toFixed(3)}mm</span>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
   );
 }

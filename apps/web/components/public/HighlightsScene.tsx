@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { gsap, ScrollTrigger } from "@/lib/gsap-register";
+import { gsap } from "@/lib/gsap-register";
 
 interface HighlightsSceneProps {
   eyebrow: string;

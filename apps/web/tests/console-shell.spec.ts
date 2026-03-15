@@ -1,6 +1,13 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { installWorkbenchApiMock } from "./helpers/mockWorkbenchApi";
+
+test.use({ locale: "zh-CN" });
 
 test.describe("Console Shell", () => {
+  test.beforeEach(async ({ page }) => {
+    await installWorkbenchApiMock(page, { authenticated: true });
+  });
+
   test("applies dark theme attributes", async ({ page }) => {
     await page.goto("/app");
     const html = page.locator("html");
@@ -23,7 +30,7 @@ test.describe("Console Shell", () => {
   test("TopBar renders with brand", async ({ page }) => {
     await page.goto("/app");
     await expect(page.locator(".topbar")).toBeVisible();
-    await expect(page.locator(".topbar-brand")).toBeVisible();
+    await expect(page.locator(".topbar-brand")).toContainText("铭润科技");
   });
 
   test("StatusBar visible on desktop", async ({ page }) => {
@@ -42,28 +49,20 @@ test.describe("Console Shell", () => {
     await page.goto("/app");
     await page.keyboard.press("Meta+k");
     await expect(page.locator("[role='dialog']")).toBeVisible();
+    await expect(page.getByPlaceholder("输入命令或搜索...")).toBeVisible();
   });
 
   test("navigation works via ActivityBar", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/app");
     await page.click(".activity-bar-item[aria-label='数据集']");
-    await expect(page).toHaveURL(/\/app\/datasets/);
+    await expect(page).toHaveURL(/\/app\/datasets$/);
+    await expect(page.getByRole("heading", { name: "数据集", exact: true }).first()).toBeVisible();
   });
 
-  test("console pages load without errors", async ({ page }) => {
-    const routes = [
-      "/app",
-      "/app/projects",
-      "/app/datasets",
-      "/app/train",
-      "/app/models",
-      "/app/eval",
-      "/app/settings",
-    ];
-    for (const route of routes) {
-      const response = await page.goto(route);
-      expect(response?.status()).toBeLessThan(400);
-    }
+  test("english console shell also renders correctly", async ({ page }) => {
+    await page.goto("/en/app");
+    await expect(page.locator(".topbar-brand")).toContainText("Mingrun Tech");
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   });
 });

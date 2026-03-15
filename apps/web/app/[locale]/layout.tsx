@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
-import { getLocale, getMessages, getTranslations } from "next-intl/server";
+import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { Providers } from "@/components/providers";
@@ -24,8 +24,19 @@ export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
 }
 
-export async function generateMetadata(): Promise<Metadata> {
-  const locale = await getLocale();
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  const localeKey = locale as (typeof routing.locales)[number];
+
+  if (!routing.locales.includes(localeKey)) {
+    notFound();
+  }
+
+  setRequestLocale(localeKey);
   const t = await getTranslations("common");
   const th = await getTranslations("home");
   return {
@@ -35,7 +46,7 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     description: th("meta.description"),
     openGraph: {
-      locale: locale === "zh" ? "zh_CN" : "en_US",
+      locale: localeKey === "zh" ? "zh_CN" : "en_US",
     },
     alternates: {
       languages: {
@@ -54,15 +65,17 @@ export default async function LocaleLayout({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  const localeKey = locale as (typeof routing.locales)[number];
 
-  if (!routing.locales.includes(locale as any)) {
+  if (!routing.locales.includes(localeKey)) {
     notFound();
   }
 
+  setRequestLocale(localeKey);
   const messages = await getMessages();
 
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={localeKey} suppressHydrationWarning>
       <body className={`${inter.variable} ${jetbrainsMono.variable}`}>
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>

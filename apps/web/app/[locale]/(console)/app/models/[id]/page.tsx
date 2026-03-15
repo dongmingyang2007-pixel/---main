@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { DataTable } from "@/components/DataTable";
@@ -42,7 +42,7 @@ export default function ModelDetailPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const t = useTranslations("console-models");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const detail = await apiGet<{ model: { id: string; name: string }; aliases: Alias[] }>(`/api/v1/models/${modelId}`);
     const versionData = await apiGet<{ items: Version[] }>(`/api/v1/models/${modelId}/versions`);
     setModelName(detail.model.name);
@@ -51,12 +51,12 @@ export default function ModelDetailPage() {
     if (!aliasVersionId && versionData.items?.length) {
       setAliasVersionId(versionData.items[0].id);
     }
-  };
+  }, [aliasVersionId, modelId]);
 
   useEffect(() => {
     if (!modelId) return;
     void load();
-  }, [modelId]);
+  }, [load, modelId]);
 
   const uploadManagedArtifact = async (file: File): Promise<string> => {
     setArtifactStatus(t("detail.presigning"));

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { ViewerWindow } from "./helpers/viewer-runtime";
 
 const DEMO_PATH = "/demo";
 const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
@@ -44,7 +45,7 @@ async function viewerGetState(page: Page): Promise<ViewerState> {
     }
     try {
       return await frame.evaluate(() => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         return (win?.QIHANG_MODEL?.getState?.() || {}) as ViewerState;
       });
     } catch {
@@ -63,7 +64,7 @@ async function viewerSetState(page: Page, patch: Record<string, unknown>): Promi
     }
     try {
       await frame.evaluate((statePatch) => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         win?.QIHANG_MODEL?.setState?.(statePatch);
       }, patch);
       return;
@@ -91,7 +92,7 @@ async function setPocketPose(page: Page): Promise<void> {
   const frame = await getViewerFrame(page);
   expect(frame).not.toBeNull();
   await frame!.evaluate(() => {
-    const dbg = (window as any).__QIHANG_DEBUG;
+    const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
     if (dbg?.product) {
       dbg.product.rotation.x = 1.25;
       dbg.product.rotation.z = 1.22;

@@ -1,11 +1,19 @@
-import { getTranslations } from "next-intl/server";
+import { getTranslations, setRequestLocale } from "next-intl/server";
 import { HeroScene } from "@/components/public/HeroScene";
 import { HighlightsScene } from "@/components/public/HighlightsScene";
 import { EcosystemPreview } from "@/components/public/EcosystemPreview";
 import { CraftScene } from "@/components/public/CraftScene";
 import { CTAScene } from "@/components/public/CTAScene";
+import { routing } from "@/i18n/routing";
 
-export async function generateMetadata() {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  const localeKey = locale as (typeof routing.locales)[number];
+  setRequestLocale(localeKey);
   const t = await getTranslations("home");
   return {
     title: t("meta.title"),
@@ -19,7 +27,14 @@ export async function generateMetadata() {
   };
 }
 
-export default async function HomePage() {
+export default async function HomePage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  const localeKey = locale as (typeof routing.locales)[number];
+  setRequestLocale(localeKey);
   const t = await getTranslations("home");
 
   return (

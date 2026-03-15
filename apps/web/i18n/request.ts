@@ -23,8 +23,52 @@ const NAMESPACES = [
   "console-billing",
 ] as const;
 
-type MessageValue = string | number | boolean | null | MessageValue[] | MessageObject;
-type MessageObject = Record<string, MessageValue>;
+const MESSAGE_LOADERS = {
+  zh: {
+    common: () => import("../messages/zh/common.json"),
+    home: () => import("../messages/zh/home.json"),
+    product: () => import("../messages/zh/product.json"),
+    ecosystem: () => import("../messages/zh/ecosystem.json"),
+    demo: () => import("../messages/zh/demo.json"),
+    pricing: () => import("../messages/zh/pricing.json"),
+    support: () => import("../messages/zh/support.json"),
+    updates: () => import("../messages/zh/updates.json"),
+    auth: () => import("../messages/zh/auth.json"),
+    error: () => import("../messages/zh/error.json"),
+    console: () => import("../messages/zh/console.json"),
+    "console-projects": () => import("../messages/zh/console-projects.json"),
+    "console-datasets": () => import("../messages/zh/console-datasets.json"),
+    "console-train": () => import("../messages/zh/console-train.json"),
+    "console-models": () => import("../messages/zh/console-models.json"),
+    "console-eval": () => import("../messages/zh/console-eval.json"),
+    "console-settings": () => import("../messages/zh/console-settings.json"),
+    "console-devices": () => import("../messages/zh/console-devices.json"),
+    "console-billing": () => import("../messages/zh/console-billing.json"),
+  },
+  en: {
+    common: () => import("../messages/en/common.json"),
+    home: () => import("../messages/en/home.json"),
+    product: () => import("../messages/en/product.json"),
+    ecosystem: () => import("../messages/en/ecosystem.json"),
+    demo: () => import("../messages/en/demo.json"),
+    pricing: () => import("../messages/en/pricing.json"),
+    support: () => import("../messages/en/support.json"),
+    updates: () => import("../messages/en/updates.json"),
+    auth: () => import("../messages/en/auth.json"),
+    error: () => import("../messages/en/error.json"),
+    console: () => import("../messages/en/console.json"),
+    "console-projects": () => import("../messages/en/console-projects.json"),
+    "console-datasets": () => import("../messages/en/console-datasets.json"),
+    "console-train": () => import("../messages/en/console-train.json"),
+    "console-models": () => import("../messages/en/console-models.json"),
+    "console-eval": () => import("../messages/en/console-eval.json"),
+    "console-settings": () => import("../messages/en/console-settings.json"),
+    "console-devices": () => import("../messages/en/console-devices.json"),
+    "console-billing": () => import("../messages/en/console-billing.json"),
+  },
+} as const;
+
+type MessageObject = Record<string, unknown>;
 
 function isMessageObject(value: unknown): value is MessageObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -74,14 +118,15 @@ function expandDotKeys(messages: MessageObject): MessageObject {
 }
 
 export default getRequestConfig(async ({ requestLocale }) => {
-  let locale = await requestLocale;
-  if (!locale || !routing.locales.includes(locale as any)) {
-    locale = routing.defaultLocale;
-  }
+  const requestLocaleValue = await requestLocale;
+  const localeKey = requestLocaleValue as (typeof routing.locales)[number] | undefined;
+  const locale = localeKey && routing.locales.includes(localeKey)
+    ? localeKey
+    : routing.defaultLocale;
 
   const entries = await Promise.all(
     NAMESPACES.map(async (ns) => {
-      const mod = await import(`../messages/${locale}/${ns}.json`);
+      const mod = await MESSAGE_LOADERS[locale][ns]();
       return [ns, expandDotKeys(mod.default as MessageObject)] as const;
     }),
   );

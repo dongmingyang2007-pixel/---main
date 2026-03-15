@@ -1,4 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import type {
+  ViewerObject3D,
+  ViewerWindow,
+} from "./helpers/viewer-runtime";
 
 const DEMO_PATH = "/demo";
 const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
@@ -57,17 +61,17 @@ test("procedural fallback remains visible and reports manufacturable state", asy
     }
     try {
       const current = (await activeFrame.evaluate(() => {
-        const win = window as any;
+        const win = window as unknown as ViewerWindow;
         const dbg = win?.__QIHANG_DEBUG;
         const state = win?.QIHANG_MODEL?.getState?.() || {};
 
         const leftRoot = dbg?.product?.getObjectByName("Earbud_Left");
         const rightRoot = dbg?.product?.getObjectByName("Earbud_Right");
 
-        const countMeshes = (node: any) => {
+        const countMeshes = (node: ViewerObject3D | null | undefined) => {
           if (!node) return 0;
           let count = 0;
-          node.traverse((child: any) => {
+          node.traverse((child: ViewerObject3D) => {
             if (child?.isMesh) count += 1;
           });
           return count;
