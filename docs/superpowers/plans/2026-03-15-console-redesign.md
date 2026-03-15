@@ -1116,7 +1116,71 @@ Create remaining message files:
 }
 ```
 
-- [ ] **Step 3: Create placeholder pages for remaining new routes**
+- [ ] **Step 3: Register new i18n namespaces**
+
+In `apps/web/i18n/request.ts`, add the new message namespaces to the `NAMESPACES` array and `MESSAGE_LOADERS` map (follow existing pattern for `console-projects`, etc.):
+
+```typescript
+// Add to NAMESPACES array:
+"console-assistants",
+"console-knowledge",
+"console-training",
+"console-chat",
+
+// Add to MESSAGE_LOADERS map:
+"console-assistants": (locale: string) => import(`@/messages/${locale}/console-assistants.json`),
+"console-knowledge": (locale: string) => import(`@/messages/${locale}/console-knowledge.json`),
+"console-training": (locale: string) => import(`@/messages/${locale}/console-training.json`),
+"console-chat": (locale: string) => import(`@/messages/${locale}/console-chat.json`),
+```
+
+- [ ] **Step 4: Create developer mode utility (prerequisite for later tasks)**
+
+Create `apps/web/lib/developer-mode.ts` now so canvas cards can use it in Task 8:
+
+```typescript
+// apps/web/lib/developer-mode.ts
+"use client";
+
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+
+interface DevModeContextType {
+  isDeveloperMode: boolean;
+  toggleDeveloperMode: () => void;
+}
+
+const DevModeContext = createContext<DevModeContextType>({
+  isDeveloperMode: false,
+  toggleDeveloperMode: () => {},
+});
+
+export function DevModeProvider({ children }: { children: ReactNode }) {
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("developer-mode");
+    if (saved === "true") setIsDeveloperMode(true);
+  }, []);
+
+  const toggleDeveloperMode = () => {
+    const next = !isDeveloperMode;
+    setIsDeveloperMode(next);
+    localStorage.setItem("developer-mode", String(next));
+  };
+
+  return (
+    <DevModeContext.Provider value={{ isDeveloperMode, toggleDeveloperMode }}>
+      {children}
+    </DevModeContext.Provider>
+  );
+}
+
+export const useDeveloperMode = () => useContext(DevModeContext);
+```
+
+Add `<DevModeProvider>` to `apps/web/app/[locale]/(console)/layout.tsx` wrapping children.
+
+- [ ] **Step 5: Create placeholder pages for remaining new routes**
 
 Create minimal page components for each new route that render a PageTransition with title. These will be fully implemented in later tasks:
 - `/app/assistants/new/page.tsx` — "创建向导 (coming in Task 7)"
@@ -1144,7 +1208,7 @@ export default function PlaceholderPage() {
 }
 ```
 
-- [ ] **Step 4: Add route redirects in proxy.ts**
+- [ ] **Step 6: Add route redirects in proxy.ts**
 
 In `apps/web/proxy.ts`, add old → new route redirects before the `NextResponse.next()` call:
 
@@ -1178,7 +1242,7 @@ if (strippedPath === "/app" || strippedPath === "/app/") {
 }
 ```
 
-- [ ] **Step 5: Add CSS for assistant cards and page header**
+- [ ] **Step 7: Add CSS for assistant cards and page header**
 
 Add to `apps/web/styles/globals.css`:
 
@@ -1261,17 +1325,17 @@ Add to `apps/web/styles/globals.css`:
 }
 ```
 
-- [ ] **Step 6: Verify route redirects work**
+- [ ] **Step 8: Verify route redirects work**
 
 Run: `cd apps/web && npm run dev`
 - Visit http://localhost:3000/zh/app/projects → should redirect to /zh/app/assistants
 - Visit http://localhost:3000/zh/app/datasets → should redirect to /zh/app/knowledge
 - Visit http://localhost:3000/zh/app → should redirect to /zh/app/assistants
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add apps/web/app/[locale]/(console)/app/assistants/ apps/web/app/[locale]/(console)/app/knowledge/ apps/web/app/[locale]/(console)/app/training/ apps/web/app/[locale]/(console)/app/chat/ apps/web/messages/ apps/web/proxy.ts apps/web/styles/globals.css
+git add apps/web/app/[locale]/(console)/app/assistants/ apps/web/app/[locale]/(console)/app/knowledge/ apps/web/app/[locale]/(console)/app/training/ apps/web/app/[locale]/(console)/app/chat/ apps/web/messages/ apps/web/proxy.ts apps/web/styles/globals.css apps/web/i18n/request.ts apps/web/lib/developer-mode.ts apps/web/app/[locale]/(console)/layout.tsx
 git commit -m "feat(console): create new route structure with redirects from old paths"
 ```
 
@@ -1844,66 +1908,23 @@ git commit -m "feat(console): add version history and comparison page"
 
 ---
 
-### Task 13: Update Settings Page (Developer Mode + Billing Merge)
+### Task 13: Update Settings Page (Developer Mode Toggle + Billing Merge)
 
 **Files:**
 - Modify: `apps/web/app/[locale]/(console)/app/settings/page.tsx`
-- Create: `apps/web/lib/developer-mode.ts`
 
-- [ ] **Step 1: Create developer mode context**
+Note: `apps/web/lib/developer-mode.ts` and the `<DevModeProvider>` wrapper were already created in Task 6 Step 4.
 
-```typescript
-// apps/web/lib/developer-mode.ts
-"use client";
+- [ ] **Step 1: Rewrite settings page**
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+Sections: Account, Language, Developer Mode toggle (using `useDeveloperMode()` from `@/lib/developer-mode`), Subscription/Usage (ported from billing page), Logout, Delete Data.
 
-interface DevModeContextType {
-  isDeveloperMode: boolean;
-  toggleDeveloperMode: () => void;
-}
+The Developer Mode toggle should be a prominent switch with explanation text: "开发者模式显示底层技术细节，如 ID、参数 JSON 和 API 响应。"
 
-const DevModeContext = createContext<DevModeContextType>({
-  isDeveloperMode: false,
-  toggleDeveloperMode: () => {},
-});
-
-export function DevModeProvider({ children }: { children: ReactNode }) {
-  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("developer-mode");
-    if (saved === "true") setIsDeveloperMode(true);
-  }, []);
-
-  const toggleDeveloperMode = () => {
-    const next = !isDeveloperMode;
-    setIsDeveloperMode(next);
-    localStorage.setItem("developer-mode", String(next));
-  };
-
-  return (
-    <DevModeContext.Provider value={{ isDeveloperMode, toggleDeveloperMode }}>
-      {children}
-    </DevModeContext.Provider>
-  );
-}
-
-export const useDeveloperMode = () => useContext(DevModeContext);
-```
-
-- [ ] **Step 2: Add DevModeProvider to console layout**
-
-Wrap console layout children with `<DevModeProvider>`.
-
-- [ ] **Step 3: Rewrite settings page**
-
-Sections: Account, Language, Developer Mode toggle, Subscription/Usage (from billing), Logout, Delete Data.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-git add apps/web/lib/developer-mode.ts apps/web/app/[locale]/(console)/layout.tsx apps/web/app/[locale]/(console)/app/settings/page.tsx apps/web/messages/
+git add apps/web/app/[locale]/(console)/app/settings/page.tsx apps/web/messages/
 git commit -m "feat(console): add developer mode toggle and merge billing into settings"
 ```
 
@@ -1978,16 +1999,20 @@ Remove old page files. The proxy.ts redirects handle any bookmarked URLs.
 
 Remove ActivityBar.tsx and InlineTopBar.tsx. Keep PanelLayout.tsx in case it's useful for advanced views.
 
-- [ ] **Step 3: Remove old CSS classes that are no longer referenced**
+- [ ] **Step 3: Remove old i18n namespaces and message files**
+
+In `apps/web/i18n/request.ts`, remove old namespace registrations: `console-projects`, `console-datasets`, `console-train`, `console-models`, `console-eval`, `console-billing`. Delete corresponding message JSON files from both `messages/zh/` and `messages/en/`.
+
+- [ ] **Step 4: Remove old CSS classes that are no longer referenced**
 
 Clean up `.activity-bar-*`, `.inline-topbar-*` classes from globals.css.
 
-- [ ] **Step 4: Run full build to verify no broken imports**
+- [ ] **Step 5: Run full build to verify no broken imports**
 
 Run: `cd apps/web && npm run build`
 Expected: Build succeeds with no missing module errors.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A
