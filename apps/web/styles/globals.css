@@ -137,28 +137,51 @@
   --radius: var(--radius-md);
 }
 
-/* ── Console dark tokens (Deep Slate) ──────────── */
+/* ── Console warm cream tokens ─────────────────── */
 [data-theme="console"] {
-  --bg-base: #020617;
-  --bg-surface: #0f172a;
-  --bg-raised: #1e293b;
-  --border: #334155;
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --brand-v2: #0f76ff;
-  --brand-soft: rgba(15, 118, 255, 0.13);
-  --success-v2: #4ade80;
-  --warning-v2: #fbbf24;
-  --error: #f87171;
+  --bg-base: #f5f0eb;
+  --bg-surface: #faf7f4;
+  --bg-card: #ffffff;
+  --bg-raised: #ffffff;
+  --border: #e8e0d8;
+  --border-light: #ede6de;
+  --accent: #c8734a;
+  --accent-gradient: linear-gradient(135deg, #c8734a, #e8925a);
+  --accent-soft: rgba(200, 115, 74, 0.1);
+  --text-primary: #2a2018;
+  --text-secondary: #9a8a7a;
+  --text-muted: #b0a090;
+  --success: #2a8a5a;
+  --success-soft: rgba(42, 138, 90, 0.08);
+  --warning: #d4923a;
+  --warning-soft: rgba(212, 146, 58, 0.1);
+  --error: #c44a4a;
+  --error-soft: rgba(196, 74, 74, 0.08);
+
+  /* Radii */
+  --radius-card: 14px;
+  --radius-button: 9px;
+  --radius-badge: 6px;
+  --radius-input: 10px;
+
+  /* Shadows (warm-toned) */
+  --shadow-card: 0 2px 8px rgba(42, 32, 24, 0.04);
+  --shadow-raised: 0 4px 16px rgba(42, 32, 24, 0.08);
+  --shadow-dialog: 0 8px 32px rgba(42, 32, 24, 0.12);
+
+  /* Typography */
+  --font-title: var(--font-dm-sans), "PingFang SC", "Noto Sans SC", sans-serif;
+  --font-body: "PingFang SC", "Noto Sans SC", -apple-system, sans-serif;
+  --font-mono: var(--font-mono), "JetBrains Mono", monospace;
 
   /* shadcn bridge overrides */
   --background: var(--bg-base);
   --foreground: var(--text-primary);
-  --card: var(--bg-surface);
+  --card: var(--bg-card);
   --card-foreground: var(--text-primary);
-  --popover: var(--bg-surface);
+  --popover: var(--bg-card);
   --popover-foreground: var(--text-primary);
-  --primary: var(--brand-v2);
+  --primary: var(--accent);
   --primary-foreground: #ffffff;
   --secondary: var(--bg-raised);
   --secondary-foreground: var(--text-primary);
@@ -168,7 +191,7 @@
   --accent-foreground: var(--text-primary);
   --destructive: var(--error);
   --destructive-foreground: #ffffff;
-  --ring: var(--brand-v2);
+  --ring: var(--accent);
   --input: var(--border);
 }
 
@@ -1721,8 +1744,8 @@ button {
 .console-nav-link:hover,
 .console-nav-link[aria-current="page"] {
   color: var(--text-primary);
-  border-color: var(--brand-soft);
-  background: var(--brand-soft);
+  border-color: var(--accent-soft, var(--brand-soft));
+  background: var(--accent-soft, var(--brand-soft));
 }
 
 .console-main {
@@ -1894,8 +1917,8 @@ button {
 
 .console-button {
   color: white;
-  background: var(--brand-v2);
-  box-shadow: 0 18px 34px rgba(15, 118, 255, 0.2);
+  background: var(--accent, var(--brand-v2));
+  box-shadow: 0 18px 34px rgba(200, 115, 74, 0.2);
   transition:
     transform 0.3s var(--ease-spring),
     box-shadow 0.3s var(--ease-spring);
@@ -1903,7 +1926,7 @@ button {
 
 .console-button:hover {
   transform: translateY(-2px);
-  box-shadow: 0 22px 40px rgba(15, 118, 255, 0.28);
+  box-shadow: 0 22px 40px rgba(200, 115, 74, 0.28);
 }
 
 .console-button:active {
@@ -1929,8 +1952,8 @@ button {
 
 .console-button-danger {
   color: white;
-  background: linear-gradient(135deg, #df4e70, #b31b41);
-  box-shadow: 0 16px 32px rgba(179, 27, 65, 0.18);
+  background: var(--error, #c44a4a);
+  box-shadow: 0 16px 32px rgba(196, 74, 74, 0.18);
 }
 
 .console-pill {
@@ -1946,19 +1969,19 @@ button {
 .console-inline-notice {
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid var(--brand-soft);
-  background: var(--brand-soft);
+  border: 1px solid var(--accent-soft, var(--brand-soft));
+  background: var(--accent-soft, var(--brand-soft));
   color: var(--text-primary);
 }
 
 .console-inline-notice.is-error {
-  border-color: rgba(209, 58, 93, 0.18);
-  background: rgba(209, 58, 93, 0.08);
+  border-color: var(--error-soft, rgba(196, 74, 74, 0.18));
+  background: var(--error-soft, rgba(196, 74, 74, 0.08));
 }
 
 .console-inline-notice.is-success {
-  border-color: rgba(15, 154, 119, 0.18);
-  background: rgba(15, 154, 119, 0.08);
+  border-color: var(--success-soft, rgba(42, 138, 90, 0.18));
+  background: var(--success-soft, rgba(42, 138, 90, 0.08));
 }
 
 .console-empty {
@@ -1973,13 +1996,14 @@ button {
 .console-code {
   padding: 16px;
   border-radius: 20px;
-  background: rgba(8, 16, 29, 0.96);
-  color: #d7e6ff;
+  background: var(--bg-raised, rgba(8, 16, 29, 0.96));
+  color: var(--text-primary, #d7e6ff);
   overflow: auto;
+  border: 1px solid var(--border, transparent);
 }
 
 .console-link {
-  color: var(--brand-v2);
+  color: var(--accent, var(--brand-v2));
   font-weight: 600;
 }
 
@@ -2006,7 +2030,7 @@ button {
 
 .console-key-value {
   margin-top: 8px;
-  color: var(--fg);
+  color: var(--text-primary);
   font-size: 0.95rem;
   line-height: 1.6;
 }
@@ -2019,9 +2043,9 @@ button {
 .console-note-item {
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(8, 17, 31, 0.08);
-  background: rgba(255, 255, 255, 0.64);
-  color: var(--muted);
+  border: 1px solid var(--border, rgba(8, 17, 31, 0.08));
+  background: var(--bg-card, rgba(255, 255, 255, 0.64));
+  color: var(--text-secondary);
   line-height: 1.65;
 }
 
@@ -2030,8 +2054,8 @@ button {
 }
 
 .console-panel thead tr {
-  background: rgba(8, 17, 31, 0.04);
-  color: var(--muted);
+  background: var(--bg-surface, rgba(8, 17, 31, 0.04));
+  color: var(--text-secondary);
 }
 
 .console-panel tbody tr {
@@ -4069,8 +4093,8 @@ button {
   min-height: 30px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(8, 17, 31, 0.05);
-  color: var(--muted-soft);
+  background: var(--accent-soft, rgba(8, 17, 31, 0.05));
+  color: var(--text-muted, var(--muted-soft));
   font-size: 0.74rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4111,8 +4135,8 @@ button {
   min-height: 34px;
   padding: 0 12px;
   border-radius: 999px;
-  background: rgba(8, 17, 31, 0.05);
-  color: var(--muted);
+  background: var(--accent-soft, rgba(8, 17, 31, 0.05));
+  color: var(--text-secondary, var(--muted));
   font-size: 0.8rem;
 }
 
@@ -4722,6 +4746,9 @@ button {
   border-bottom: 1px solid var(--border);
   height: 56px;
 }
+.console-layout-shell {
+  padding-top: 56px;
+}
 .site-nav-link-v2 {
   position: relative;
   padding-bottom: 2px;
@@ -4735,7 +4762,7 @@ button {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  border: 2px dashed var(--brand-v2, #0f76ff);
+  border: 2px dashed var(--accent, #c8734a);
   border-radius: var(--radius-md, 8px);
   background: var(--bg-surface, #f8fafc);
   color: var(--text-secondary, #475569);
@@ -4754,7 +4781,7 @@ button {
 .console-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh - 56px);
   overflow: hidden;
   background: var(--bg-base);
   color: var(--text-primary);
@@ -4810,8 +4837,8 @@ button {
 }
 
 .activity-bar-item.is-active {
-  color: var(--brand-v2);
-  background: var(--brand-soft);
+  color: var(--accent, var(--brand-v2));
+  background: var(--accent-soft, var(--brand-soft));
 }
 
 /* ── TopBar ──────────────────────────────────── */
@@ -4902,8 +4929,8 @@ button {
 }
 
 .topbar-avatar:hover {
-  background: var(--brand-soft);
-  color: var(--brand-v2);
+  background: var(--accent-soft, var(--brand-soft));
+  color: var(--accent, var(--brand-v2));
 }
 
 .topbar-hamburger {
@@ -4948,7 +4975,7 @@ button {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--success-v2);
+  background: var(--success, var(--success-v2));
 }
 
 /* ── Panel Layout ────────────────────────────── */
@@ -4996,17 +5023,17 @@ button {
 .panel-resize-handle:hover .panel-resize-handle-bar,
 .panel-resize-handle[data-resize-handle-active] .panel-resize-handle-bar {
   width: 3px;
-  background: var(--brand-v2);
+  background: var(--accent, var(--brand-v2));
 }
 
-/* ── Console component dark overrides ─────────── */
+/* ── Console component warm-cream overrides ────── */
 
 [data-theme="console"] .console-panel,
 [data-theme="console"] .demo-panel {
   border-color: var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  box-shadow: none;
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
   backdrop-filter: none;
 }
 
@@ -5016,9 +5043,9 @@ button {
 
 [data-theme="console"] .studio-section {
   border-color: var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  box-shadow: none;
+  border-radius: var(--radius-card);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
   backdrop-filter: none;
 }
 
@@ -5051,14 +5078,14 @@ button {
 [data-theme="console"] .console-input:focus,
 [data-theme="console"] .console-select:focus,
 [data-theme="console"] .console-textarea:focus {
-  border-color: var(--brand-v2);
+  border-color: var(--accent);
   outline: none;
 }
 
 [data-theme="console"] .console-button {
-  background: var(--brand-v2);
+  background: var(--accent);
   color: #ffffff;
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
 }
 
 [data-theme="console"] .console-button-secondary {
@@ -5103,7 +5130,7 @@ button {
 
 [data-theme="console"] .console-table-surface {
   border-color: var(--border);
-  background: var(--bg-surface);
+  background: var(--bg-card);
 }
 
 [data-theme="console"] .console-table-surface thead tr {
@@ -5121,8 +5148,8 @@ button {
 
 [data-theme="console"] .content-rail.is-metrics .content-rail-track {
   border-color: var(--border);
-  background: var(--bg-surface);
-  box-shadow: none;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
   backdrop-filter: none;
 }
 
@@ -5159,7 +5186,7 @@ button {
 }
 
 [data-theme="console"] .content-rail-item--link:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: rgba(200, 115, 74, 0.04);
 }
 
 [data-theme="console"] .content-rail-track {
@@ -5272,7 +5299,7 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--brand-v2, #0f76ff);
+  background: var(--accent, var(--brand-v2, #0f76ff));
 }
 
 .not-found-brand-name {
@@ -5317,11 +5344,11 @@ button {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--brand-v2, #0f76ff) 20%,
-    var(--brand-v2, #0f76ff) 80%,
+    var(--accent, var(--brand-v2, #0f76ff)) 20%,
+    var(--accent, var(--brand-v2, #0f76ff)) 80%,
     transparent 100%
   );
-  box-shadow: 0 0 12px var(--brand-v2, #0f76ff), 0 0 4px var(--brand-v2, #0f76ff);
+  box-shadow: 0 0 12px var(--accent, var(--brand-v2, #0f76ff)), 0 0 4px var(--accent, var(--brand-v2, #0f76ff));
   opacity: 0.8;
   animation: scanDown 3.5s cubic-bezier(0.37, 0, 0.63, 1) infinite;
 }
@@ -5368,7 +5395,7 @@ button {
   justify-content: center;
   padding: 0.625rem 1.75rem;
   border-radius: var(--radius-full, 9999px);
-  background: var(--brand-v2, #0f76ff);
+  background: var(--accent, var(--brand-v2, #0f76ff));
   color: #fff;
   font-size: 0.875rem;
   font-weight: 500;
@@ -5399,8 +5426,8 @@ button {
 }
 
 .not-found-btn-secondary:hover {
-  border-color: var(--brand-v2, #0f76ff);
-  color: var(--brand-v2, #0f76ff);
+  border-color: var(--accent, var(--brand-v2, #0f76ff));
+  color: var(--accent, var(--brand-v2, #0f76ff));
 }
 
 .not-found-footer {

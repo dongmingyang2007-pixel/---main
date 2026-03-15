@@ -13,10 +13,8 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute("data-theme", "console");
-    root.classList.add("dark");
     return () => {
       root.removeAttribute("data-theme");
-      root.classList.remove("dark");
     };
   }, []);
 
@@ -24,7 +22,9 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     <ProjectProvider>
       <MobileMenuProvider>
         <UnifiedHeader />
-        <ConsoleShell>{children}</ConsoleShell>
+        <div className="console-layout-shell">
+          <ConsoleShell>{children}</ConsoleShell>
+        </div>
         <CommandPalette />
         <Toaster />
         <UnifiedMobileNav mode="console" />
