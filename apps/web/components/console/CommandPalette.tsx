@@ -13,19 +13,17 @@ import {
 } from "@/components/ui/command";
 
 const NAVIGATION_ITEMS = [
-  { key: "nav.dashboard", href: "/app" },
-  { key: "nav.projects", href: "/app/projects" },
-  { key: "nav.datasets", href: "/app/datasets" },
-  { key: "nav.train", href: "/app/train" },
-  { key: "nav.models", href: "/app/models" },
-  { key: "nav.eval", href: "/app/eval" },
+  { key: "nav.assistants", href: "/app/assistants" },
+  { key: "nav.knowledge", href: "/app/knowledge" },
+  { key: "nav.training", href: "/app/training" },
+  { key: "nav.chat", href: "/app/chat" },
+  { key: "nav.devices", href: "/app/devices" },
   { key: "nav.settings", href: "/app/settings" },
 ];
 
 const ACTION_ITEMS = [
-  { key: "cmd.newProject", href: "/app/projects" },
-  { key: "cmd.newDataset", href: "/app/datasets" },
-  { key: "cmd.startTraining", href: "/app/train" },
+  { key: "cmd.newAssistant", href: "/app/assistants/new" },
+  { key: "cmd.startTraining", href: "/app/training" },
 ];
 
 export function CommandPalette() {
