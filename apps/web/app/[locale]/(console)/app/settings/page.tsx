@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
-import { apiPost } from "@/lib/api";
+import { logout } from "@/lib/api";
 
 export default function SettingsPage() {
   const [msg, setMsg] = useState("");
@@ -35,18 +35,15 @@ export default function SettingsPage() {
           <div className="console-actions">
             <button
               className="console-button"
-              onClick={async () => {
-                await apiPost("/api/v1/auth/logout", {});
-                window.location.href = "/login";
-              }}
+              onClick={() => logout()}
             >
-              退出登录
+              {t("logout")}
             </button>
             <button
               className="console-button-danger"
-              onClick={() => setMsg("删除流程已受理（v0.1 占位，后端异步清理队列）")}
+              onClick={() => setMsg(t("deleteConfirmation"))}
             >
-              发起数据删除
+              {t("deleteData")}
             </button>
           </div>
           {msg ? <div className="console-inline-notice is-success mt-4">{msg}</div> : null}
@@ -55,11 +52,11 @@ export default function SettingsPage() {
 
       <aside className="console-panel">
         <div className="console-panel-body">
-          <div className="console-kicker">Security Notes</div>
+          <div className="console-kicker">{t("securityKicker")}</div>
           <ul className="site-feature-list mt-4">
-            <li>危险请求会自动附带 CSRF 令牌与 `X-Workspace-ID`。</li>
-            <li>登录状态由 Cookie 判断，最终权限校验仍以后端为准。</li>
-            <li>后续会把 API Key 与设备授权也并入这一页。</li>
+            <li>{t("securityNote1")}</li>
+            <li>{t("securityNote2")}</li>
+            <li>{t("securityNote3")}</li>
           </ul>
         </div>
       </aside>
