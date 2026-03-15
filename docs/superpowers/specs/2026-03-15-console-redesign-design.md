@@ -61,7 +61,7 @@
 | 边框 | 卡片、分割 | `#e8e0d8` | `--border` |
 | 边框淡 | 次级分割 | `#ede6de` | `--border-light` |
 | 成功 | 运行中、已完成 | `#2a8a5a` | `--success` |
-| 警告 | 训练中、待处理 | `#c8734a` | `--warning`（复用强调色） |
+| 警告 | 训练中、待处理 | `#d4923a` | `--warning` |
 | 错误 | 失败、删除 | `#c44a4a` | `--error` |
 | 强调背景 | 活跃态底色 | `rgba(200,115,74,0.1)` | `--accent-soft` |
 | 成功背景 | 成功态底色 | `rgba(42,138,90,0.08)` | `--success-soft` |
@@ -69,7 +69,7 @@
 
 ### 3.3 排版
 
-- **字体**: 选用有辨识度的品牌字体，取代系统默认。中文使用 PingFang SC / Noto Sans SC 的同时，搭配特色英文字体作为标题和品牌元素。
+- **字体**: 英文标题使用 DM Sans，正文/中文使用 PingFang SC / Noto Sans SC。DM Sans 几何感强、现代感好，与暖色调配色形成对比张力。通过 `next/font/google` 加载（Next.js 在构建时下载字体并自托管，不依赖 Google CDN 运行时加载，避免 FOUT）。
 - **字号层级**:
   - 页面标题: 18px, weight 700
   - 面板标题: 14px, weight 600
@@ -102,6 +102,16 @@
 - 按钮悬浮: 150ms, translateY(-1px) + 阴影加深
 - 状态变化: 300ms 渐变过渡
 - 列表栏收起: 200ms width 过渡
+
+### 3.7 响应式断点
+
+| 断点 | 宽度 | 布局变化 |
+|------|------|---------|
+| Desktop | ≥1024px | 完整三栏：图标栏 + 列表栏 + 主内容 |
+| Tablet | 768-1023px | 列表栏默认收起，图标栏保留，点击图标展开列表栏为浮层。画布工作台 2×2 网格保持，但区块内容紧凑化。 |
+| Mobile | <768px | 图标栏变为底部 Tab Bar（5 项：AI、知识、训练、对话、更多），列表栏和顶栏隐藏，"更多"展开设备/设置。画布工作台 2×2 网格变为单列堆叠。 |
+
+移动端底部 Tab Bar 复用现有 `MobileMenuProvider` 上下文，替换当前的 `UnifiedMobileNav` 实现。
 
 ---
 
@@ -266,6 +276,7 @@
 | 版本 | ModelVersion | version_id, artifact_key, metrics_json |
 | 当前使用 | ModelAlias (prod) | alias 管理 (prod/staging/dev) |
 | 版本对比 | Eval | 评估指标详情、样本级对比 |
+| 技能 | params_json 中的 tools/functions 字段 | 函数签名、参数 schema |
 
 ---
 
@@ -275,9 +286,9 @@
 
 - 路由: `/app/chat`
 - 选择 AI 助手 + 版本，在浏览器内直接对话
-- 实时流式响应（SSE）
-- 对话历史可保存/导出
-- 可切换不同版本快速对比效果
+- **v1 实现**: 纯前端 mock UI。对话界面展示完整的聊天交互框架（消息列表、输入框、AI 助手选择器），但 AI 回复为前端 mock 响应（固定的示例回复 + 打字机动效）。消息状态存在组件 state 中，不持久化。这与现有训练/推理的 mock 策略一致。
+- **后续迭代**: 需要后端新增 `/api/v1/chat` 端点支持真实推理、多轮对话、SSE 流式响应、对话历史持久化。此后端工作不在本次前端重设计范围内。
+- 可切换不同 AI 助手快速对比效果
 
 ### 7.2 人格模板库
 
@@ -293,11 +304,9 @@
 - 不改变布局，只在现有区块中追加信息
 - 状态持久化到用户偏好
 
-### 7.4 技能市场（远期）
+### 7.4 技能的后端映射
 
-- 社区共享的技能包
-- 一键添加到 AI 助手
-- 标记为远期目标，v1 不实现
+"技能"在后端对应 `training_jobs.params_json` 中的 tools/functions 字段。v1 中，技能配置在创建训练任务时传入（复用现有 `POST /api/v1/train/jobs` 端点的 `params_json` 字段）。画布工作台中的"技能"区块为前端状态管理——用户编辑技能列表，点击"保存并训练"时将技能配置合并到 `params_json` 中一并提交。不需要新的数据库表或 API 端点。
 
 ---
 
@@ -339,10 +348,13 @@
 | `/app/models/[id]` | 合并到 `/app/assistants/[id]/versions` |
 | `/app/eval` | 合并到 `/app/assistants/[id]/versions` |
 | `/app/billing` | 合并到 `/app/settings` |
+| `/app` (仪表盘) | 重定向到 `/app/assistants` |
 | `/app/devices` | `/app/devices`（不变） |
 | `/app/settings` | `/app/settings`（不变） |
 | 无 | `/app/assistants/new`（新增） |
 | 无 | `/app/chat`（新增） |
+
+路由重定向通过 Next.js `proxy.ts`（现有 middleware 入口）实现 rewrite 规则。
 
 ---
 
