@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { ProjectProvider } from "@/lib/ProjectContext";
+import { UnifiedHeader } from "@/components/UnifiedHeader";
+import { UnifiedMobileNav } from "@/components/UnifiedMobileNav";
 import { ConsoleShell } from "@/components/console/ConsoleShell";
 import { CommandPalette } from "@/components/console/CommandPalette";
 import { Toaster } from "@/components/ui/toaster";
 
-export default function ConsoleLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute("data-theme", "console");
@@ -23,9 +24,11 @@ export default function ConsoleLayout({
 
   return (
     <ProjectProvider>
+      <UnifiedHeader onMobileMenuOpen={() => setMobileOpen(true)} />
       <ConsoleShell>{children}</ConsoleShell>
       <CommandPalette />
       <Toaster />
+      <UnifiedMobileNav open={mobileOpen} onClose={closeMobile} mode="console" />
     </ProjectProvider>
   );
 }
