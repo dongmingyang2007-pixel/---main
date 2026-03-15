@@ -1,3 +1,5 @@
+"use client";
+
 import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
@@ -33,11 +35,11 @@ export default function BillingPage() {
 
       <aside className="console-panel">
         <div className="console-panel-body">
-          <div className="console-kicker">Future Quotas</div>
+          <div className="console-kicker">{t("quotasKicker")}</div>
           <ul className="site-feature-list mt-4">
-            <li>训练并发与保留天数</li>
-            <li>对象存储额度与带宽</li>
-            <li>团队成员数与 workspace 级权限</li>
+            <li>{t("quota1")}</li>
+            <li>{t("quota2")}</li>
+            <li>{t("quota3")}</li>
           </ul>
         </div>
       </aside>

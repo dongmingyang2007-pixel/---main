@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/env";
 
 type MetricPoint = { key: string; value: number; step: number };
 type ArtifactItem = { id: string; name: string; download_url: string };
@@ -55,7 +56,7 @@ export default function TrainDetailPage() {
       eventRef.current?.close();
       return;
     }
-    const source = new EventSource(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/v1/train/jobs/${jobId}/events`, {
+    const source = new EventSource(`${getApiBaseUrl()}/api/v1/train/jobs/${jobId}/events`, {
       withCredentials: true,
     });
     source.addEventListener("status", (event) => {

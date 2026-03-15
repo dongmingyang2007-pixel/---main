@@ -33,17 +33,17 @@ export default function DevicesPage() {
 
       <section className="console-panel">
         <div className="console-panel-body">
-          <div className="console-kicker">Planned Modules</div>
+          <div className="console-kicker">{t("plannedKicker")}</div>
           <div className="console-key-grid mt-4">
-            {[
-              ["绑定", "设备激活与归属确认"],
-              ["固件", "升级版本与回滚"],
-              ["诊断", "传感器、隐私开关与连接状态"],
-              ["日志", "本地采集与同步行为摘要"],
-            ].map(([label, value]) => (
-              <div key={label} className="console-key-item">
-                <div className="console-key-label">{label}</div>
-                <div className="console-key-value">{value}</div>
+            {([
+              ["pairing", "pairingDesc"],
+              ["firmware", "firmwareDesc"],
+              ["diagnostics", "diagnosticsDesc"],
+              ["logs", "logsDesc"],
+            ] as const).map(([labelKey, valueKey]) => (
+              <div key={labelKey} className="console-key-item">
+                <div className="console-key-label">{t(`module.${labelKey}`)}</div>
+                <div className="console-key-value">{t(`module.${valueKey}`)}</div>
               </div>
             ))}
           </div>

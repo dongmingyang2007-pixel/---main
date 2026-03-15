@@ -62,7 +62,7 @@ export default function ProductPage() {
           {t("hero.title")}
         </h1>
         <p className="mt-4 max-w-xl text-lg text-[var(--text-secondary)]">
-          {t("hero.title")}
+          {t("hero.body")}
         </p>
         <div className="mt-8 w-full max-w-2xl">
           <ImagePlaceholder label={t("hero.imageAlt")} aspect="16/9" icon="photo" />
@@ -73,6 +73,7 @@ export default function ProductPage() {
       {scenes.map((scene) => (
         <section
           key={scene.id}
+          id={scene.id === "engineering" ? "specs" : scene.id === "geometry" ? "craftsmanship" : scene.id}
           className="product-section mx-auto max-w-5xl px-6 py-20"
         >
           <div className="grid gap-10 md:grid-cols-2">
@@ -98,7 +99,7 @@ export default function ProductPage() {
             </div>
             <div className="flex items-center justify-center">
               <ImagePlaceholder
-                label={scene.assetSlots[0] || t("scene.imageAlt")}
+                label={t(`scenes.${scene.id}.imageAlt`)}
                 aspect="4/3"
                 icon="photo"
               />

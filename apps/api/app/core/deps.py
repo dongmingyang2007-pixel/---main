@@ -75,7 +75,7 @@ def require_allowed_origin(request: Request) -> None:
         parsed = urlparse(referer)
         normalized_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
-    if normalized_origin not in settings.normalized_cors_origins:
+    if not settings.is_origin_allowed(normalized_origin):
         raise ApiError("forbidden_origin", "Origin not allowed", status_code=403)
 
 

@@ -17,13 +17,34 @@ export function CTAScene({ title, body, demoLabel, productLabel }: CTASceneProps
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    const titleEl = el.querySelector(".cta-title");
+    const bodyEl = el.querySelector(".cta-body");
     const buttons = el.querySelectorAll(".cta-btn");
-    const tl = gsap.timeline({
-      scrollTrigger: { trigger: el, start: "top 70%", once: true },
-    });
-    tl.from(el.querySelector(".cta-title"), { opacity: 0, y: 20, duration: 0.6 });
-    tl.from(buttons, { opacity: 0, y: 20, stagger: 0.1, duration: 0.5 }, "<0.2");
-    return () => { tl.kill(); };
+    const targets = [titleEl, bodyEl, ...Array.from(buttons)].filter(Boolean);
+
+    // Set initial hidden state explicitly
+    gsap.set(targets, { opacity: 0, y: 20 });
+
+    // Use native IntersectionObserver — more reliable than ScrollTrigger
+    // for the last section on a page where scroll distance is limited
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          const tl = gsap.timeline();
+          if (titleEl) tl.to(titleEl, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" });
+          if (bodyEl) tl.to(bodyEl, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, "<0.1");
+          if (buttons.length) tl.to(buttons, { opacity: 1, y: 0, stagger: 0.1, duration: 0.5, ease: "power2.out" }, "<0.15");
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.05 },
+    );
+    observer.observe(el);
+
+    return () => {
+      observer.disconnect();
+      gsap.set(targets, { clearProps: "all" });
+    };
   }, []);
 
   return (
@@ -34,7 +55,7 @@ export function CTAScene({ title, body, demoLabel, productLabel }: CTASceneProps
       <h2 className="cta-title text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
         {title}
       </h2>
-      <p className="mt-4 text-lg text-[var(--text-secondary)]">{body}</p>
+      <p className="cta-body mt-4 text-lg text-[var(--text-secondary)]">{body}</p>
       <div className="mt-10 flex flex-wrap justify-center gap-4">
         <MagneticButton
           href="/demo"

@@ -3,5 +3,12 @@
   "title": "Account & Security",
   "description": "Manage your account, security, and sensitive operations.",
   "panel.title": "Account actions",
-  "panel.description": "Login management and account deletion for now. API keys and team settings coming later."
+  "panel.description": "Login management and account deletion for now. API keys and team settings coming later.",
+  "logout": "Log Out",
+  "deleteData": "Request Data Deletion",
+  "deleteConfirmation": "Deletion request received (v0.1 placeholder, backend async cleanup queue)",
+  "securityKicker": "Security Notes",
+  "securityNote1": "Dangerous requests automatically include a CSRF token and `X-Workspace-ID`.",
+  "securityNote2": "Login state is determined by cookies; final authorization is enforced server-side.",
+  "securityNote3": "API keys and device authorization will be added to this page later."
 }

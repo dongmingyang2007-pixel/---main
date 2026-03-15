@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { apiPost, uploadToPresignedUrl } from "@/lib/api";
 
@@ -8,10 +9,11 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [dragActive, setDragActive] = useState(false);
+  const t = useTranslations("console-datasets");
 
   const onUpload = async (file: File) => {
     setBusy(true);
-    setMessage("上传初始化中...");
+    setMessage(t("upload.initializing"));
     try {
       const presign = await apiPost<{
         upload_id: string;
@@ -35,7 +37,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
         { authenticated: true },
       );
       if (!putRes.ok) {
-        throw new Error(`对象存储上传失败(${putRes.status})`);
+        throw new Error(t("upload.storageFailed", { status: putRes.status }));
       }
 
       await apiPost("/api/v1/uploads/complete", {
@@ -43,10 +45,10 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
         data_item_id: presign.data_item_id,
       });
 
-      setMessage("上传完成并已提交处理任务");
+      setMessage(t("upload.complete"));
       onDone?.();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "上传失败");
+      setMessage(err instanceof Error ? err.message : t("upload.failed"));
     } finally {
       setBusy(false);
     }
@@ -73,14 +75,14 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
       }}
     >
       <div className="console-panel-body">
-        <div className="console-kicker">Dataset Upload</div>
-        <div className="mt-2 text-lg font-semibold">拖入样本文件，或从本地选择上传</div>
+        <div className="console-kicker">{t("upload.kicker")}</div>
+        <div className="mt-2 text-lg font-semibold">{t("upload.title")}</div>
         <div className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-          仍然使用直传对象存储的现有流程；这里只重做交互反馈，不改变上传协议。
+          {t("upload.description")}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <label className="console-button">
-            <span>{busy ? "上传中..." : "选择文件"}</span>
+            <span>{busy ? t("upload.uploading") : t("upload.selectFile")}</span>
             <input
               disabled={busy}
               type="file"
@@ -91,9 +93,9 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
               }}
             />
           </label>
-          <span className="console-pill">支持图片 / 文本 / 音频 / 视频</span>
+          <span className="console-pill">{t("upload.supportedTypes")}</span>
         </div>
-        <div className="mt-4 text-sm text-[var(--text-secondary)]">{message || "上传完成后会自动创建 Data Item 并触发后续处理。"}</div>
+        <div className="mt-4 text-sm text-[var(--text-secondary)]">{message || t("upload.defaultMessage")}</div>
       </div>
     </div>
   );

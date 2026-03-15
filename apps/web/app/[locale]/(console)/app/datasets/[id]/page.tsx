@@ -118,6 +118,7 @@ export default function DatasetDetailPage() {
               <div className="flex items-end">
                 <button
                   className="console-button w-full"
+                  disabled={items.length === 0}
                   onClick={async () => {
                     const res = await apiPost<{ dataset_version: { id: string; version: number } }>(
                       `/api/v1/datasets/${datasetId}/commit`,

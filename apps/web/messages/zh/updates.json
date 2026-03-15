@@ -1,14 +1,14 @@
 {
   "meta.title": "动态 - 铭润科技",
-  "hero.eyebrow": "Updates",
+  "hero.eyebrow": "产品动态",
   "hero.title": "产品动态与更新日志。",
-  "timeline.0.label": "2026.03",
+  "timeline.0.label": "2026.03.10",
   "timeline.0.title": "产品页升级",
-  "timeline.0.body": "全新视觉设计和交互体验。",
-  "timeline.1.label": "2026.03",
+  "timeline.0.body": "全新视觉设计和交互体验。页面布局重构，引入 v2 设计系统，GSAP 滚动动画和响应式适配全面升级。",
+  "timeline.1.label": "2026.03.08",
   "timeline.1.title": "Demo 优化",
-  "timeline.1.body": "产品查看器前置，推理体验优化。",
-  "timeline.2.label": "2026.03",
+  "timeline.1.body": "产品查看器前置，3D 模型交互优化。新增场景模式切换、爆炸视图和 X 光透视功能，推理响应时延降低。",
+  "timeline.2.label": "2026.03.05",
   "timeline.2.title": "安全加固",
-  "timeline.2.body": "CSRF、限流、签名访问全面上线。"
+  "timeline.2.body": "CSRF 保护、请求限流和签名 URL 全面上线。所有 API 端点加入速率限制，静态资源采用受管签名访问。"
 }

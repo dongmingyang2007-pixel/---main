@@ -4,5 +4,14 @@
   "description": "为设备绑定、固件版本和硬件诊断预留入口。",
   "panel.title": "设备工作区",
   "panel.description": "设备绑定、固件升级和硬件诊断还没接入，但信息架构已经按后续方向预留。",
-  "empty": "当前还没有已绑定设备。后续将展示序列号、固件版本、电量和隐私开关状态。"
+  "empty": "当前还没有已绑定设备。后续将展示序列号、固件版本、电量和隐私开关状态。",
+  "plannedKicker": "规划模块",
+  "module.pairing": "绑定",
+  "module.pairingDesc": "设备激活与归属确认",
+  "module.firmware": "固件",
+  "module.firmwareDesc": "升级版本与回滚",
+  "module.diagnostics": "诊断",
+  "module.diagnosticsDesc": "传感器、隐私开关与连接状态",
+  "module.logs": "日志",
+  "module.logsDesc": "本地采集与同步行为摘要"
 }

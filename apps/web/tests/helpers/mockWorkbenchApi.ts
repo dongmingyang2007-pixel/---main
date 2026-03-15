@@ -1,7 +1,29 @@
 import type { Page, Route } from "@playwright/test";
 
 const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3000";
-const API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const CONFIGURED_API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+
+function alignLoopbackHost(origin: string, appOrigin: string): string {
+  try {
+    const apiUrl = new URL(origin);
+    const appUrl = new URL(appOrigin);
+    const isApiLoopback = apiUrl.hostname === "localhost" || apiUrl.hostname === "127.0.0.1";
+    const isAppLoopback = appUrl.hostname === "localhost" || appUrl.hostname === "127.0.0.1";
+
+    if (isApiLoopback && isAppLoopback && apiUrl.hostname !== appUrl.hostname) {
+      apiUrl.hostname = appUrl.hostname;
+      return apiUrl.origin;
+    }
+  } catch {
+    return origin;
+  }
+
+  return origin;
+}
+
+const API_ORIGINS = Array.from(
+  new Set([CONFIGURED_API_ORIGIN, alignLoopbackHost(CONFIGURED_API_ORIGIN, APP_ORIGIN)]),
+);
 
 type Project = {
   id: string;
@@ -187,7 +209,7 @@ export async function installWorkbenchApiMock(
     await setAuthenticatedCookies(page, db.workspaceId);
   }
 
-  await page.route(`${API_ORIGIN}/api/v1/**`, async (route) => {
+  const handleApiRoute = async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
     const { pathname, searchParams } = url;
@@ -360,7 +382,9 @@ export async function installWorkbenchApiMock(
       { error: { message: `Unhandled mock endpoint: ${method} ${pathname}` } },
       501,
     );
-  });
+  };
+
+  await Promise.all(API_ORIGINS.map((origin) => page.route(`${origin}/api/v1/**`, handleApiRoute)));
 
   return {
     workspaceId: db.workspaceId,

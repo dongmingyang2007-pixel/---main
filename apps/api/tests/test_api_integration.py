@@ -219,6 +219,23 @@ def test_unauthorized_error_shape() -> None:
     assert err["request_id"]
 
 
+def test_local_loopback_origins_are_allowed_for_auth() -> None:
+    client = TestClient(main_module.app)
+    resp = client.post(
+        "/api/v1/auth/send-code",
+        json={"email": "loopback@example.com", "purpose": "register"},
+        headers={"origin": "http://127.0.0.1:3102"},
+    )
+    assert resp.status_code == 200
+
+    blocked = client.post(
+        "/api/v1/auth/send-code",
+        json={"email": "blocked@example.com", "purpose": "register"},
+        headers={"origin": "http://evil.example"},
+    )
+    assert blocked.status_code == 403
+
+
 def test_workspace_rbac_forbidden() -> None:
     owner = TestClient(main_module.app)
     owner_info = register_user(owner, "owner@example.com", "Owner")

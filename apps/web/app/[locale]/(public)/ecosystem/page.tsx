@@ -38,7 +38,7 @@ export default function EcosystemPage() {
   return (
     <div ref={containerRef}>
       {/* Hero */}
-      <section className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+      <section className="flex min-h-[40vh] flex-col items-center justify-center px-6 pt-20 text-center">
         <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
           {t("hero.eyebrow")}
         </p>
@@ -56,7 +56,7 @@ export default function EcosystemPage() {
           {CAPABILITY_KEYS.map((key) => (
             <div
               key={key}
-              className="capability-card rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-8"
+              className="capability-card rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-8 transition-all hover:shadow-lg hover:border-[var(--brand-v2)]/30 hover:-translate-y-0.5"
             >
               <ImagePlaceholder label={`${t(`capabilities.${key}.title`)} Illustration`} aspect="2/1" icon="image" />
               <h3 className="mt-6 text-xl font-semibold text-[var(--text-primary)]">{t(`capabilities.${key}.title`)}</h3>

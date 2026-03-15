@@ -9,6 +9,8 @@ import { DataTable } from "@/components/DataTable";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost } from "@/lib/api";
+import { useProjectContext } from "@/lib/ProjectContext";
+import { useToast } from "@/hooks/use-toast";
 
 type Project = { id: string; name: string; description?: string; created_at: string };
 
@@ -17,7 +19,10 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [formError, setFormError] = useState("");
   const t = useTranslations("console-projects");
+  const { loadProjects } = useProjectContext();
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     const data = await apiGet<{ items: Project[] }>("/api/v1/projects");
@@ -45,10 +50,28 @@ export default function ProjectsPage() {
 
   const onCreate = async (event: FormEvent) => {
     event.preventDefault();
-    await apiPost("/api/v1/projects", { name, description });
+    setFormError("");
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError("项目名不能为空");
+      return;
+    }
+
+    const duplicate = items.some(
+      (p) => p.name.toLowerCase() === trimmedName.toLowerCase(),
+    );
+    if (duplicate) {
+      setFormError(`项目名「${trimmedName}」已存在，请使用其他名称`);
+      return;
+    }
+
+    await apiPost("/api/v1/projects", { name: trimmedName, description });
     setName("");
     setDescription("");
+    toast({ title: "创建成功", description: `项目「${trimmedName}」已创建` });
     await load();
+    await loadProjects();
   };
 
   return (
@@ -76,9 +99,9 @@ export default function ProjectsPage() {
                   <label className="console-label" htmlFor="project-name">项目名</label>
                   <input
                     id="project-name"
-                    className="console-input"
+                    className={`console-input${formError ? " border-red-500" : ""}`}
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => { setName(e.target.value); setFormError(""); }}
                     placeholder="例如：Home Vision"
                     required
                   />
@@ -97,6 +120,9 @@ export default function ProjectsPage() {
                   <button className="console-button w-full">新建项目</button>
                 </div>
               </form>
+              {formError && (
+                <p className="mt-3 text-sm text-red-500">{formError}</p>
+              )}
             </div>
           </section>
 

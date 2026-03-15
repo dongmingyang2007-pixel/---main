@@ -60,28 +60,28 @@ export default function EvalPage() {
       <section className="console-panel">
         <div className="console-panel-header">
           <div>
-            <h2 className="console-panel-title">创建评测回放</h2>
-            <p className="console-panel-description">输入两个模型版本和一个数据版本，快速生成一份可复盘的对比结果。</p>
+            <h2 className="console-panel-title">{t("createTitle")}</h2>
+            <p className="console-panel-description">{t("createDescription")}</p>
           </div>
         </div>
         <div className="console-panel-body">
           <div className="console-form-grid columns-4">
             <div>
-              <label className="console-label" htmlFor="eval-a">model_version_a</label>
-              <input id="eval-a" className="console-input" value={a} onChange={(e) => setA(e.target.value)} placeholder="模型版本 A" required />
+              <label className="console-label" htmlFor="eval-a">{t("labelModelA")}</label>
+              <input id="eval-a" className="console-input" value={a} onChange={(e) => setA(e.target.value)} placeholder={t("placeholderModelA")} required />
             </div>
             <div>
-              <label className="console-label" htmlFor="eval-b">model_version_b</label>
-              <input id="eval-b" className="console-input" value={b} onChange={(e) => setB(e.target.value)} placeholder="模型版本 B" required />
+              <label className="console-label" htmlFor="eval-b">{t("labelModelB")}</label>
+              <input id="eval-b" className="console-input" value={b} onChange={(e) => setB(e.target.value)} placeholder={t("placeholderModelB")} required />
             </div>
             <div>
-              <label className="console-label" htmlFor="eval-dataset">dataset_version_id</label>
+              <label className="console-label" htmlFor="eval-dataset">{t("labelDatasetVersion")}</label>
               <input
                 id="eval-dataset"
                 className="console-input"
                 value={datasetVersionId}
                 onChange={(e) => setDatasetVersionId(e.target.value)}
-                placeholder="数据版本 ID"
+                placeholder={t("placeholderDatasetVersion")}
                 required
               />
             </div>
@@ -102,13 +102,13 @@ export default function EvalPage() {
                     const run = await apiGet<EvalResult>(`/api/v1/eval/runs/${created.eval_id}`);
                     setResult(run);
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "创建评测失败");
+                    setError(err instanceof Error ? err.message : t("createError"));
                   } finally {
                     setBusy(false);
                   }
                 }}
               >
-                {busy ? "创建中..." : "创建评测回放"}
+                {busy ? t("submitting") : t("submitButton")}
               </button>
             </div>
           </div>
@@ -123,28 +123,28 @@ export default function EvalPage() {
             <section className="console-panel">
               <div className="console-panel-header">
                 <div>
-                  <h2 className="console-panel-title">评测摘要</h2>
+                  <h2 className="console-panel-title">{t("summaryTitle")}</h2>
                   <p className="console-panel-description">
                     {result.status === "completed"
                       ? winner
-                        ? `推荐版本：${winner}`
-                        : "评测完成，两版本表现接近。"
-                      : `状态：${result.status || "处理中"}`}
+                        ? t("summaryWinner", { winner })
+                        : t("summaryTied")
+                      : t("summaryStatus", { status: result.status || t("summaryProcessing") })}
                   </p>
                 </div>
               </div>
               <div className="console-panel-body">
                 <div className="console-form-grid columns-3">
                   <div className="console-key-item">
-                    <div className="console-key-label">版本 A</div>
+                    <div className="console-key-label">{t("versionA")}</div>
                     <div className="console-key-value">{result.model_version_a || a}</div>
                   </div>
                   <div className="console-key-item">
-                    <div className="console-key-label">版本 B</div>
+                    <div className="console-key-label">{t("versionB")}</div>
                     <div className="console-key-value">{result.model_version_b || b}</div>
                   </div>
                   <div className="console-key-item">
-                    <div className="console-key-label">数据版本</div>
+                    <div className="console-key-label">{t("datasetVersion")}</div>
                     <div className="console-key-value">{result.dataset_version_id || datasetVersionId}</div>
                   </div>
                 </div>
@@ -156,8 +156,8 @@ export default function EvalPage() {
               <section className="console-panel">
                 <div className="console-panel-header">
                   <div>
-                    <h2 className="console-panel-title">指标对比</h2>
-                    <p className="console-panel-description">逐项对比两个版本在各指标上的得分。</p>
+                    <h2 className="console-panel-title">{t("metricsTitle")}</h2>
+                    <p className="console-panel-description">{t("metricsDescription")}</p>
                   </div>
                 </div>
                 <div className="console-panel-body">
@@ -165,10 +165,10 @@ export default function EvalPage() {
                     <table className="w-full">
                       <thead>
                         <tr>
-                          <th className="text-left">指标</th>
-                          <th className="text-right">版本 A</th>
-                          <th className="text-right">版本 B</th>
-                          <th className="text-right">差值</th>
+                          <th className="text-left">{t("metricHeader")}</th>
+                          <th className="text-right">{t("scoreA")}</th>
+                          <th className="text-right">{t("scoreB")}</th>
+                          <th className="text-right">{t("diff")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -197,8 +197,8 @@ export default function EvalPage() {
               <section className="console-panel">
                 <div className="console-panel-header">
                   <div>
-                    <h2 className="console-panel-title">样本回放</h2>
-                    <p className="console-panel-description">对比各样本在两个版本下的输出。</p>
+                    <h2 className="console-panel-title">{t("samplesTitle")}</h2>
+                    <p className="console-panel-description">{t("samplesDescription")}</p>
                   </div>
                 </div>
                 <div className="console-panel-body">
@@ -206,17 +206,17 @@ export default function EvalPage() {
                     <table className="w-full">
                       <thead>
                         <tr>
-                          <th className="text-left">样本</th>
-                          <th className="text-left">输入</th>
-                          <th className="text-left">输出 A</th>
-                          <th className="text-left">输出 B</th>
-                          <th className="text-left">判定</th>
+                          <th className="text-left">{t("sampleHeader")}</th>
+                          <th className="text-left">{t("inputHeader")}</th>
+                          <th className="text-left">{t("outputAHeader")}</th>
+                          <th className="text-left">{t("outputBHeader")}</th>
+                          <th className="text-left">{t("verdictHeader")}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {samples.map((s) => (
-                          <tr key={s.sample_id}>
-                            <td className="font-mono text-xs">{s.sample_id.slice(0, 8)}</td>
+                        {samples.map((s, idx) => (
+                          <tr key={s.sample_id ?? idx}>
+                            <td className="font-mono text-xs">{s.sample_id?.slice(0, 8) ?? "-"}</td>
                             <td className="max-w-[200px] truncate">{s.input_preview || "-"}</td>
                             <td className="max-w-[200px] truncate">{s.output_a || "-"}</td>
                             <td className="max-w-[200px] truncate">{s.output_b || "-"}</td>
@@ -235,7 +235,7 @@ export default function EvalPage() {
           <aside className="console-panel self-start">
             <div className="console-panel-header">
               <div>
-                <h2 className="console-panel-title">原始数据</h2>
+                <h2 className="console-panel-title">{t("rawTitle")}</h2>
               </div>
             </div>
             <div className="console-panel-body">
@@ -248,7 +248,7 @@ export default function EvalPage() {
       {!result && !busy && (
         <section className="console-panel">
           <div className="console-panel-body">
-            <div className="console-empty">填写版本信息后点击「创建评测回放」查看对比结果。</div>
+            <div className="console-empty">{t("emptyHint")}</div>
           </div>
         </section>
       )}
@@ -256,7 +256,7 @@ export default function EvalPage() {
       {busy && (
         <section className="console-panel">
           <div className="console-panel-body">
-            <div className="console-empty">评测创建中，请稍候...</div>
+            <div className="console-empty">{t("busyHint")}</div>
           </div>
         </section>
       )}

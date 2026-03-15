@@ -92,10 +92,10 @@ export default function DashboardPage() {
         title={t("dashboard.liveSummaryTitle")}
         summary={t("dashboard.liveSummaryBody")}
         items={[
-          { label: t("dashboard.metric.projects"), title: String(summary.projects), body: t("dashboard.metric.projectsBody"), meta: t("dashboard.metric.projectsMeta") },
-          { label: t("dashboard.metric.datasets"), title: String(summary.datasets), body: t("dashboard.metric.datasetsBody"), meta: t("dashboard.metric.datasetsMeta") },
-          { label: t("dashboard.metric.jobs"), title: String(summary.jobs), body: t("dashboard.metric.jobsBody"), meta: t("dashboard.metric.jobsMeta") },
-          { label: t("dashboard.metric.prod"), title: summary.modelVersion, body: t("dashboard.metric.prodBody"), meta: t("dashboard.metric.prodMeta") },
+          { label: t("dashboard.metric.projects"), title: String(summary.projects), body: t("dashboard.metric.projectsBody"), meta: t("dashboard.metric.projectsMeta"), href: "/app/projects" },
+          { label: t("dashboard.metric.datasets"), title: String(summary.datasets), body: t("dashboard.metric.datasetsBody"), meta: t("dashboard.metric.datasetsMeta"), href: "/app/datasets" },
+          { label: t("dashboard.metric.jobs"), title: String(summary.jobs), body: t("dashboard.metric.jobsBody"), meta: t("dashboard.metric.jobsMeta"), href: "/app/train" },
+          { label: t("dashboard.metric.prod"), title: summary.modelVersion, body: t("dashboard.metric.prodBody"), meta: t("dashboard.metric.prodMeta"), href: "/app/models" },
         ]}
         variant="metrics"
       />

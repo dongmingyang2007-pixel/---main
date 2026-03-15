@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
 
 export type ProjectOption = {
@@ -37,6 +38,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [projectId, setProjectIdState] = useState("");
   const projectIdRef = useRef("");
+  const pathname = usePathname();
 
   const syncProjectSelection = useCallback(async (nextProjectId: string) => {
     projectIdRef.current = nextProjectId;
@@ -62,26 +64,34 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   );
 
   const loadProjects = useCallback(async (options: { revalidateOnly?: boolean } = {}) => {
-    const data = await apiGet<{ items: ProjectOption[] }>("/api/v1/projects");
-    const list = data.items || [];
-    setProjects(list);
-    applyProjects(list, options);
+    try {
+      const data = await apiGet<{ items: ProjectOption[] }>("/api/v1/projects");
+      const list = data.items || [];
+      setProjects(list);
+      applyProjects(list, options);
+    } catch {
+      // Auth errors handled by middleware redirect
+    }
   }, [applyProjects]);
 
   useEffect(() => {
     let active = true;
 
-    void apiGet<{ items: ProjectOption[] }>("/api/v1/projects").then((data) => {
-      if (!active) return;
-      const list = data.items || [];
-      setProjects(list);
-      applyProjects(list);
-    });
+    void apiGet<{ items: ProjectOption[] }>("/api/v1/projects")
+      .then((data) => {
+        if (!active) return;
+        const list = data.items || [];
+        setProjects(list);
+        applyProjects(list, { revalidateOnly: true });
+      })
+      .catch(() => {
+        // Silently ignore auth errors — middleware will redirect to login if needed
+      });
 
     return () => {
       active = false;
     };
-  }, [applyProjects]);
+  }, [applyProjects, pathname]);
 
   return (
     <ProjectContext.Provider

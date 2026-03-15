@@ -25,7 +25,7 @@ export function HeroScene({ eyebrow, title, body, imageAlt }: HeroSceneProps) {
   }, []);
 
   return (
-    <div ref={containerRef} className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
+    <div ref={containerRef} className="flex min-h-[80vh] flex-col items-center justify-center px-6 text-center">
       <p className="mb-4 text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
         {eyebrow}
       </p>

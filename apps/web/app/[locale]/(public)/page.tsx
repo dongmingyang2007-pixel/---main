@@ -68,6 +68,8 @@ export default async function HomePage({
         eyebrow={t("craft.eyebrow")}
         title={t("craft.title")}
         body={t("craft.body")}
+        imageAlt1={t("craft.imageAlt1")}
+        imageAlt2={t("craft.imageAlt2")}
       />
       <CTAScene
         title={t("cta.title")}

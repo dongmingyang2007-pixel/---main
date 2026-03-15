@@ -2,13 +2,13 @@
   "meta.title": "Updates - Mingrun Tech",
   "hero.eyebrow": "Updates",
   "hero.title": "Product updates and changelog.",
-  "timeline.0.label": "2026.03",
+  "timeline.0.label": "2026.03.10",
   "timeline.0.title": "Product page redesign",
-  "timeline.0.body": "New visual design and interactive experience.",
-  "timeline.1.label": "2026.03",
+  "timeline.0.body": "Rebuilt visual design and interactions. Page layouts restructured with v2 design system, GSAP scroll animations, and responsive improvements.",
+  "timeline.1.label": "2026.03.08",
   "timeline.1.title": "Demo improvements",
-  "timeline.1.body": "Product viewer front and center, better inference experience.",
-  "timeline.2.label": "2026.03",
+  "timeline.1.body": "Product viewer front and center with optimized 3D interactions. Added scene modes, exploded view, and X-ray. Reduced inference latency.",
+  "timeline.2.label": "2026.03.05",
   "timeline.2.title": "Security hardening",
-  "timeline.2.body": "CSRF protection, rate limiting, and signed URLs now live."
+  "timeline.2.body": "CSRF protection, rate limiting, and signed URLs now live. All API endpoints rate-limited, static assets served with managed signatures."
 }

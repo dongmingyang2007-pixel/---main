@@ -30,4 +30,5 @@ export type RailItem = {
   title?: string;
   body?: string;
   meta?: string;
+  href?: string;
 };

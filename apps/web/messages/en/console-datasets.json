@@ -29,5 +29,18 @@
     "itemCount": "Samples",
     "noPreview": "No preview",
     "openFile": "Open original file"
+  },
+  "upload": {
+    "kicker": "Dataset Upload",
+    "title": "Drag and drop sample files, or select from your computer",
+    "description": "Uses the existing direct-to-storage upload flow; only the UI feedback is redesigned here.",
+    "selectFile": "Select File",
+    "uploading": "Uploading...",
+    "supportedTypes": "Images / Text / Audio / Video supported",
+    "defaultMessage": "A Data Item will be created automatically and processing will start after upload.",
+    "initializing": "Initializing upload...",
+    "complete": "Upload complete and processing task submitted",
+    "storageFailed": "Object storage upload failed ({status})",
+    "failed": "Upload failed"
   }
 }

@@ -1,7 +1,8 @@
 {
+  "notFound.brand": "铭润科技",
   "notFound.kicker": "404",
-  "notFound.title": "这个页面不存在，或者你当前不该看到它。",
-  "notFound.body": "如果你是从控制台深链进入，可能是资源已删除或当前 workspace 无权限；如果你在公开站里跳转，这通常只是一个无效链接。",
+  "notFound.title": "页面未找到",
+  "notFound.body": "你访问的地址不存在，可能是链接已失效或资源已被移除。",
   "notFound.home": "返回首页",
-  "notFound.demo": "打开 Demo"
+  "notFound.demo": "体验 Demo"
 }

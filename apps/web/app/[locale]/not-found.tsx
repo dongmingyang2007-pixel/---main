@@ -5,24 +5,39 @@ export default async function NotFound() {
   const t = await getTranslations("error");
 
   return (
-    <div className="site-container py-10">
-      <section className="public-hero glass-panel">
-        <div className="public-hero-copy">
-          <div className="site-kicker mx-auto w-fit">{t("notFound.kicker")}</div>
-          <h1 className="site-title">{t("notFound.title")}</h1>
-          <p className="site-lead mx-auto">
-            {t("notFound.body")}
-          </p>
-          <div className="site-actions justify-center">
-            <Link className="site-button" href="/">
-              {t("notFound.home")}
-            </Link>
-            <Link className="site-button-secondary" href="/demo">
-              {t("notFound.demo")}
-            </Link>
-          </div>
+    <div className="not-found-page">
+      {/* Brand header */}
+      <header className="not-found-header">
+        <Link href="/" className="not-found-brand">
+          <span className="not-found-dot" />
+          <span className="not-found-brand-name">{t("notFound.brand")}</span>
+        </Link>
+      </header>
+
+      {/* Main content */}
+      <main className="not-found-main">
+        <div className="not-found-code-wrap" aria-hidden="true">
+          <span className="not-found-code">404</span>
+          <span className="not-found-scanline" />
         </div>
-      </section>
+
+        <h1 className="not-found-title">{t("notFound.title")}</h1>
+        <p className="not-found-body">{t("notFound.body")}</p>
+
+        <div className="not-found-actions">
+          <Link href="/" className="not-found-btn-primary">
+            {t("notFound.home")}
+          </Link>
+          <Link href="/demo" className="not-found-btn-secondary">
+            {t("notFound.demo")}
+          </Link>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="not-found-footer">
+        <p>© 2026 {t("notFound.brand")}</p>
+      </footer>
     </div>
   );
 }

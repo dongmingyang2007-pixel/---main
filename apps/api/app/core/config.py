@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+LOOPBACK_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -62,7 +64,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["image/jpeg", "image/png", "image/webp"]
     )
 
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"])
     allowed_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "testserver"]
     )
@@ -94,6 +96,12 @@ class Settings(BaseSettings):
     def normalized_cors_origins(self) -> set[str]:
         return {self.normalize_origin(origin) for origin in self.cors_origins}
 
+    @property
+    def cors_origin_regex(self) -> str | None:
+        if self.is_production:
+            return None
+        return LOOPBACK_ORIGIN_REGEX
+
     def should_use_proxy_uploads(self) -> bool:
         return self.env in {"local", "test"} or self.upload_put_proxy
 
@@ -103,6 +111,17 @@ class Settings(BaseSettings):
         if not parsed.scheme or not parsed.netloc:
             return value.rstrip("/")
         return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+    def is_origin_allowed(self, origin: str) -> bool:
+        normalized_origin = self.normalize_origin(origin)
+        if normalized_origin in self.normalized_cors_origins:
+            return True
+
+        if self.is_production:
+            return False
+
+        parsed = urlparse(normalized_origin)
+        return parsed.scheme in {"http", "https"} and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
 
     def validate_runtime_configuration(self) -> None:
         if not self.is_production:

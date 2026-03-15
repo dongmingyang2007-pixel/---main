@@ -15,6 +15,7 @@
   "docs.security.label": "Security",
   "docs.security.title": "Security",
   "docs.security.body": "Encryption, access control, audit.",
+  "docs.comingSoon": "Coming soon",
   "faq.title": "FAQ",
   "faq.q0": "What devices does the Mingrun Tech AI Earphone support?",
   "faq.a0": "Currently supports the Mingrun Tech capsule case series. More device support coming soon.",
@@ -24,7 +25,17 @@
   "faq.a2": "Depends on dataset size. Typical jobs run 5–30 minutes. Track progress in the console in real time.",
   "faq.q3": "How do I get started?",
   "faq.a3": "Visit the Demo page to try core features for free — no sign-up required.",
+  "faq.q4": "Does the device work offline?",
+  "faq.a4": "Yes. Once a model is deployed to the device, core inference works fully offline. Cloud sync only happens when connected.",
+  "faq.q5": "How do I get the hardware?",
+  "faq.a5": "The product is currently in closed beta. Join the waitlist and we'll invite you in order. Watch the Updates page for the launch date.",
+  "faq.q6": "What languages are supported?",
+  "faq.a6": "The platform interface supports Chinese and English. The AI model's language capabilities depend on its training data.",
+  "faq.q7": "Is there an API?",
+  "faq.a7": "Studio and above plans include a RESTful API. Documentation will be published at launch.",
   "contact.title": "Contact Us",
   "contact.email": "hello@mingrun-tech.com",
-  "contact.response": "We respond within 48 hours."
+  "contact.response": "We respond within 48 hours.",
+  "contact.wechat": "WeChat Support",
+  "contact.wechatId": "mingrun-tech"
 }

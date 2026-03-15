@@ -8,9 +8,11 @@ interface CraftSceneProps {
   eyebrow: string;
   title: string;
   body: string;
+  imageAlt1?: string;
+  imageAlt2?: string;
 }
 
-export function CraftScene({ eyebrow, title, body }: CraftSceneProps) {
+export function CraftScene({ eyebrow, title, body, imageAlt1, imageAlt2 }: CraftSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,7 +61,7 @@ export function CraftScene({ eyebrow, title, body }: CraftSceneProps) {
   }, []);
 
   return (
-    <div ref={containerRef} className="relative flex min-h-screen items-center overflow-hidden px-6">
+    <div ref={containerRef} className="relative flex min-h-[70vh] items-center overflow-hidden px-6 py-20">
       {/* Parallax background */}
       <div className="craft-bg absolute inset-0 -z-10">
         <div className="absolute inset-0 bg-gradient-to-b from-[var(--bg-base)] via-[var(--bg-surface)] to-[var(--bg-base)]" />
@@ -68,8 +70,8 @@ export function CraftScene({ eyebrow, title, body }: CraftSceneProps) {
       <div className="mx-auto grid w-full max-w-5xl gap-12 md:grid-cols-2">
         {/* Close-up images */}
         <div className="craft-fg flex flex-col gap-6">
-          <ImagePlaceholder label="Hinge Macro Shot" aspect="4/3" icon="photo" />
-          <ImagePlaceholder label="Material Detail" aspect="4/3" icon="photo" />
+          <ImagePlaceholder label={imageAlt1 ?? "Hinge Macro Shot"} aspect="16/9" icon="photo" />
+          <ImagePlaceholder label={imageAlt2 ?? "Material Detail"} aspect="16/9" icon="photo" />
         </div>
 
         {/* Copy */}

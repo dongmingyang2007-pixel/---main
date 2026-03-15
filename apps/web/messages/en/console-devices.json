@@ -4,5 +4,14 @@
   "description": "Device pairing, firmware versions, and hardware diagnostics.",
   "panel.title": "Device workspace",
   "panel.description": "Device pairing, firmware updates, and hardware diagnostics are not yet connected, but the layout is ready for what's next.",
-  "empty": "No paired devices yet. Serial numbers, firmware versions, battery levels, and privacy toggles will appear here."
+  "empty": "No paired devices yet. Serial numbers, firmware versions, battery levels, and privacy toggles will appear here.",
+  "plannedKicker": "Planned Modules",
+  "module.pairing": "Pairing",
+  "module.pairingDesc": "Device activation and ownership confirmation",
+  "module.firmware": "Firmware",
+  "module.firmwareDesc": "Version upgrades and rollback",
+  "module.diagnostics": "Diagnostics",
+  "module.diagnosticsDesc": "Sensors, privacy toggles, and connection status",
+  "module.logs": "Logs",
+  "module.logsDesc": "Local collection and sync behavior summary"
 }

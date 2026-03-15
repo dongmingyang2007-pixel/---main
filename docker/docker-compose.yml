@@ -61,12 +61,18 @@ services:
       S3_PRIVATE_BUCKET: qihang-private
       S3_DEMO_BUCKET: qihang-demo
       S3_REGION: us-east-1
-      COOKIE_DOMAIN: localhost
+      COOKIE_DOMAIN: ""
       COOKIE_SECURE: "false"
       COOKIE_SAMESITE: lax
       CSRF_TTL_SECONDS: 3600
       ALLOWED_HOSTS: localhost,127.0.0.1,testserver
-      CORS_ORIGINS: http://localhost:3000
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: auto@mingrun-tech.com
+      SMTP_PASSWORD: jltr zlvw epuw vknk
+      SMTP_FROM_ADDRESS: auto@mingrun-tech.com
+      SMTP_FROM_NAME: 铭润科技
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       DEMO_MODE: "true"
       DEMO_INFER_ENABLED: "false"
       UPLOAD_MAX_MB: 50

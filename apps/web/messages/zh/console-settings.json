@@ -3,5 +3,12 @@
   "title": "账户与安全",
   "description": "管理账户、安全和后续敏感操作入口。",
   "panel.title": "账户操作",
-  "panel.description": "当前版本先保留登录管理和删除流程入口，后续会补上 API Key 与团队设置。"
+  "panel.description": "当前版本先保留登录管理和删除流程入口，后续会补上 API Key 与团队设置。",
+  "logout": "退出登录",
+  "deleteData": "发起数据删除",
+  "deleteConfirmation": "删除流程已受理（v0.1 占位，后端异步清理队列）",
+  "securityKicker": "安全须知",
+  "securityNote1": "危险请求会自动附带 CSRF 令牌与 `X-Workspace-ID`。",
+  "securityNote2": "登录状态由 Cookie 判断，最终权限校验仍以后端为准。",
+  "securityNote3": "后续会把 API Key 与设备授权也并入这一页。"
 }

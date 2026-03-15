@@ -1,9 +1,10 @@
 {
   "meta.title": "Product - Mingrun Tech",
   "hero.title": "A portable AI perception system.",
+  "hero.body": "Capsule case, chest camera, and wireless earbuds — three components designed for all-day wearable AI.",
   "hero.cta": "Experience the product",
   "scenes.surface.eyebrow": "Product",
-  "scenes.surface.title": "A portable AI perception system.",
+  "scenes.surface.title": "Three components, each with its role.",
   "scenes.surface.summary": "Capsule case, wireless earbuds, chest camera — three components covering visual capture, voice interaction, and tactile feedback.",
   "scenes.surface.stageLabel": "Product overview",
   "scenes.surface.stageSummary": "Three pieces, each with its role.",
@@ -51,5 +52,9 @@
   "scenes.engineering.detail2.body": "Export engineering files directly to start tooling.",
   "scenes.engineering.tags": "Exploded,Material,Manufacturing",
   "hero.imageAlt": "Product Hero Shot",
-  "scene.imageAlt": "Product Image"
+  "scene.imageAlt": "Product Image",
+  "scenes.surface.imageAlt": "Product hero shot",
+  "scenes.geometry.imageAlt": "Hinge macro shot",
+  "scenes.wear.imageAlt": "Wearing scenario",
+  "scenes.engineering.imageAlt": "Exploded view"
 }
