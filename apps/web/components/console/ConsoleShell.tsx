@@ -1,19 +1,26 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { ActivityBar } from "./ActivityBar";
-import { InlineTopBar } from "./InlineTopBar";
+import { ConsoleTopBar } from "./ConsoleTopBar";
+import { IconBar } from "./IconBar";
+import { ListPanel } from "./ListPanel";
 import { StatusBar } from "./StatusBar";
 
-export function ConsoleShell({ children }: { children: ReactNode }) {
+interface ConsoleShellProps {
+  listContent?: ReactNode;
+  children: ReactNode;
+}
+
+export function ConsoleShell({ listContent, children }: ConsoleShellProps) {
   return (
-    <div className="console-shell">
-      <div className="console-shell-body">
-        <ActivityBar />
-        <div className="console-shell-workspace">
-          <InlineTopBar />
-          {children}
-        </div>
+    <div className="console-shell-v2">
+      <ConsoleTopBar />
+      <div className="console-shell-body-v2">
+        <IconBar />
+        {listContent !== undefined && (
+          <ListPanel>{listContent}</ListPanel>
+        )}
+        <main className="console-shell-main">{children}</main>
       </div>
       <StatusBar />
     </div>
