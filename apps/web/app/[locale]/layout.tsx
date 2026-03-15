@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { DM_Sans, Inter, JetBrains_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -7,6 +7,13 @@ import { notFound } from "next/navigation";
 import { Providers } from "@/components/providers";
 import { routing } from "@/i18n/routing";
 import "@/styles/globals.css";
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-dm-sans",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
 
 const inter = Inter({
   subsets: ["latin"],
@@ -76,7 +83,7 @@ export default async function LocaleLayout({
 
   return (
     <html lang={localeKey} suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className={`${dmSans.variable} ${inter.variable} ${jetbrainsMono.variable}`}>
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>
