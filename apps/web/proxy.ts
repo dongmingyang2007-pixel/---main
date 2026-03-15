@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
+
 /** Routes that next-intl should handle (pages, not API/static/files). */
 function isPageRoute(pathname: string): boolean {
   return !/^\/api\/|^\/_next\/|\./.test(pathname);
@@ -15,6 +17,34 @@ function normalizeOrigin(value?: string): string | null {
   } catch {
     return null;
   }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.includes(hostname as (typeof LOOPBACK_HOSTS)[number]);
+}
+
+function expandLoopbackOrigins(origin: string | null): string[] {
+  if (!origin) {
+    return [];
+  }
+
+  const origins = [origin];
+  try {
+    const url = new URL(origin);
+    if (isLoopbackHost(url.hostname)) {
+      for (const loopbackHost of LOOPBACK_HOSTS) {
+        if (loopbackHost === url.hostname) {
+          continue;
+        }
+        url.hostname = loopbackHost;
+        origins.push(`${url.protocol}//${url.host}`);
+      }
+    }
+  } catch {
+    return origins;
+  }
+
+  return Array.from(new Set(origins));
 }
 
 function isSameOriginEmbeddablePath(pathname: string): boolean {
@@ -35,10 +65,10 @@ function getLocalePrefix(request: NextRequest): string {
 }
 
 function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
-  const apiOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL) || "'self'";
-  const assetOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN);
-  const connectSrc = ["'self'", "blob:", apiOrigin, assetOrigin].filter(Boolean).join(" ");
-  const assetSrc = ["'self'", "data:", "blob:", apiOrigin, assetOrigin].filter(Boolean).join(" ");
+  const apiOrigins = expandLoopbackOrigins(normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL));
+  const assetOrigins = expandLoopbackOrigins(normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN));
+  const connectSrc = ["'self'", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
+  const assetSrc = ["'self'", "data:", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
   const frameAncestors = allowSameOriginFrame ? "'self'" : "'none'";
 
   return [
@@ -63,7 +93,7 @@ export function proxy(request: NextRequest) {
 
   // Auth check — strip locale prefix so /en/app/* is also protected
   const strippedPath = rawPathname.replace(/^\/(en|zh)(?=\/|$)/, "") || "/";
-  if (isProtectedConsolePath(strippedPath) && !request.cookies.get("access_token")?.value) {
+  if (isProtectedConsolePath(strippedPath) && !request.cookies.get("auth_state")?.value) {
     const loginUrl = new URL(`${getLocalePrefix(request)}/login`, request.url);
     return NextResponse.redirect(loginUrl);
   }
