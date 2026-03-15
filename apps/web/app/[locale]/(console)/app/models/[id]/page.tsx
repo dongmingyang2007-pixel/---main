@@ -140,7 +140,7 @@ export default function ModelDetailPage() {
           <div className="console-panel-body">
             <form className="console-form-grid columns-3" onSubmit={createVersion}>
               <div>
-                <label className="console-label" htmlFor="run-id">run_id</label>
+                <label className="console-label" htmlFor="run-id">{t("detail.runIdLabel")}</label>
                 <input
                   id="run-id"
                   className="console-input"
@@ -177,7 +177,7 @@ export default function ModelDetailPage() {
                 const pointer = aliases.find((item) => item.alias === alias);
                 return (
                   <div key={alias} className="console-key-item">
-                    <div className="console-key-label">{alias}</div>
+                    <div className="console-key-label">{t(`detail.alias.${alias}`)}</div>
                     <div className="console-key-value">
                       {pointer ? versionLabelMap[pointer.model_version_id] || pointer.model_version_id.slice(0, 8) : "-"}
                     </div>
@@ -222,9 +222,9 @@ export default function ModelDetailPage() {
             <div>
               <label className="console-label" htmlFor="alias-name">Alias</label>
               <select id="alias-name" className="console-select" value={aliasName} onChange={(e) => setAliasName(e.target.value as "prod" | "staging" | "dev")}>
-                <option value="prod">prod</option>
-                <option value="staging">staging</option>
-                <option value="dev">dev</option>
+                <option value="prod">{t("detail.alias.prod")}</option>
+                <option value="staging">{t("detail.alias.staging")}</option>
+                <option value="dev">{t("detail.alias.dev")}</option>
               </select>
             </div>
             <div>

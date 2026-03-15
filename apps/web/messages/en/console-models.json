@@ -31,8 +31,12 @@
     "createError": "Failed to create model version",
     "aliasTitle": "Alias Management",
     "aliasDescription": "Publishing and rollback share the same version selector, explicitly controlling prod / staging / dev pointers.",
+    "runIdLabel": "Training Run ID",
     "targetVersion": "Target Version",
     "publish": "Publish",
-    "rollback": "Rollback"
+    "rollback": "Rollback",
+    "alias.prod": "Production",
+    "alias.staging": "Staging",
+    "alias.dev": "Development"
   }
 }

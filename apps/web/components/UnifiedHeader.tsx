@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import clsx from "clsx";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
@@ -78,7 +79,11 @@ export function UnifiedHeader({ onMobileMenuOpen }: UnifiedHeaderProps) {
   // In console mode we simply ignore the returned values.
   const { scrolled, hidden, progress } = useScrollNav();
 
-  const loggedIn = isLoggedIn();
+  // Defer cookie read to client-side to avoid SSR/hydration mismatch
+  const [loggedIn, setLoggedIn] = useState(false);
+  useEffect(() => {
+    setLoggedIn(isLoggedIn());
+  }, []);
 
   const navItems = NAV_KEYS.map((item) => ({
     href: item.href,
