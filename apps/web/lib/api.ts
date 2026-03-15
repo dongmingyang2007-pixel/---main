@@ -1,6 +1,7 @@
-import { API_BASE_URL } from "@/lib/env";
+import { getApiBaseUrl } from "@/lib/env";
+import { clearAuthState, setAuthState } from "@/lib/auth-state";
 
-const WORKSPACE_COOKIE_NAME = "qihang_workspace_id";
+const WORKSPACE_COOKIE_NAME = "mingrun_workspace_id";
 
 let cachedCsrfToken: string | null = null;
 
@@ -39,7 +40,7 @@ async function ensureCsrfToken(): Promise<string> {
   if (cachedCsrfToken) {
     return cachedCsrfToken;
   }
-  const res = await fetch(`${API_BASE_URL}/api/v1/auth/csrf`, {
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/auth/csrf`, {
     credentials: "include",
     cache: "no-store",
   });
@@ -77,6 +78,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       clearCachedSecurityState();
+      clearAuthState();
     }
     const errorMessage = data?.error?.message || `Request failed with status ${res.status}`;
     throw new Error(errorMessage);
@@ -89,11 +91,12 @@ async function apiRequest<T>(
   init: RequestInit = {},
   options: { requireCsrf?: boolean; contentType?: string } = {},
 ): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
   const method = (init.method || "GET").toUpperCase();
   const requireCsrf =
     options.requireCsrf ?? (!isPublicMutation(path) && ["POST", "PUT", "PATCH", "DELETE"].includes(method));
   const csrfToken = requireCsrf ? await ensureCsrfToken() : undefined;
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     credentials: "include",
     headers: buildHeaders(path, method, init.headers, options.contentType, csrfToken),
@@ -145,8 +148,9 @@ export async function uploadToPresignedUrl(
   options: { authenticated?: boolean } = {},
 ): Promise<Response> {
   const { authenticated = false } = options;
+  const apiBaseUrl = getApiBaseUrl();
   const method = (init.method || "PUT").toUpperCase();
-  const isApiUrl = path.startsWith(API_BASE_URL);
+  const isApiUrl = path.startsWith(apiBaseUrl);
   const headers = new Headers(init.headers || {});
   if (authenticated && isApiUrl) {
     const csrfToken = await ensureCsrfToken();
@@ -166,10 +170,23 @@ export async function uploadToPresignedUrl(
 
 export function persistWorkspaceId(workspaceId: string): void {
   writeCookie(WORKSPACE_COOKIE_NAME, workspaceId);
+  setAuthState();
 }
 
 export function clearWorkspaceId(): void {
   writeCookie(WORKSPACE_COOKIE_NAME, "");
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await apiPost("/api/v1/auth/logout", {});
+  } catch {
+    // Clear client state regardless of API errors
+  }
+  clearAuthState();
+  clearWorkspaceId();
+  clearCachedSecurityState();
+  window.location.href = "/login";
 }
 
 export async function apiPut<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
