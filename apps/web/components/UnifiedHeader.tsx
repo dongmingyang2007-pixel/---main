@@ -10,6 +10,7 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useScrollNav } from "@/lib/useScrollNav";
 import { isLoggedIn } from "@/lib/auth-state";
 import { logout } from "@/lib/api";
+import { useMobileMenu } from "@/components/MobileMenuProvider";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,9 +27,6 @@ const NAV_KEYS = [
   { href: "/support", key: "nav.support" },
 ] as const;
 
-interface UnifiedHeaderProps {
-  onMobileMenuOpen?: () => void;
-}
 
 function UserAvatarDropdown({ isConsole }: { isConsole: boolean }) {
   const t = useTranslations("common");
@@ -68,13 +66,14 @@ function UserAvatarDropdown({ isConsole }: { isConsole: boolean }) {
   );
 }
 
-export function UnifiedHeader({ onMobileMenuOpen }: UnifiedHeaderProps) {
+export function UnifiedHeader() {
   const t = useTranslations("common");
   const pathname = usePathname();
 
   // Determine mode from pathname
   const isConsole = pathname === "/app" || pathname.startsWith("/app/");
 
+  const { openMenu } = useMobileMenu();
   // CRITICAL: call hook unconditionally to satisfy Rules of Hooks.
   // In console mode we simply ignore the returned values.
   const { scrolled, hidden, progress } = useScrollNav();
@@ -160,7 +159,7 @@ export function UnifiedHeader({ onMobileMenuOpen }: UnifiedHeaderProps) {
         {/* ── Mobile hamburger ── */}
         <button
           className="flex items-center justify-center p-2.5 md:hidden"
-          onClick={onMobileMenuOpen}
+          onClick={openMenu}
           aria-label={t("nav.openMenu")}
         >
           <svg

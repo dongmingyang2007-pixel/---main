@@ -39,6 +39,7 @@ export default function DatasetDetailPage() {
   const [tagInput, setTagInput] = useState<Record<string, string>>({});
   const [commitMessage, setCommitMessage] = useState("v1 baseline");
   const [commitResult, setCommitResult] = useState("");
+  const [hasNewUploads, setHasNewUploads] = useState(false);
   const t = useTranslations("console-datasets");
 
   const load = useCallback(async () => {
@@ -80,7 +81,7 @@ export default function DatasetDetailPage() {
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("detail.description")}</p>
           </div>
 
-      <Uploader datasetId={datasetId} onDone={() => void load()} />
+      <Uploader datasetId={datasetId} onDone={() => { setHasNewUploads(true); void load(); }} />
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="console-panel">
@@ -118,13 +119,15 @@ export default function DatasetDetailPage() {
               <div className="flex items-end">
                 <button
                   className="console-button w-full"
-                  disabled={items.length === 0}
+                  disabled={!hasNewUploads}
                   onClick={async () => {
                     const res = await apiPost<{ dataset_version: { id: string; version: number } }>(
                       `/api/v1/datasets/${datasetId}/commit`,
                       { commit_message: commitMessage, freeze_filter: { tag: null } },
                     );
                     setCommitResult(t("detail.committed", { version: res.dataset_version.version }));
+                    setHasNewUploads(false);
+                    setCommitMessage(`v${res.dataset_version.version + 1}`);
                     await load();
                   }}
                 >

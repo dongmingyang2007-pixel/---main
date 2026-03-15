@@ -16,7 +16,7 @@ export function DataTable({
   compact?: boolean;
 }) {
   return (
-    <div className="console-panel console-table-surface overflow-hidden">
+    <div className="console-panel console-table-surface">
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
           {caption ? <caption className="sr-only">{caption}</caption> : null}

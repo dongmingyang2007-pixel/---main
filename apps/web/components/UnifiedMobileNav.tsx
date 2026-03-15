@@ -8,10 +8,9 @@ import clsx from "clsx";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
 import { isLoggedIn } from "@/lib/auth-state";
 import { logout } from "@/lib/api";
+import { useMobileMenu } from "@/components/MobileMenuProvider";
 
 interface UnifiedMobileNavProps {
-  open: boolean;
-  onClose: () => void;
   mode: "public" | "console";
 }
 
@@ -35,7 +34,8 @@ const CONSOLE_NAV_ITEMS = [
   { href: "/app/settings", navKey: "settings" },
 ] as const;
 
-export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps) {
+export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
+  const { open, closeMenu } = useMobileMenu();
   const pathname = usePathname();
   const tCommon = useTranslations("common");
   const tConsole = useTranslations("console");
@@ -58,7 +58,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
     href === "/app" ? pathname === "/app" : pathname.startsWith(href);
 
   const handleLogout = async () => {
-    onClose();
+    closeMenu();
     await logout();
   };
 
@@ -81,7 +81,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
               {brandName}
             </span>
             <button
-              onClick={onClose}
+              onClick={closeMenu}
               className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               aria-label={tCommon("nav.closeMenu")}
             >
@@ -105,7 +105,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
                 <PublicDocumentLink
                   key={item.href}
                   href={item.href}
-                  onClick={onClose}
+                  onClick={closeMenu}
                   className={clsx(
                     "flex items-center rounded-lg px-4 py-3 text-sm transition-colors",
                     pathname === item.href
@@ -123,7 +123,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={onClose}
+                  onClick={closeMenu}
                   className={clsx(
                     "flex items-center justify-between rounded-lg px-4 py-3 text-sm transition-colors",
                     isConsoleActive(item.href)
@@ -147,7 +147,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
                 <>
                   <Link
                     href="/app/settings"
-                    onClick={onClose}
+                    onClick={closeMenu}
                     className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)] transition-colors"
                   >
                     {tCommon("user.settings")}
@@ -162,7 +162,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
               ) : (
                 <Link
                   href="/login"
-                  onClick={onClose}
+                  onClick={closeMenu}
                   className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)] transition-colors"
                 >
                   {tCommon("user.login")}
@@ -176,7 +176,7 @@ export function UnifiedMobileNav({ open, onClose, mode }: UnifiedMobileNavProps)
             <div className="mt-auto p-4 border-t border-[var(--border)]">
               <Link
                 href="/"
-                onClick={onClose}
+                onClick={closeMenu}
                 className="block text-center text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 {tCommon("user.backToSite")}
