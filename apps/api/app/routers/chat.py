@@ -1,7 +1,8 @@
+import base64
 import random
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -9,7 +10,7 @@ from app.core.deps import get_current_user, get_current_workspace_id, get_db_ses
 from app.core.errors import ApiError
 from app.models import Conversation, Memory, Message, Project, User
 from app.schemas.conversation import ConversationCreate, ConversationOut, MessageCreate, MessageOut
-from app.services.orchestrator import orchestrate_inference
+from app.services.orchestrator import orchestrate_inference, orchestrate_voice_inference
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -206,3 +207,154 @@ async def send_message(
             pass  # Celery failure is non-fatal
 
     return MessageOut.model_validate(ai_message, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Voice & Image endpoints (full pipeline: ASR → LLM → TTS)
+# ---------------------------------------------------------------------------
+
+
+def _get_conversation_or_404(db: Session, conversation_id: str, workspace_id: str) -> Conversation:
+    """Shared lookup used by voice / image endpoints."""
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.id == conversation_id, Conversation.workspace_id == workspace_id)
+        .first()
+    )
+    if not conversation:
+        raise ApiError("not_found", "Conversation not found", status_code=404)
+    return conversation
+
+
+def _trigger_memory_extraction(
+    workspace_id: str, project_id: str, conversation_id: str, user_text: str, ai_text: str
+) -> None:
+    """Fire-and-forget Celery task for memory extraction."""
+    if not settings.dashscope_api_key:
+        return
+    try:
+        from app.tasks.worker_tasks import extract_memories
+
+        extract_memories.delay(workspace_id, project_id, conversation_id, user_text, ai_text)
+    except Exception:  # noqa: BLE001
+        pass  # Celery failure is non-fatal
+
+
+def _save_pipeline_messages(
+    db: Session,
+    conversation: Conversation,
+    result: dict,
+) -> Message:
+    """Persist user + assistant messages from a voice/image pipeline result.
+
+    Returns the saved assistant Message (refreshed).
+    """
+    if result["text_input"]:
+        user_msg = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=result["text_input"],
+        )
+        db.add(user_msg)
+
+    ai_msg = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=result["text_response"],
+    )
+    db.add(ai_msg)
+    conversation.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(ai_msg)
+    return ai_msg
+
+
+def _build_pipeline_response(ai_msg: Message, result: dict) -> dict:
+    """Format the JSON response shared by voice & image endpoints."""
+    return {
+        "message": MessageOut.model_validate(ai_msg, from_attributes=True).model_dump(),
+        "text_input": result["text_input"],
+        "audio_response": (
+            base64.b64encode(result["audio_response"]).decode()
+            if result["audio_response"]
+            else None
+        ),
+    }
+
+
+@router.post("/conversations/{conversation_id}/voice")
+async def send_voice_message(
+    conversation_id: str,
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _: None = Depends(require_csrf_protection),
+) -> dict:
+    """Accept an audio file, run ASR → LLM (with memory/RAG) → TTS, return
+    the AI text response plus optional base64-encoded audio."""
+    _ = current_user  # noqa: F841 — auth guard only
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id)
+
+    audio_bytes = await audio.read()
+
+    # Run full voice pipeline
+    result = await orchestrate_voice_inference(
+        db,
+        workspace_id=workspace_id,
+        project_id=conversation.project_id,
+        conversation_id=conversation_id,
+        audio_bytes=audio_bytes,
+    )
+
+    # Persist messages
+    ai_msg = _save_pipeline_messages(db, conversation, result)
+
+    # Async memory extraction
+    _trigger_memory_extraction(
+        workspace_id, conversation.project_id, conversation_id,
+        result["text_input"], result["text_response"],
+    )
+
+    return _build_pipeline_response(ai_msg, result)
+
+
+@router.post("/conversations/{conversation_id}/image")
+async def send_image_message(
+    conversation_id: str,
+    image: UploadFile = File(...),
+    audio: UploadFile | None = File(None),
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _: None = Depends(require_csrf_protection),
+) -> dict:
+    """Accept an image (+ optional audio), run the multimodal pipeline:
+    (optional ASR) + Vision/LLM → TTS, return text + optional audio."""
+    _ = current_user  # noqa: F841 — auth guard only
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id)
+
+    image_bytes = await image.read()
+    audio_bytes = (await audio.read()) if audio else None
+
+    # Run full pipeline with image (and optional voice input)
+    result = await orchestrate_voice_inference(
+        db,
+        workspace_id=workspace_id,
+        project_id=conversation.project_id,
+        conversation_id=conversation_id,
+        audio_bytes=audio_bytes,
+        image_bytes=image_bytes,
+        text_input="请描述这张图片" if not audio_bytes else None,
+    )
+
+    # Persist messages
+    ai_msg = _save_pipeline_messages(db, conversation, result)
+
+    # Async memory extraction
+    _trigger_memory_extraction(
+        workspace_id, conversation.project_id, conversation_id,
+        result["text_input"], result["text_response"],
+    )
+
+    return _build_pipeline_response(ai_msg, result)
