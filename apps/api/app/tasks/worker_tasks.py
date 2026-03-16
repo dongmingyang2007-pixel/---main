@@ -231,3 +231,106 @@ def cleanup_deleted_project(project_id: str) -> None:
         db.commit()
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.worker_tasks.extract_memories")
+def extract_memories(
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_message: str,
+    ai_response: str,
+) -> None:
+    """Extract factual memories from a conversation turn.
+    Called asynchronously after each message exchange."""
+    import asyncio
+    import json
+    import re
+
+    from app.models.entities import Memory
+    from app.services.dashscope_client import chat_completion
+    from app.services.embedding import embed_and_store
+
+    EXTRACTION_PROMPT = """你是一个记忆提取器。分析以下对话，提取值得记住的事实。
+
+规则：
+- 只提取具体事实，不提取观点或推测
+- 事实必须关于用户本人（身份、偏好、计划、经历、关系）
+- 不提取一般性知识（如"北京是中国首都"）
+- 每个事实用一句话表达
+- importance: 0-1，其中 >=0.7 创建为临时记忆，>=0.9 直接升级为永久记忆
+- category: 用中文，层级用点分隔（如"工作.计划"、"健康.用药"）
+
+对话内容：
+用户：{user_message}
+AI：{ai_response}
+
+输出 JSON 数组：
+[{{"fact": "...", "category": "...", "importance": 0.0}}]
+
+如果没有值得记忆的事实，输出空数组 []。"""
+
+    db = SessionLocal()
+    try:
+        prompt = EXTRACTION_PROMPT.format(
+            user_message=user_message,
+            ai_response=ai_response,
+        )
+
+        # Call model to extract memories
+        raw_response = asyncio.run(
+            chat_completion(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,  # Low temperature for structured extraction
+                max_tokens=1024,
+            )
+        )
+
+        # Parse JSON from response (handle markdown code blocks)
+        json_str = raw_response.strip()
+        json_match = re.search(r"\[.*\]", json_str, re.DOTALL)
+        if not json_match:
+            return
+
+        facts = json.loads(json_match.group(0))
+        if not facts:
+            return
+
+        for fact in facts:
+            importance = fact.get("importance", 0)
+            if importance < 0.7:
+                continue
+
+            memory_type = "permanent" if importance >= 0.9 else "temporary"
+
+            memory = Memory(
+                workspace_id=workspace_id,
+                project_id=project_id,
+                content=fact.get("fact", ""),
+                category=fact.get("category", ""),
+                type=memory_type,
+                source_conversation_id=conversation_id if memory_type == "temporary" else None,
+                metadata_json={"importance": importance, "source": "auto_extraction"},
+            )
+            db.add(memory)
+            db.flush()
+
+            # Embed the memory for future RAG retrieval
+            try:
+                asyncio.run(
+                    embed_and_store(
+                        db,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        memory_id=memory.id,
+                        chunk_text=memory.content,
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass  # Embedding failure is non-fatal
+
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    finally:
+        db.close()
