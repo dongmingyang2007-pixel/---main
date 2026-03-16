@@ -3,7 +3,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import type { ViewerWindow } from "./helpers/viewer-runtime";
 
-const MODEL_PATH = process.env.PLAYWRIGHT_VIEWER_MODEL || "/qihang_product_pearl_capsule.glb";
+const MODEL_PATH = process.env.PLAYWRIGHT_VIEWER_MODEL || "/qihang_product_pearl_V3.glb";
 const SHOT_PREFIX =
   process.env.PLAYWRIGHT_VIEWER_PREFIX || path.basename(MODEL_PATH).replace(/\.[^.]+$/, "");
 const VIEWER_URL = `/product-viewer.html?model=${encodeURIComponent(MODEL_PATH)}&ui=0&note=0`;

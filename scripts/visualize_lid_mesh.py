@@ -137,8 +137,8 @@ def draw_wireframe_2d(ax, triangles, project, xlim=None, ylim=None, title="", li
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--glb", type=Path, default=Path("apps/web/public/qihang_product_pearl_capsule.glb"))
-    parser.add_argument("--output", type=Path, default=Path("output/debug_capsule/lid_wireframe_qa.png"))
+    parser.add_argument("--glb", type=Path, default=Path("apps/web/public/qihang_product_pearl_V3.glb"))
+    parser.add_argument("--output", type=Path, default=Path("output/debug_v3/lid_wireframe_qa.png"))
     parser.add_argument("--label", type=str, default="")
     args = parser.parse_args()
 

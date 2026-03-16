@@ -1,0 +1,471 @@
+{
+  "inputGlbPath": "apps/web/public/qihang_product_pearl_V2.glb",
+  "inputGlbSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0",
+  "asset": {
+    "generator": "Khronos glTF Blender I/O v5.0.21",
+    "version": "2.0"
+  },
+  "counts": {
+    "scenes": 1,
+    "nodes": 83,
+    "meshes": 36,
+    "materials": 21,
+    "bufferViews": 131,
+    "accessors": 131,
+    "animations": 0,
+    "binBytes": 1570228
+  },
+  "sceneRoots": [
+    "QIHANG_Product"
+  ],
+  "requiredNodeSummaries": {
+    "QIHANG_Product": {
+      "index": 82,
+      "parent": null,
+      "children": [
+        "Case_Base",
+        "Case_Lid_Pivot"
+      ],
+      "mesh": null,
+      "translation": [
+        0.0,
+        0.01,
+        0.0
+      ],
+      "rotation": [],
+      "scale": [
+        225.28181458,
+        225.28181458,
+        225.28181458
+      ],
+      "productLocalOriginMm": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "Case_Base": {
+      "index": 70,
+      "parent": "QIHANG_Product",
+      "children": [
+        "Base_Pivot_Assembly",
+        "Brooch_Camera",
+        "Case_Base_Shell",
+        "DockWell_L",
+        "DockWell_R",
+        "Earbud_Left",
+        "Earbud_Right"
+      ],
+      "mesh": null,
+      "translation": [],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "Case_Lid": {
+      "index": 80,
+      "parent": "Case_Lid_Pivot",
+      "children": [
+        "Case_Lid_Shell",
+        "Lid_Pivot_Assembly",
+        "Lid_Pivot_Hole_Center",
+        "Lid_Pivot_Snap_Lip",
+        "Pivot_Plug_Guide_Anchor",
+        "Pivot_Plug_Hover_Anchor",
+        "Pivot_Plug_Seat_Anchor"
+      ],
+      "mesh": null,
+      "translation": [
+        0.0,
+        0.00456456,
+        0.0334
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        0.0,
+        14.829,
+        0.0
+      ]
+    },
+    "Case_Lid_Pivot": {
+      "index": 81,
+      "parent": "QIHANG_Product",
+      "children": [
+        "Case_Lid"
+      ],
+      "mesh": null,
+      "translation": [
+        0.0,
+        0.01026441,
+        -0.0334
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        0.0,
+        10.2644,
+        -33.4
+      ]
+    },
+    "Case_Base_Shell": {
+      "index": 29,
+      "parent": "Case_Base",
+      "children": [],
+      "mesh": 19,
+      "translation": [],
+      "rotation": [],
+      "scale": [
+        0.88,
+        0.92000002,
+        0.88
+      ],
+      "productLocalOriginMm": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "Case_Lid_Shell": {
+      "index": 71,
+      "parent": "Case_Lid",
+      "children": [],
+      "mesh": 33,
+      "translation": [],
+      "rotation": [],
+      "scale": [
+        0.88,
+        0.92000002,
+        0.88
+      ],
+      "productLocalOriginMm": [
+        0.0,
+        14.829,
+        0.0
+      ]
+    },
+    "Earbud_Left": {
+      "index": 50,
+      "parent": "Case_Base",
+      "children": [
+        "Earbud_Left_NozzleAnchor",
+        "GLB_Ear_Left"
+      ],
+      "mesh": null,
+      "translation": [
+        -0.0208176,
+        -0.001205,
+        0.0012488
+      ],
+      "rotation": [
+        -0.5,
+        0.5,
+        -0.5,
+        0.5
+      ],
+      "scale": [
+        2.33999991,
+        2.33999991,
+        2.33999991
+      ],
+      "productLocalOriginMm": [
+        -20.8176,
+        -1.205,
+        1.2488
+      ]
+    },
+    "Earbud_Right": {
+      "index": 69,
+      "parent": "Case_Base",
+      "children": [
+        "Earbud_Right_NozzleAnchor",
+        "GLB_Ear_Right"
+      ],
+      "mesh": null,
+      "translation": [
+        0.0208176,
+        -0.001205,
+        0.0012488
+      ],
+      "rotation": [
+        -0.5,
+        -0.5,
+        0.5,
+        0.5
+      ],
+      "scale": [
+        2.33999991,
+        2.33999991,
+        2.33999991
+      ],
+      "productLocalOriginMm": [
+        20.8176,
+        -1.205,
+        1.2488
+      ]
+    },
+    "Brooch_Camera": {
+      "index": 28,
+      "parent": "Case_Base",
+      "children": [
+        "GLB_Camera"
+      ],
+      "mesh": null,
+      "translation": [
+        0.0,
+        0.001945,
+        0.001
+      ],
+      "rotation": [],
+      "scale": [
+        1.73999989,
+        1.73999989,
+        1.73999989
+      ],
+      "productLocalOriginMm": [
+        0.0,
+        1.945,
+        1.0
+      ]
+    },
+    "Pivot_Pin_Printable": {
+      "index": 2,
+      "parent": "Pivot_Module_Pin",
+      "children": [],
+      "mesh": 1,
+      "translation": [
+        0.0,
+        0.010625,
+        -0.0334
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        0.0,
+        10.625,
+        -33.4
+      ]
+    },
+    "Lid_Pivot_Hole_Center": {
+      "index": 75,
+      "parent": "Case_Lid",
+      "children": [],
+      "mesh": null,
+      "translation": [
+        0.0,
+        -0.00420397,
+        -0.0334
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        0.0,
+        10.625,
+        -33.4
+      ]
+    },
+    "DockWell_L": {
+      "index": 30,
+      "parent": "Case_Base",
+      "children": [],
+      "mesh": null,
+      "translation": [
+        -0.0196176,
+        0.009545,
+        0.0012488
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        -19.6176,
+        9.545,
+        1.2488
+      ]
+    },
+    "DockWell_R": {
+      "index": 31,
+      "parent": "Case_Base",
+      "children": [],
+      "mesh": null,
+      "translation": [
+        0.0196176,
+        0.009545,
+        0.0012488
+      ],
+      "rotation": [],
+      "scale": [],
+      "productLocalOriginMm": [
+        19.6176,
+        9.545,
+        1.2488
+      ]
+    }
+  },
+  "partBoundingBoxes": {
+    "Case_Base_Shell": {
+      "bboxMinMm": [
+        -16.2,
+        -11.4034,
+        -42.944
+      ],
+      "bboxMaxMm": [
+        16.2,
+        11.4034,
+        42.944
+      ],
+      "bboxSizeMm": [
+        32.4,
+        22.8068,
+        85.888
+      ],
+      "bboxCenterMm": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "Case_Lid_Shell": {
+      "bboxMinMm": [
+        -16.2,
+        11.6237,
+        -42.944
+      ],
+      "bboxMaxMm": [
+        16.2,
+        18.8356,
+        42.944
+      ],
+      "bboxSizeMm": [
+        32.4,
+        7.2119,
+        85.888
+      ],
+      "bboxCenterMm": [
+        0.0,
+        15.2296,
+        0.0
+      ]
+    },
+    "Earbud_Left": {
+      "bboxMinMm": [
+        -25.4576,
+        -6.1629,
+        -3.0881
+      ],
+      "bboxMaxMm": [
+        -16.1776,
+        3.951,
+        11.2446
+      ],
+      "bboxSizeMm": [
+        9.2799,
+        10.1139,
+        14.3327
+      ],
+      "bboxCenterMm": [
+        -20.8176,
+        -1.1059,
+        4.0782
+      ]
+    },
+    "Earbud_Right": {
+      "bboxMinMm": [
+        16.1776,
+        -6.1629,
+        -3.0881
+      ],
+      "bboxMaxMm": [
+        25.4576,
+        3.951,
+        11.2446
+      ],
+      "bboxSizeMm": [
+        9.2799,
+        10.1139,
+        14.3327
+      ],
+      "bboxCenterMm": [
+        20.8176,
+        -1.1059,
+        4.0782
+      ]
+    },
+    "Brooch_Camera": {
+      "bboxMinMm": [
+        -2.8582,
+        -5.2658,
+        -2.2112
+      ],
+      "bboxMaxMm": [
+        2.8582,
+        0.9917,
+        4.065
+      ],
+      "bboxSizeMm": [
+        5.7165,
+        6.2575,
+        6.2762
+      ],
+      "bboxCenterMm": [
+        0.0,
+        -2.137,
+        0.9269
+      ]
+    },
+    "Pivot_Pin_Printable": {
+      "bboxMinMm": [
+        -5.475,
+        9.705,
+        -38.875
+      ],
+      "bboxMaxMm": [
+        5.475,
+        16.745,
+        -27.925
+      ],
+      "bboxSizeMm": [
+        10.95,
+        7.04,
+        10.95
+      ],
+      "bboxCenterMm": [
+        0.0,
+        13.225,
+        -33.4
+      ]
+    }
+  },
+  "hierarchyGuards": {
+    "QIHANG_Product_children": [
+      "Case_Base",
+      "Case_Lid_Pivot"
+    ],
+    "Case_Base_children": [
+      "Base_Pivot_Assembly",
+      "Brooch_Camera",
+      "Case_Base_Shell",
+      "DockWell_L",
+      "DockWell_R",
+      "Earbud_Left",
+      "Earbud_Right"
+    ],
+    "Case_Lid_Pivot_children": [
+      "Case_Lid"
+    ],
+    "Case_Lid_children": [
+      "Case_Lid_Shell",
+      "Lid_Pivot_Assembly",
+      "Lid_Pivot_Hole_Center",
+      "Lid_Pivot_Snap_Lip",
+      "Pivot_Plug_Guide_Anchor",
+      "Pivot_Plug_Hover_Anchor",
+      "Pivot_Plug_Seat_Anchor"
+    ]
+  },
+  "outputGlbPath": "apps/web/public/qihang_product_pearl_V3.glb",
+  "outputGlbSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0"
+}
