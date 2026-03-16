@@ -76,7 +76,7 @@ def get_memory_graph(
         )
 
     return MemoryGraphOut(
-        memories=[MemoryOut.model_validate(m, from_attributes=True) for m in all_memories],
+        nodes=[MemoryOut.model_validate(m, from_attributes=True) for m in all_memories],
         edges=[MemoryEdgeOut.model_validate(e, from_attributes=True) for e in edges],
     )
 

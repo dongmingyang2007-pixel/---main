@@ -71,7 +71,7 @@ class MemoryDetailOut(MemoryOut):
 
 
 class MemoryGraphOut(BaseModel):
-    memories: list[MemoryOut]
+    nodes: list[MemoryOut]
     edges: list[MemoryEdgeOut]
 
 

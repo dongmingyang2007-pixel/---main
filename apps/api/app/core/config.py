@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     demo_max_infer_count: int = 3
     demo_max_concurrent_sessions_per_ip: int = 5
 
+    # ── AI / Model API ──
+    dashscope_api_key: str = ""
+    dashscope_model: str = "qwen-plus"
+    dashscope_embedding_model: str = "text-embedding-v3"
+
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: str = ""
