@@ -3,6 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker/docker-compose.yml"
+ENV_FILE="$ROOT_DIR/.env"
+
+# Compose command with optional --env-file
+compose_cmd() {
+  if [ -f "$ENV_FILE" ]; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
+}
 PLAYWRIGHT_OUTPUT_DIRS=(
   "$ROOT_DIR/output/playwright"
   "$ROOT_DIR/apps/web/output/playwright"
@@ -43,13 +53,13 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 echo "Stopping old compose containers..."
-docker compose -f "$COMPOSE_FILE" down --remove-orphans
+compose_cmd down --remove-orphans
 
 echo "Cleaning local Playwright artifacts..."
 cleanup_playwright_outputs
 
 echo "Starting full local stack via docker compose..."
-docker compose -f "$COMPOSE_FILE" up --build -d --remove-orphans
+compose_cmd up --build -d --remove-orphans
 
 wait_for_http "API" "http://localhost:8000/health"
 wait_for_http "Web" "http://localhost:3000"
@@ -60,4 +70,4 @@ echo "  Web:   http://localhost:3000"
 echo "  API:   http://localhost:8000/health"
 echo "  MinIO: http://localhost:9001"
 echo
-docker compose -f "$COMPOSE_FILE" ps
+compose_cmd ps
