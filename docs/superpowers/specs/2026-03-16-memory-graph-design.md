@@ -128,9 +128,9 @@ FastAPI 后端
 | type | VARCHAR(20) | `permanent` / `temporary` |
 | source_conversation_id | UUID, FK → conversations, NULLABLE | 来源对话（临时记忆必有，永久记忆可选） |
 | parent_memory_id | UUID, FK → memories, NULLABLE | 父节点（层级结构） |
-| position_x | FLOAT, NULLABLE | 图谱中的 x 坐标（用户拖拽后保存） |
-| position_y | FLOAT, NULLABLE | 图谱中的 y 坐标 |
-| metadata_json | JSONB | 扩展信息（提取置信度、来源消息 ID 等） |
+| position_x | FLOAT, NULLABLE | 图谱中的 x 坐标（仅在用户拖拽结束 drag-end 时保存，不在力仿真 tick 时保存） |
+| position_y | FLOAT, NULLABLE | 图谱中的 y 坐标（同上） |
+| metadata_json | JSON (ORM) / jsonb (migration) | 扩展信息（提取置信度、来源消息 ID 等）。ORM 层使用 `mapped_column(JSON)` 匹配现有代码模式，Alembic migration 使用 `sa.Column(sa.dialects.postgresql.JSONB)`。 |
 | created_at | TIMESTAMPTZ | 创建时间 |
 | updated_at | TIMESTAMPTZ | 更新时间 |
 
@@ -141,8 +141,8 @@ FastAPI 后端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | UUID, PK | 主键 |
-| source_memory_id | UUID, FK → memories | 源节点 |
-| target_memory_id | UUID, FK → memories | 目标节点 |
+| source_memory_id | UUID, FK → memories ON DELETE CASCADE | 源节点 |
+| target_memory_id | UUID, FK → memories ON DELETE CASCADE | 目标节点 |
 | edge_type | VARCHAR(20) | `auto` (AI 创建) / `manual` (用户创建) |
 | strength | FLOAT | 关联强度 (0-1)，影响图谱中的连线粗细 |
 | created_at | TIMESTAMPTZ | 创建时间 |
@@ -155,13 +155,16 @@ FastAPI 后端
 |------|------|------|
 | id | UUID, PK | 主键 |
 | workspace_id | UUID, FK → workspaces | 租户隔离（检索时过滤） |
-| memory_id | UUID, FK → memories, NULLABLE | 关联的记忆节点 |
+| project_id | UUID, FK → projects | 所属 AI 助手（RAG 按助手隔离检索） |
+| memory_id | UUID, FK → memories ON DELETE CASCADE, NULLABLE | 关联的记忆节点 |
 | data_item_id | UUID, FK → data_items, NULLABLE | 关联的文件数据项（RAG 文档） |
 | chunk_text | TEXT | 原文片段 |
 | vector | vector(1024) | pgvector 向量（维度取决于 embedding 模型） |
 | created_at | TIMESTAMPTZ | 创建时间 |
 
-索引：`USING ivfflat (vector vector_cosine_ops)` 用于向量检索，`(workspace_id)` 用于租户过滤
+约束：`CHECK (memory_id IS NOT NULL OR data_item_id IS NOT NULL)` — 每条向量必须关联到记忆或文件
+
+索引：`USING hnsw (vector vector_cosine_ops)` 用于向量检索（HNSW 不依赖数据量调参，优于 IVFFlat），`(workspace_id, project_id)` 用于租户+助手过滤
 
 #### `conversations` 表
 
@@ -171,6 +174,7 @@ FastAPI 后端
 | workspace_id | UUID, FK → workspaces | 租户隔离 |
 | project_id | UUID, FK → projects | 所属 AI 助手 |
 | title | VARCHAR(255) | 对话标题（AI 自动生成或用户设定） |
+| created_by | UUID, FK → users | 创建对话的用户（多成员 workspace 中区分对话归属） |
 | created_at | TIMESTAMPTZ | 创建时间 |
 | updated_at | TIMESTAMPTZ | 最后消息时间 |
 
@@ -201,7 +205,7 @@ FastAPI 后端
 
 | 方法 | 路径 | 请求体 | 返回 | 说明 |
 |------|------|--------|------|------|
-| GET | `/memory?project_id={id}` | — | 记忆节点列表 + 边列表 (图谱数据) | 获取 AI 助手的完整图谱 |
+| GET | `/memory?project_id={id}&conversation_id={id?}` | — | 记忆节点列表 + 边列表 (图谱数据) | 获取 AI 助手的完整图谱。返回所有永久记忆 + 指定对话的临时记忆。v1 一次性返回全部节点（预期 500 以内），如果超过上限后续版本加分页。 |
 | POST | `/memory` | `{project_id, content, category?, type?, parent_memory_id?}` | 新建的记忆节点 | 手动创建记忆 |
 | GET | `/memory/{id}` | — | 记忆详情（含关联文件、来源对话） | 查看单个记忆 |
 | PATCH | `/memory/{id}` | `{content?, category?, position_x?, position_y?, parent_memory_id?}` | 更新后的记忆 | 编辑记忆 |
@@ -220,6 +224,17 @@ FastAPI 后端
 | DELETE | `/chat/conversations/{id}` | — | 204 | 删除对话 + 关联的临时记忆 |
 | GET | `/chat/conversations/{id}/messages` | — | 消息列表 | 获取对话历史 |
 | POST | `/chat/conversations/{id}/messages` | `{content}` | AI 回复消息 | 发送消息并获取 AI 回复 |
+| GET | `/chat/conversations/{id}/memory-stream` | — | SSE 事件流 | 实时推送新提取的记忆节点（阶段 3 实现） |
+
+#### 错误响应
+
+| 状态码 | 场景 | 说明 |
+|--------|------|------|
+| 404 | conversation_id / memory_id 不存在 | `{"detail": "Not found"}` |
+| 422 | 请求体验证失败 | Pydantic 标准验证错误 |
+| 429 | 发送消息频率过高 | 按用户限流（10 条/分钟） |
+| 502 | 第三方模型 API 不可用 | `{"detail": "Model API unavailable", "retry_after": 5}` |
+| 503 | 推理超时（>30s） | `{"detail": "Inference timeout"}` |
 
 `POST /chat/conversations/{id}/messages` 的内部流程：
 1. 保存用户消息到 `messages` 表
@@ -241,6 +256,7 @@ async def orchestrate_inference(
     # ① 检索 RAG 知识（向量相似度搜索，top 5）
     knowledge_chunks = await search_embeddings(
         workspace_id=workspace_id,
+        project_id=project_id,
         query=user_message,
         limit=5,
     )
@@ -297,8 +313,30 @@ async def orchestrate_inference(
 
 对话后异步执行：
 
-1. 将本轮对话（用户消息 + AI 回复）发给模型 API，使用专门的提取 prompt
-2. 提取 prompt 要求模型输出结构化 JSON：`[{fact: "...", category: "...", importance: 0-1}]`
+1. 将本轮对话（用户消息 + AI 回复）发给模型 API，使用以下提取 prompt：
+
+```
+你是一个记忆提取器。分析以下对话，提取值得记住的事实。
+
+规则：
+- 只提取具体事实，不提取观点或推测
+- 事实必须关于用户本人（身份、偏好、计划、经历、关系）
+- 不提取一般性知识（如"北京是中国首都"）
+- 每个事实用一句话表达
+- importance: 0-1，其中 ≥0.7 创建为临时记忆，≥0.9 直接升级为永久记忆
+- category: 用中文，层级用点分隔（如"工作.计划"、"健康.用药"）
+
+对话内容：
+{user_message}
+{ai_response}
+
+输出 JSON 数组：
+[{"fact": "...", "category": "...", "importance": 0.0-1.0}]
+
+如果没有值得记忆的事实，输出空数组 []。
+```
+
+2. 解析模型返回的 JSON：`[{fact: "...", category: "...", importance: 0-1}]`
 3. importance ≥ 0.7 的事实创建为蓝色临时记忆
 4. 检查是否与已有永久记忆重复（向量相似度 > 0.9 则合并而非新建）
 5. 蓝→红自动转换检查：该事实是否在不同对话中出现过 ≥ 2 次
