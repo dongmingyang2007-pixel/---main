@@ -41,5 +41,23 @@
     "back": "上一步",
     "next": "下一步",
     "skip": "跳过"
+  },
+  "canvas": {
+    "model": "基座模型",
+    "knowledge": "知识库",
+    "personality": "人格设定",
+    "skills": "技能",
+    "change": "更换",
+    "manage": "管理",
+    "edit": "编辑",
+    "save": "保存",
+    "add": "添加",
+    "expandAdvanced": "展开高级选项",
+    "collapseAdvanced": "收起高级选项",
+    "tryChat": "试用对话",
+    "saveAndTrain": "保存并训练",
+    "noDatasets": "暂无知识库，点击管理添加",
+    "noSkills": "暂无技能，点击添加",
+    "clickToRename": "点击修改名称"
   }
 }

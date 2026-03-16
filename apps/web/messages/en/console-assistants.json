@@ -41,5 +41,23 @@
     "back": "Back",
     "next": "Next",
     "skip": "Skip"
+  },
+  "canvas": {
+    "model": "Base Model",
+    "knowledge": "Knowledge",
+    "personality": "Personality",
+    "skills": "Skills",
+    "change": "Change",
+    "manage": "Manage",
+    "edit": "Edit",
+    "save": "Save",
+    "add": "Add",
+    "expandAdvanced": "Show advanced options",
+    "collapseAdvanced": "Hide advanced options",
+    "tryChat": "Try Chat",
+    "saveAndTrain": "Save & Train",
+    "noDatasets": "No knowledge bases yet. Click Manage to add.",
+    "noSkills": "No skills yet. Click Add.",
+    "clickToRename": "Click to rename"
   }
 }
