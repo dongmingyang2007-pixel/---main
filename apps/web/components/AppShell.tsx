@@ -7,26 +7,22 @@ import { useTranslations } from "next-intl";
 
 const NAV_KEYS = [
   { href: "/app", key: "dashboard" },
-  { href: "/app/projects", key: "projects" },
-  { href: "/app/datasets", key: "datasets" },
-  { href: "/app/train", key: "train" },
-  { href: "/app/models", key: "models" },
-  { href: "/app/eval", key: "eval" },
+  { href: "/app/assistants", key: "assistants" },
+  { href: "/app/knowledge", key: "knowledge" },
+  { href: "/app/training", key: "training" },
+  { href: "/app/chat", key: "chat" },
   { href: "/app/settings", key: "settings" },
-  { href: "/app/devices", key: "devices", comingSoon: true },
-  { href: "/app/billing", key: "billing", comingSoon: true },
+  { href: "/app/devices", key: "devices" },
 ];
 
 const ROUTE_KEYS = [
   { match: (p: string) => p === "/app", key: "app" },
-  { match: (p: string) => p.startsWith("/app/projects"), key: "projects" },
-  { match: (p: string) => p.startsWith("/app/datasets"), key: "datasets" },
-  { match: (p: string) => p.startsWith("/app/train"), key: "train" },
-  { match: (p: string) => p.startsWith("/app/models"), key: "models" },
-  { match: (p: string) => p.startsWith("/app/eval"), key: "eval" },
+  { match: (p: string) => p.startsWith("/app/assistants"), key: "assistants" },
+  { match: (p: string) => p.startsWith("/app/knowledge"), key: "knowledge" },
+  { match: (p: string) => p.startsWith("/app/training"), key: "training" },
+  { match: (p: string) => p.startsWith("/app/chat"), key: "chat" },
   { match: (p: string) => p.startsWith("/app/settings"), key: "settings" },
   { match: (p: string) => p.startsWith("/app/devices"), key: "devices" },
-  { match: (p: string) => p.startsWith("/app/billing"), key: "billing" },
 ];
 
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {
@@ -60,7 +56,6 @@ export function AppShell({ title, children }: { title: string; children: ReactNo
               >
                 <span className="flex items-center gap-2">
                   {t(`nav.${item.key}`)}
-                  {item.comingSoon && <span className="console-coming-soon">{t("shell.comingSoon")}</span>}
                 </span>
                 <span className="text-xs text-[var(--text-secondary)]">{t(`breadcrumb.${item.key}`)}</span>
               </Link>

@@ -83,7 +83,7 @@ export default function DashboardPage() {
             <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
               {t("dashboard.overview")}
             </p>
-            <h1 className="mt-2 text-2xl font-bold">{t("nav.dashboard")}</h1>
+            <h1 className="mt-2 text-2xl font-bold">{t("route.app.title")}</h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("dashboard.overviewBody")}</p>
           </div>
 
@@ -92,10 +92,10 @@ export default function DashboardPage() {
         title={t("dashboard.liveSummaryTitle")}
         summary={t("dashboard.liveSummaryBody")}
         items={[
-          { label: t("dashboard.metric.projects"), title: String(summary.projects), body: t("dashboard.metric.projectsBody"), meta: t("dashboard.metric.projectsMeta"), href: "/app/projects" },
-          { label: t("dashboard.metric.datasets"), title: String(summary.datasets), body: t("dashboard.metric.datasetsBody"), meta: t("dashboard.metric.datasetsMeta"), href: "/app/datasets" },
-          { label: t("dashboard.metric.jobs"), title: String(summary.jobs), body: t("dashboard.metric.jobsBody"), meta: t("dashboard.metric.jobsMeta"), href: "/app/train" },
-          { label: t("dashboard.metric.prod"), title: summary.modelVersion, body: t("dashboard.metric.prodBody"), meta: t("dashboard.metric.prodMeta"), href: "/app/models" },
+          { label: t("dashboard.metric.projects"), title: String(summary.projects), body: t("dashboard.metric.projectsBody"), meta: t("dashboard.metric.projectsMeta"), href: "/app/assistants" },
+          { label: t("dashboard.metric.datasets"), title: String(summary.datasets), body: t("dashboard.metric.datasetsBody"), meta: t("dashboard.metric.datasetsMeta"), href: "/app/knowledge" },
+          { label: t("dashboard.metric.jobs"), title: String(summary.jobs), body: t("dashboard.metric.jobsBody"), meta: t("dashboard.metric.jobsMeta"), href: "/app/training" },
+          { label: t("dashboard.metric.prod"), title: summary.modelVersion, body: t("dashboard.metric.prodBody"), meta: t("dashboard.metric.prodMeta"), href: "/app/assistants" },
         ]}
         variant="metrics"
       />
@@ -108,10 +108,10 @@ export default function DashboardPage() {
         >
             <div className="grid gap-3 md:grid-cols-2">
               {[
-                ["/app/projects", t("dashboard.quick.projects"), t("dashboard.quick.projectsBody")],
-                ["/app/datasets", t("dashboard.quick.datasets"), t("dashboard.quick.datasetsBody")],
-                ["/app/train", t("dashboard.quick.train"), t("dashboard.quick.trainBody")],
-                ["/app/models", t("dashboard.quick.models"), t("dashboard.quick.modelsBody")],
+                ["/app/assistants", t("dashboard.quick.projects"), t("dashboard.quick.projectsBody")],
+                ["/app/knowledge", t("dashboard.quick.datasets"), t("dashboard.quick.datasetsBody")],
+                ["/app/training", t("dashboard.quick.train"), t("dashboard.quick.trainBody")],
+                ["/app/chat", t("dashboard.quick.models"), t("dashboard.quick.modelsBody")],
               ].map(([href, title, body]) => (
                 <Link key={href} href={href} className="console-key-item">
                   <div className="console-key-label">{title}</div>

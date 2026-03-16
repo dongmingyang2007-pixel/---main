@@ -50,31 +50,27 @@ test("chinese forgot-password flow uses verification code and shows success stat
   await expect(page.getByRole("link", { name: "去登录" })).toBeVisible();
 });
 
-test("console top-level create flows work against mocked API", async ({ page }) => {
+test("console pages load correctly against mocked API", async ({ page }) => {
   await installWorkbenchApiMock(page, { authenticated: true });
 
+  // Assistants page loads and shows the seed project as an assistant card
+  await page.goto("/app/assistants");
+  await expect(page.getByRole("heading", { name: "我的 AI", exact: true })).toBeVisible();
+  await expect(page.getByText("Seed Console Project")).toBeVisible();
+
+  // Knowledge page loads and shows the create form
+  await page.goto("/app/knowledge");
+  await expect(page.getByRole("heading", { name: "知识库", exact: true })).toBeVisible();
+
+  // Create a dataset via the knowledge form
   const stamp = `${Date.now()}`;
-  const projectName = `项目-${stamp}`;
-  const datasetName = `数据集-${stamp}`;
-  const modelName = `模型-${stamp}`;
-
-  await page.goto("/app/projects");
-  await page.getByLabel("项目名").fill(projectName);
-  await page.getByLabel("描述").fill("playwright mock");
-  await page.getByRole("button", { name: "新建项目" }).click();
-  await expect(page.getByText(projectName)).toBeVisible();
-
-  await page.goto("/app/datasets");
-  await page.getByLabel("数据集名").fill(datasetName);
-  await page.getByRole("button", { name: "新建数据集" }).click();
+  const datasetName = `知识包-${stamp}`;
+  await page.locator("#knowledge-name").fill(datasetName);
+  await page.getByRole("button", { name: "新建知识包" }).click();
   await expect(page.getByText(datasetName)).toBeVisible();
 
-  await page.goto("/app/train");
-  await page.getByRole("button", { name: "创建训练任务" }).click();
-  await expect(page.getByText(/job-|job-seed/i)).toBeVisible();
-
-  await page.goto("/app/models");
-  await page.getByLabel("模型名").fill(modelName);
-  await page.getByRole("button", { name: "新建模型" }).click();
-  await expect(page.getByText(modelName)).toBeVisible();
+  // Training page loads and shows job list
+  await page.goto("/app/training");
+  await expect(page.getByRole("heading", { name: "训练中心", exact: true })).toBeVisible();
+  await expect(page.getByText(/job-seed/i)).toBeVisible();
 });
