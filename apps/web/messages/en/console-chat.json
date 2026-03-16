@@ -4,5 +4,10 @@
   "emptyHint": "Select an AI assistant to start testing",
   "inputPlaceholder": "Type a message…",
   "send": "Send",
-  "mockNotice": "Responses are simulated. Real inference will be available after backend integration."
+  "mockNotice": "Responses are simulated. Real inference will be available after backend integration.",
+  "newConversation": "New Conversation",
+  "deleteConversation": "Delete Conversation",
+  "selectAssistant": "Select AI Assistant",
+  "noConversations": "No conversations yet. Create one below.",
+  "confirmDelete": "Delete this conversation?"
 }

@@ -1,15 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
-const MOCK_RESPONSES = [
-  "你好！我是你的 AI 助手，很高兴为你服务。有什么我可以帮你的吗？",
-  "这是一个很好的问题。让我为你详细解答一下…",
-  "根据我的知识库中的信息，我可以告诉你以下内容…",
-  "明白了，让我想想最好的方式来回答你。",
-  "感谢你的提问！这个话题很有趣，以下是我的看法…",
-];
+import { apiGet, apiPost } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -17,20 +11,65 @@ interface Message {
   content: string;
 }
 
-export function ChatInterface() {
+interface ApiMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+}
+
+interface ChatInterfaceProps {
+  conversationId?: string | null;
+}
+
+export function ChatInterface({ conversationId }: ChatInterfaceProps) {
   const t = useTranslations("console-chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  function handleSend() {
+  // Load messages when conversationId changes
+  useEffect(() => {
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingMessages(true);
+
+    apiGet<ApiMessage[]>(
+      `/api/v1/chat/conversations/${conversationId}/messages`,
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setMessages(
+            data.map((m) => ({ id: m.id, role: m.role, content: m.content })),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMessages([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingMessages(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || isTyping) return;
+    if (!text || isTyping || !conversationId) return;
 
     const userMessage: Message = {
       id: `u-${Date.now()}`,
@@ -42,32 +81,52 @@ export function ChatInterface() {
     setInput("");
     setIsTyping(true);
 
-    const delay = 800 + Math.random() * 1200;
-    setTimeout(() => {
-      const response =
-        MOCK_RESPONSES[Math.floor(Math.random() * MOCK_RESPONSES.length)];
+    try {
+      const response = await apiPost<ApiMessage>(
+        `/api/v1/chat/conversations/${conversationId}/messages`,
+        { content: text },
+      );
       const aiMessage: Message = {
-        id: `a-${Date.now()}`,
+        id: response.id || `a-${Date.now()}`,
         role: "assistant",
-        content: response,
+        content: response.content,
       };
       setMessages((prev) => [...prev, aiMessage]);
+    } catch {
+      // On error, show a fallback message
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: "assistant",
+          content: "Sorry, something went wrong. Please try again.",
+        },
+      ]);
+    } finally {
       setIsTyping(false);
-    }, delay);
-  }
+    }
+  }, [input, isTyping, conversationId]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   }
+
+  const noConversation = !conversationId;
 
   return (
     <div className="chat-interface">
       <div className="chat-messages">
-        {messages.length === 0 && !isTyping && (
-          <div className="chat-empty">{t("emptyHint")}</div>
+        {loadingMessages && (
+          <div className="chat-empty">...</div>
+        )}
+
+        {!loadingMessages && messages.length === 0 && !isTyping && (
+          <div className="chat-empty">
+            {noConversation ? t("emptyHint") : t("emptyHint")}
+          </div>
         )}
 
         {messages.map((msg) => (
@@ -100,12 +159,12 @@ export function ChatInterface() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isTyping}
+          disabled={isTyping || noConversation}
         />
         <button
           className="chat-send"
-          onClick={handleSend}
-          disabled={!input.trim() || isTyping}
+          onClick={() => void handleSend()}
+          disabled={!input.trim() || isTyping || noConversation}
         >
           {t("send")}
         </button>

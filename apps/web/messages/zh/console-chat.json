@@ -4,5 +4,10 @@
   "emptyHint": "选择一个 AI 助手，开始对话测试",
   "inputPlaceholder": "输入消息…",
   "send": "发送",
-  "mockNotice": "当前为模拟响应，接入真实推理后将显示实际结果"
+  "mockNotice": "当前为模拟响应，接入真实推理后将显示实际结果",
+  "newConversation": "新建对话",
+  "deleteConversation": "删除对话",
+  "selectAssistant": "选择 AI 助手",
+  "noConversations": "暂无对话，点击下方创建",
+  "confirmDelete": "确定删除这个对话？"
 }

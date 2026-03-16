@@ -6940,10 +6940,10 @@ button {
 .chat-interface {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 180px);
+  height: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
   overflow: hidden;
 }
 
