@@ -20,6 +20,7 @@ const TOP_ITEMS: NavItem[] = [
   { href: "/app/knowledge", key: "nav.knowledge" },
   { href: "/app/training", key: "nav.training" },
   { href: "/app/chat", key: "nav.chat" },
+  { href: "/app/models", key: "nav.models" },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [
@@ -100,6 +101,26 @@ function ChatIcon() {
   );
 }
 
+function ModelsIcon() {
+  return (
+    <svg
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x={3} y={3} width={7} height={7} rx={1} />
+      <rect x={14} y={3} width={7} height={7} rx={1} />
+      <rect x={3} y={14} width={7} height={7} rx={1} />
+      <rect x={14} y={14} width={7} height={7} rx={1} />
+    </svg>
+  );
+}
+
 function DevicesIcon() {
   return (
     <svg
@@ -141,6 +162,7 @@ const ICON_MAP: Record<string, () => JSX.Element> = {
   "nav.knowledge": KnowledgeIcon,
   "nav.training": TrainingIcon,
   "nav.chat": ChatIcon,
+  "nav.models": ModelsIcon,
   "nav.devices": DevicesIcon,
   "nav.settings": SettingsIcon,
 };
