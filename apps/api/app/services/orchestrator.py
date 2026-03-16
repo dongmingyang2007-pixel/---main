@@ -183,8 +183,8 @@ async def orchestrate_voice_inference(
         }
     """
     from app.models.entities import Message
-    from app.services.asr_client import transcribe_audio
-    from app.services.tts_client import synthesize_speech
+    from app.services.asr_client import transcribe_audio, transcribe_audio_realtime
+    from app.services.tts_client import synthesize_speech, synthesize_speech_realtime
     from app.services.vision_client import describe_image
 
     # ⓪ Check for omni model (handles audio in/out directly)  -------------
@@ -299,7 +299,19 @@ async def orchestrate_voice_inference(
                     .first()
                 )
                 tts_model = tts_config.model_id if tts_config else "cosyvoice-v1"
-                audio_response = await synthesize_speech(text_response, model=tts_model)
+                tts_model_info = (
+                    db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
+                )
+                tts_is_realtime = tts_model_info and "realtime" in (
+                    tts_model_info.capabilities or []
+                )
+
+                if tts_is_realtime:
+                    audio_response = await synthesize_speech_realtime(
+                        text_response, model=tts_model
+                    )
+                else:
+                    audio_response = await synthesize_speech(text_response, model=tts_model)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -321,7 +333,15 @@ async def orchestrate_voice_inference(
             .first()
         )
         asr_model = asr_config.model_id if asr_config else "paraformer-v2"
-        user_text = await transcribe_audio(audio_bytes, model=asr_model)
+        asr_model_info = (
+            db.query(ModelCatalog).filter(ModelCatalog.model_id == asr_model).first()
+        )
+        asr_is_realtime = asr_model_info and "realtime" in (asr_model_info.capabilities or [])
+
+        if asr_is_realtime:
+            user_text = await transcribe_audio_realtime(audio_bytes, model=asr_model)
+        else:
+            user_text = await transcribe_audio(audio_bytes, model=asr_model)
 
     if not user_text.strip():
         return {"text_input": "", "text_response": "未检测到语音内容", "audio_response": None}
@@ -405,7 +425,19 @@ async def orchestrate_voice_inference(
                 .first()
             )
             tts_model = tts_config.model_id if tts_config else "cosyvoice-v1"
-            audio_response = await synthesize_speech(text_response, model=tts_model)
+            tts_model_info = (
+                db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
+            )
+            tts_is_realtime = tts_model_info and "realtime" in (
+                tts_model_info.capabilities or []
+            )
+
+            if tts_is_realtime:
+                audio_response = await synthesize_speech_realtime(
+                    text_response, model=tts_model
+                )
+            else:
+                audio_response = await synthesize_speech(text_response, model=tts_model)
         except Exception:  # noqa: BLE001
             pass  # TTS failure is non-fatal
 
