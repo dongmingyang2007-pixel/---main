@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # ── AI / Model API ──
     dashscope_api_key: str = ""
-    dashscope_model: str = "qwen-plus"
+    dashscope_model: str = "qwen3-omni-flash-realtime"
     dashscope_embedding_model: str = "text-embedding-v3"
 
     smtp_host: str = "smtp.gmail.com"
