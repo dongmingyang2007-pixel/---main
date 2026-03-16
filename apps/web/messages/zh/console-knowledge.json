@@ -1,9 +1,57 @@
 {
+  "kicker": "知识库",
   "title": "知识库",
   "description": "管理你的知识资料，可跨 AI 共享",
   "createNew": "新建知识包",
   "noItems": "还没有知识包",
   "upload": "上传资料",
   "indexed": "已索引",
-  "indexing": "索引中"
+  "indexing": "索引中",
+  "form": {
+    "title": "创建知识包",
+    "description": "按资料类型拆分更利于版本冻结、训练选择和后续评测。",
+    "project": "所属项目",
+    "name": "知识包名",
+    "namePlaceholder": "例如：Field Capture",
+    "type": "资料类型",
+    "submit": "新建知识包"
+  },
+  "table": {
+    "caption": "知识包列表",
+    "name": "名称",
+    "type": "资料类型",
+    "createdAt": "创建时间",
+    "actions": "操作",
+    "emptyTitle": "还没有知识包",
+    "emptyBody": "先选择一个项目并创建知识包，之后就可以上传资料、添加标签和保存快照。",
+    "browse": "浏览资料"
+  },
+  "detail": {
+    "title": "知识包详情",
+    "description": "浏览资料、上传文件和管理快照版本。",
+    "browseTitle": "资料浏览",
+    "browseDescription": "支持表格和图片墙两种视图，所有预览和下载都走签名 URL。",
+    "viewTable": "表格",
+    "viewGallery": "图片墙",
+    "snapshotLabel": "快照说明",
+    "snapshotButton": "保存快照",
+    "snapshotted": "已保存快照 v{version}",
+    "historyKicker": "快照历史",
+    "noVersions": "暂无快照，请先保存。",
+    "itemCount": "资料数",
+    "noPreview": "无预览",
+    "openFile": "打开原文件"
+  },
+  "itemTable": {
+    "caption": "资料表格",
+    "file": "文件",
+    "type": "类型",
+    "size": "尺寸",
+    "tags": "标签",
+    "actions": "操作",
+    "emptyTitle": "暂无资料",
+    "emptyBody": "先上传文件，随后可以在这里快速打标签或通过签名链接打开原文件。",
+    "saveTag": "保存标签",
+    "download": "下载"
+  }
 }

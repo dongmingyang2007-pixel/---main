@@ -1,9 +1,57 @@
 {
+  "kicker": "Knowledge",
   "title": "Knowledge",
   "description": "Manage your knowledge packs, shareable across AI assistants",
   "createNew": "New Knowledge Pack",
   "noItems": "No knowledge packs yet",
   "upload": "Upload Files",
   "indexed": "Indexed",
-  "indexing": "Indexing"
+  "indexing": "Indexing",
+  "form": {
+    "title": "Create Knowledge Pack",
+    "description": "Splitting by media type makes version freezing, training selection, and evaluation easier.",
+    "project": "Project",
+    "name": "Pack Name",
+    "namePlaceholder": "e.g. Field Capture",
+    "type": "Media Type",
+    "submit": "Create Knowledge Pack"
+  },
+  "table": {
+    "caption": "Knowledge Packs",
+    "name": "Name",
+    "type": "Media Type",
+    "createdAt": "Created At",
+    "actions": "Actions",
+    "emptyTitle": "No knowledge packs yet",
+    "emptyBody": "Select a project and create a knowledge pack, then upload files, add tags, and save snapshots.",
+    "browse": "Browse Files"
+  },
+  "detail": {
+    "title": "Knowledge Pack Detail",
+    "description": "Browse files, upload content, and manage snapshot versions.",
+    "browseTitle": "File Browser",
+    "browseDescription": "Supports table and gallery views; all previews and downloads use signed URLs.",
+    "viewTable": "Table",
+    "viewGallery": "Gallery",
+    "snapshotLabel": "Snapshot message",
+    "snapshotButton": "Save Snapshot",
+    "snapshotted": "Saved snapshot v{version}",
+    "historyKicker": "Snapshot History",
+    "noVersions": "No snapshots yet. Please save one first.",
+    "itemCount": "Files",
+    "noPreview": "No preview",
+    "openFile": "Open original file"
+  },
+  "itemTable": {
+    "caption": "File Table",
+    "file": "File",
+    "type": "Type",
+    "size": "Size",
+    "tags": "Tags",
+    "actions": "Actions",
+    "emptyTitle": "No files yet",
+    "emptyBody": "Upload files first, then quickly add tags or open the original file via signed link.",
+    "saveTag": "Save tags",
+    "download": "Download"
+  }
 }
