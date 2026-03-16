@@ -4,7 +4,8 @@ import re
 
 from sqlalchemy.orm import Session
 
-from app.models.entities import Memory, Project
+from app.core.config import settings
+from app.models.entities import Memory, ModelCatalog, PipelineConfig, Project
 from app.services.dashscope_client import chat_completion
 from app.services.embedding import search_similar
 
@@ -25,6 +26,22 @@ async def orchestrate_inference(
     4. Assemble system prompt
     5. Call model API
     """
+    # 0. Resolve per-project LLM model
+    llm_model_id: str = settings.dashscope_model
+    llm_pipeline = (
+        db.query(PipelineConfig)
+        .filter(PipelineConfig.project_id == project_id, PipelineConfig.model_type == "llm")
+        .first()
+    )
+    if llm_pipeline:
+        llm_model_id = llm_pipeline.model_id
+
+    # Check if the selected LLM has vision capability
+    llm_has_vision = False
+    catalog_entry = db.query(ModelCatalog).filter(ModelCatalog.model_id == llm_model_id).first()
+    if catalog_entry and "vision" in (catalog_entry.capabilities or []):
+        llm_has_vision = True  # noqa: F841 — reserved for future multimodal routing
+
     # 1. Retrieve RAG knowledge
     knowledge_chunks: list[dict] = []
     try:
@@ -97,7 +114,7 @@ async def orchestrate_inference(
     messages.append({"role": "user", "content": user_message})
 
     try:
-        response = await chat_completion(messages)
+        response = await chat_completion(messages, model=llm_model_id)
         return response
     except Exception as e:  # noqa: BLE001
         return f"抱歉，AI 暂时无法响应。错误信息：{e!s}"
