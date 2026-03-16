@@ -104,7 +104,6 @@ export function proxy(request: NextRequest) {
     "/app/projects": "/app/assistants",
     "/app/datasets": "/app/knowledge",
     "/app/train": "/app/training",
-    "/app/models": "/app/assistants",
     "/app/eval": "/app/assistants",
     "/app/billing": "/app/settings",
   };
