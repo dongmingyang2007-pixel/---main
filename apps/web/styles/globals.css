@@ -7762,6 +7762,51 @@ button {
   flex-direction: column;
 }
 
+/* ── Model Marketplace ───────────────────────── */
+
+.marketplace-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.marketplace-tab { padding: 6px 14px; border-radius: 8px; font-size: 12px; color: var(--text-secondary); cursor: pointer; border: none; background: none; }
+.marketplace-tab:hover { color: var(--text-primary); background: var(--bg-base); }
+.marketplace-tab.is-active { background: var(--accent); color: white; }
+
+.marketplace-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+
+.marketplace-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 16px; box-shadow: var(--shadow-card); transition: box-shadow 150ms, transform 150ms; }
+.marketplace-card:hover { box-shadow: var(--shadow-raised); transform: translateY(-1px); }
+
+.marketplace-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.marketplace-card-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: white; font-weight: 700; flex-shrink: 0; }
+.marketplace-card-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.marketplace-card-provider { font-size: 10px; color: var(--text-secondary); }
+
+.marketplace-card-desc { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 10px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.marketplace-card-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.marketplace-card-tag { font-size: 9px; padding: 2px 8px; border-radius: 4px; background: var(--bg-base); color: var(--text-secondary); }
+
+.marketplace-card-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; border-top: 1px solid var(--border-light); }
+.marketplace-card-price { font-size: 10px; color: var(--text-secondary); }
+.marketplace-card-btn { font-size: 11px; padding: 5px 14px; border-radius: var(--radius-badge); background: var(--accent); color: white; border: none; font-weight: 500; cursor: pointer; text-decoration: none; display: inline-block; }
+.marketplace-card-btn:hover { opacity: 0.9; }
+
+.marketplace-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.marketplace-search { padding: 8px 14px; border: 1px solid var(--border); border-radius: var(--radius-input); font-size: 12px; color: var(--text-primary); background: var(--bg-card); width: 240px; }
+.marketplace-search:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.model-detail-back { font-size: 12px; color: var(--text-secondary); text-decoration: none; margin-bottom: 16px; display: inline-block; }
+.model-detail-back:hover { color: var(--accent); }
+.model-detail-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.model-detail-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: white; font-weight: 700; }
+.model-detail-name { font-family: var(--font-title); font-size: 22px; font-weight: 700; color: var(--text-primary); }
+.model-detail-provider { font-size: 12px; color: var(--text-secondary); }
+.model-detail-section { margin-top: 24px; }
+.model-detail-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
+.model-detail-caps { display: flex; gap: 8px; flex-wrap: wrap; }
+.model-detail-cap { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); background: var(--bg-base); padding: 4px 10px; border-radius: 6px; }
+.model-detail-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.model-detail-table th { text-align: left; padding: 8px 12px; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+.model-detail-table td { padding: 8px 12px; font-size: 13px; color: var(--text-primary); border-bottom: 1px solid var(--border-light); }
+
 /* ── Reduced Motion ──────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
