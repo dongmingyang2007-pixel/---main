@@ -4,16 +4,17 @@ import { useTranslations } from "next-intl";
 import { useCallback, useState } from "react";
 
 import { useRouter } from "@/i18n/navigation";
-import { apiPost } from "@/lib/api";
+import { apiPatch, apiPost } from "@/lib/api";
 
 import { StepFinish } from "./StepFinish";
 import { StepKnowledge } from "./StepKnowledge";
-import type { ModelChoice } from "./StepModel";
+import type { ModelChoice, PipelineChoices } from "./StepModel";
 import { StepModel } from "./StepModel";
 import { StepPersonality } from "./StepPersonality";
 
 interface WizardData {
   model: ModelChoice | null;
+  pipeline: PipelineChoices;
   knowledgeFiles: File[];
   personality: { description: string; tags: string[] };
   name: string;
@@ -37,6 +38,7 @@ export function WizardShell() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [data, setData] = useState<WizardData>({
     model: null,
+    pipeline: {},
     knowledgeFiles: [],
     personality: { description: "", tags: [] },
     name: "",
@@ -86,6 +88,45 @@ export function WizardShell() {
         name: data.name.trim(),
         description,
       });
+
+      // Set pipeline configs after project creation
+      const pipelinePromises: Promise<unknown>[] = [];
+
+      if (data.model) {
+        pipelinePromises.push(
+          apiPatch("/api/v1/pipeline", {
+            project_id: result.id,
+            model_type: "llm",
+            model_id: data.model.id,
+            config_json: {},
+          }),
+        );
+      }
+
+      if (data.pipeline.asrModelId) {
+        pipelinePromises.push(
+          apiPatch("/api/v1/pipeline", {
+            project_id: result.id,
+            model_type: "asr",
+            model_id: data.pipeline.asrModelId,
+            config_json: {},
+          }),
+        );
+      }
+
+      if (data.pipeline.ttsModelId) {
+        pipelinePromises.push(
+          apiPatch("/api/v1/pipeline", {
+            project_id: result.id,
+            model_type: "tts",
+            model_id: data.pipeline.ttsModelId,
+            config_json: {},
+          }),
+        );
+      }
+
+      // Fire all pipeline config calls concurrently
+      await Promise.all(pipelinePromises);
 
       router.push(`/app/assistants/${result.id}`);
     } catch {
@@ -137,7 +178,11 @@ export function WizardShell() {
         {step === 0 && (
           <StepModel
             selected={data.model}
+            pipeline={data.pipeline}
             onSelect={(model) => setData((d) => ({ ...d, model }))}
+            onPipelineChange={(pipeline) =>
+              setData((d) => ({ ...d, pipeline }))
+            }
           />
         )}
         {step === 1 && (

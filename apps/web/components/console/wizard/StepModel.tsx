@@ -1,98 +1,211 @@
 "use client";
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 
-export type ModelTier = "light" | "medium" | "heavy";
+import { ModelPickerModal } from "../ModelPickerModal";
 
 export interface ModelChoice {
   id: string;
   name: string;
-  tier: ModelTier;
+  tier: string;
 }
 
-const MODEL_TIERS: {
-  tier: ModelTier;
-  id: string;
-  name: string;
-  icon: string;
-  gradient: string;
-  tag: string;
-}[] = [
-  {
-    tier: "light",
-    id: "qwen3.5-7b",
-    name: "Qwen3.5-7B",
-    icon: "\u8F7B",
-    gradient: "linear-gradient(135deg, #e8925a, #c8734a)",
-    tag: "\u63A8\u8350\u5165\u95E8",
-  },
-  {
-    tier: "medium",
-    id: "deepseek-v3",
-    name: "DeepSeek-V3",
-    icon: "\u4E2D",
-    gradient: "linear-gradient(135deg, #8a9ab0, #6a7a90)",
-    tag: "\u6700\u53D7\u6B22\u8FCE",
-  },
-  {
-    tier: "heavy",
-    id: "qwen-72b",
-    name: "Qwen-72B",
-    icon: "\u5F3A",
-    gradient: "linear-gradient(135deg, #5a4a8a, #3a2a6a)",
-    tag: "\u9AD8\u7EA7\u7528\u6237",
-  },
-];
-
-const MODEL_DESCS: Record<ModelTier, string> = {
-  light: "\u54CD\u5E94\u6781\u5FEB \u00B7 \u65E5\u5E38\u5BF9\u8BDD \u00B7 \u7B80\u5355\u4EFB\u52A1",
-  medium: "\u6027\u80FD\u5747\u8861 \u00B7 \u4E13\u4E1A\u8F85\u52A9 \u00B7 \u590D\u6742\u63A8\u7406",
-  heavy: "\u6700\u5F3A\u80FD\u529B \u00B7 \u6DF1\u5EA6\u5206\u6790 \u00B7 \u4E13\u5BB6\u7EA7\u4EFB\u52A1",
-};
+export interface PipelineChoices {
+  asrModelId?: string;
+  asrModelName?: string;
+  ttsModelId?: string;
+  ttsModelName?: string;
+}
 
 interface StepModelProps {
   selected: ModelChoice | null;
+  pipeline: PipelineChoices;
   onSelect: (model: ModelChoice) => void;
+  onPipelineChange: (pipeline: PipelineChoices) => void;
 }
 
-export function StepModel({ selected, onSelect }: StepModelProps) {
+export function StepModel({
+  selected,
+  pipeline,
+  onSelect,
+  onPipelineChange,
+}: StepModelProps) {
   const t = useTranslations("console-assistants");
+  const tModels = useTranslations("console-models-v2");
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCategory, setPickerCategory] = useState<
+    "llm" | "asr" | "tts" | "vision"
+  >("llm");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const openPicker = (category: "llm" | "asr" | "tts" | "vision") => {
+    setPickerCategory(category);
+    setPickerOpen(true);
+  };
+
+  const handlePickerSelect = (modelId: string, displayName: string) => {
+    if (pickerCategory === "llm") {
+      onSelect({ id: modelId, name: displayName, tier: "custom" });
+    } else if (pickerCategory === "asr") {
+      onPipelineChange({
+        ...pipeline,
+        asrModelId: modelId,
+        asrModelName: displayName,
+      });
+    } else if (pickerCategory === "tts") {
+      onPipelineChange({
+        ...pipeline,
+        ttsModelId: modelId,
+        ttsModelName: displayName,
+      });
+    }
+    setPickerOpen(false);
+  };
 
   return (
     <div className="wizard-step-model">
       <h2 className="wizard-step-title">{t("wizard.stepModel")}</h2>
       <p className="wizard-step-desc">{t("wizard.stepModelDesc")}</p>
 
-      <div className="wizard-model-list">
-        {MODEL_TIERS.map((m) => {
-          const isSelected = selected?.tier === m.tier;
-          return (
-            <button
-              key={m.tier}
-              type="button"
-              className={`wizard-model-card ${isSelected ? "wizard-model-card--selected" : ""}`}
-              onClick={() => onSelect({ id: m.id, name: m.name, tier: m.tier })}
-            >
-              <div
-                className="wizard-model-icon"
-                style={{ background: m.gradient }}
-              >
-                {m.icon}
-              </div>
-              <div className="wizard-model-info">
-                <div className="wizard-model-header">
-                  <span className="wizard-model-name">{m.name}</span>
-                  <span className="wizard-model-tag">{m.tag}</span>
-                </div>
-                <span className="wizard-model-tier">
-                  {t(`wizard.model${m.tier.charAt(0).toUpperCase()}${m.tier.slice(1)}` as "wizard.modelLight" | "wizard.modelMedium" | "wizard.modelHeavy")}
-                </span>
-                <span className="wizard-model-desc">{MODEL_DESCS[m.tier]}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {/* LLM selection */}
+      {selected ? (
+        <div className="wizard-selected-model">
+          <div className="wizard-selected-model-info">
+            <span className="wizard-selected-model-name">{selected.name}</span>
+            <span className="wizard-selected-model-id">{selected.id}</span>
+          </div>
+          <button
+            type="button"
+            className="wizard-selected-model-change"
+            onClick={() => openPicker("llm")}
+          >
+            {tModels("change")}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="wizard-model-picker-btn"
+          onClick={() => openPicker("llm")}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="16" />
+            <line x1="8" y1="12" x2="16" y2="12" />
+          </svg>
+          {t("wizard.stepModel")}
+        </button>
+      )}
+
+      {/* Advanced: ASR + TTS */}
+      <button
+        type="button"
+        className="wizard-advanced-toggle"
+        onClick={() => setAdvancedOpen((prev) => !prev)}
+        aria-expanded={advancedOpen}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+        {t("canvas.expandAdvanced")}
+      </button>
+
+      {advancedOpen && (
+        <div className="wizard-advanced-section">
+          {/* ASR */}
+          <div className="wizard-pipeline-row">
+            <span className="wizard-pipeline-label">
+              {tModels("pipelineAsr")}
+            </span>
+            <div className="wizard-pipeline-value">
+              {pipeline.asrModelId ? (
+                <>
+                  <span>{pipeline.asrModelName || pipeline.asrModelId}</span>
+                  <button
+                    type="button"
+                    className="wizard-pipeline-pick-btn"
+                    onClick={() => openPicker("asr")}
+                  >
+                    {tModels("change")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="wizard-pipeline-pick-btn"
+                  onClick={() => openPicker("asr")}
+                >
+                  {tModels("select")}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* TTS */}
+          <div className="wizard-pipeline-row">
+            <span className="wizard-pipeline-label">
+              {tModels("pipelineTts")}
+            </span>
+            <div className="wizard-pipeline-value">
+              {pipeline.ttsModelId ? (
+                <>
+                  <span>{pipeline.ttsModelName || pipeline.ttsModelId}</span>
+                  <button
+                    type="button"
+                    className="wizard-pipeline-pick-btn"
+                    onClick={() => openPicker("tts")}
+                  >
+                    {tModels("change")}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="wizard-pipeline-pick-btn"
+                  onClick={() => openPicker("tts")}
+                >
+                  {tModels("select")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Model picker modal */}
+      <ModelPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        category={pickerCategory}
+        currentModelId={
+          pickerCategory === "llm"
+            ? selected?.id
+            : pickerCategory === "asr"
+              ? pipeline.asrModelId
+              : pipeline.ttsModelId
+        }
+        onSelect={handlePickerSelect}
+      />
     </div>
   );
 }
