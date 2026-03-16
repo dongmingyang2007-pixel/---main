@@ -4799,48 +4799,6 @@ button {
   overflow: hidden;
 }
 
-/* ── ActivityBar ──────────────────────────────── */
-
-.activity-bar {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  width: 48px;
-  flex-shrink: 0;
-  padding: 8px 0;
-  border-right: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.activity-bar-top,
-.activity-bar-bottom {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-
-.activity-bar-item {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  transition: color var(--duration-fast), background var(--duration-fast);
-}
-
-.activity-bar-item:hover {
-  color: var(--text-primary);
-  background: var(--bg-raised);
-}
-
-.activity-bar-item.is-active {
-  color: var(--accent, var(--brand-v2));
-  background: var(--accent-soft, var(--brand-soft));
-}
-
 /* ── TopBar ──────────────────────────────────── */
 
 .topbar {
@@ -4859,15 +4817,6 @@ button {
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.inline-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.8125rem;
 }
 
 .topbar-right {
@@ -5201,9 +5150,6 @@ button {
 /* ── Console mobile ──────────────────────────── */
 
 @media (max-width: 1023px) {
-  .activity-bar {
-    display: none;
-  }
   .panel-list,
   .panel-inspector,
   .panel-resize-handle {
@@ -5215,9 +5161,6 @@ button {
 }
 
 @media (min-width: 1024px) {
-  .activity-bar {
-    display: flex;
-  }
   .panel-list,
   .panel-inspector {
     display: flex;
@@ -5240,7 +5183,6 @@ button {
 
 @media (hover: none) {
   .hover-effect,
-  .activity-bar-item:hover,
   .topbar-avatar:hover,
   .topbar-project-switcher:hover {
     transform: none;
@@ -5250,10 +5192,6 @@ button {
 
 /* Minimum touch target size (Apple HIG: 44x44px) */
 @media (pointer: coarse) {
-  .activity-bar-item {
-    width: 44px;
-    height: 44px;
-  }
   .topbar-avatar {
     width: 36px;
     height: 36px;
