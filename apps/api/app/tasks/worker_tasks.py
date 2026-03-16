@@ -4,7 +4,7 @@ import hashlib
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, text as sql_text
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -370,6 +370,45 @@ AI：{ai_response}
                 )
             except Exception:  # noqa: BLE001
                 pass  # Embedding failure is non-fatal
+
+        # ── Auto-promotion: temporary → permanent when same fact appears in 2+ conversations ──
+        # A temporary memory should auto-promote to permanent if:
+        # 1. The same fact appears in 2+ different conversations (vector similarity > 0.85)
+        # 2. The extraction marked it with importance >= 0.9 (already handled above)
+        temp_memories = db.query(Memory).filter(
+            Memory.project_id == project_id,
+            Memory.type == "temporary",
+        ).all()
+
+        for mem in temp_memories:
+            # Check if similar content exists in other conversations
+            similar = db.execute(
+                sql_text("""
+                    SELECT COUNT(DISTINCT m.source_conversation_id)
+                    FROM memories m
+                    JOIN embeddings e ON e.memory_id = m.id
+                    WHERE m.project_id = :project_id
+                      AND m.id != :memory_id
+                      AND m.source_conversation_id != :conv_id
+                      AND e.vector IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1 FROM embeddings e2
+                          WHERE e2.memory_id = :memory_id
+                            AND e2.vector IS NOT NULL
+                            AND 1 - (e.vector <=> e2.vector) > 0.85
+                      )
+                """),
+                {
+                    "project_id": project_id,
+                    "memory_id": mem.id,
+                    "conv_id": conversation_id,
+                },
+            ).scalar()
+
+            if similar and similar >= 1:  # Found in at least 1 other conversation
+                mem.type = "permanent"
+                mem.source_conversation_id = None  # Detach from conversation
+                mem.metadata_json = {**mem.metadata_json, "promoted_by": "auto_repeat"}
 
         db.commit()
     except Exception:  # noqa: BLE001
