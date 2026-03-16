@@ -5260,6 +5260,101 @@ button {
   }
 }
 
+/* ── Mobile Tab Bar ──────────────────────────── */
+
+.mobile-tab-bar {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  z-index: 50;
+}
+
+@media (max-width: 767px) {
+  .mobile-tab-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+  }
+}
+
+.mobile-tab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  flex: 1;
+  justify-content: center;
+}
+
+.mobile-tab-item.is-active {
+  color: var(--accent);
+}
+
+.mobile-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mobile-tab-more-wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-tab-more-menu {
+  position: absolute;
+  bottom: 60px;
+  right: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-raised);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.mobile-tab-more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.mobile-tab-more-item:hover {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.mobile-tab-more-item.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 /* ── Safe Viewport Height ─────────────────────── */
 /* Use svh on supporting browsers for Safari iOS compatibility */
 @supports (min-height: 100svh) {
