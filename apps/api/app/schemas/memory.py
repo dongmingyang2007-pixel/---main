@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 
 class MemoryCreate(BaseModel):
+    project_id: str
     content: str
     category: str = ""
     type: str = "permanent"
