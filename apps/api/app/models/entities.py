@@ -229,3 +229,77 @@ Index("idx_metrics_run", Metric.run_id)
 Index("idx_artifacts_run", Artifact.run_id)
 Index("idx_models_project", Model.project_id)
 Index("idx_model_versions_model", ModelVersion.model_id)
+
+
+class Conversation(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
+    __tablename__ = "conversations"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    created_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "messages"
+
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Memory(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
+    __tablename__ = "memories"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    type: Mapped[str] = mapped_column(String(20), default="permanent", nullable=False)
+    source_conversation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_memory_id: Mapped[str | None] = mapped_column(
+        ForeignKey("memories.id", ondelete="SET NULL"), nullable=True
+    )
+    position_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    position_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class MemoryEdge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "memory_edges"
+    __table_args__ = (UniqueConstraint("source_memory_id", "target_memory_id", name="uq_memory_edges_src_tgt"),)
+
+    source_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
+    target_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
+    edge_type: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
+    strength: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+
+
+class Embedding(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "embeddings"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    memory_id: Mapped[str | None] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=True)
+    data_item_id: Mapped[str | None] = mapped_column(ForeignKey("data_items.id", ondelete="CASCADE"), nullable=True)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # vector column (vector(1024)) is managed via raw SQL; not mapped in ORM
+
+
+class MemoryFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "memory_files"
+
+    memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
+    data_item_id: Mapped[str] = mapped_column(ForeignKey("data_items.id", ondelete="CASCADE"), nullable=False)
+
+
+Index("idx_conversations_ws_project", Conversation.workspace_id, Conversation.project_id)
+Index("idx_messages_conv_created", Message.conversation_id, Message.created_at)
+Index("idx_memories_ws_project", Memory.workspace_id, Memory.project_id)
+Index("idx_memories_project_type", Memory.project_id, Memory.type)
+Index("idx_memories_source_conv", Memory.source_conversation_id)
+Index("idx_embeddings_ws_project", Embedding.workspace_id, Embedding.project_id)
