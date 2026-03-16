@@ -183,7 +183,7 @@ FastAPI 后端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | UUID, PK | 主键 |
-| conversation_id | UUID, FK → conversations | 所属对话 |
+| conversation_id | UUID, FK → conversations ON DELETE CASCADE | 所属对话 |
 | role | VARCHAR(20) | `user` / `assistant` / `system` |
 | content | TEXT | 消息内容 |
 | created_at | TIMESTAMPTZ | 发送时间 |
@@ -195,7 +195,7 @@ FastAPI 后端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | UUID, PK | 主键 |
-| memory_id | UUID, FK → memories | 关联的记忆节点 |
+| memory_id | UUID, FK → memories ON DELETE CASCADE | 关联的记忆节点 |
 | data_item_id | UUID, FK → data_items | 关联的文件（复用现有 data_items 表） |
 | created_at | TIMESTAMPTZ | 创建时间 |
 
@@ -431,7 +431,7 @@ AI 助手详情页 (`/app/assistants/[id]`) 的新布局：
 
 - PostgreSQL 15 + **pgvector 扩展**：需要在 Docker 镜像中安装 `pgvector`，或使用 `pgvector/pgvector:pg15` 镜像
 - 向量维度：1024（DashScope text-embedding-v3 默认维度）
-- 索引类型：IVFFlat（数据量小时）→ HNSW（数据量大时升级）
+- 索引类型：HNSW（与 Section 4.2 embeddings 表定义一致，不依赖数据量调参）
 
 ### 6.3 前端新增依赖
 
