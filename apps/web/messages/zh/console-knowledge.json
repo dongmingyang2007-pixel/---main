@@ -1,0 +1,9 @@
+{
+  "title": "知识库",
+  "description": "管理你的知识资料，可跨 AI 共享",
+  "createNew": "新建知识包",
+  "noItems": "还没有知识包",
+  "upload": "上传资料",
+  "indexed": "已索引",
+  "indexing": "索引中"
+}

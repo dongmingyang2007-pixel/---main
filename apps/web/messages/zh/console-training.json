@@ -1,0 +1,8 @@
+{
+  "title": "训练中心",
+  "description": "查看所有训练任务的状态",
+  "noJobs": "暂无训练任务",
+  "progress": "训练进度",
+  "expandDetails": "展开详情",
+  "collapseDetails": "收起详情"
+}

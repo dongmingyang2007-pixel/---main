@@ -1,0 +1,8 @@
+{
+  "title": "Chat Debug",
+  "description": "Test conversations with your AI assistants",
+  "emptyHint": "Select an AI assistant to start testing",
+  "inputPlaceholder": "Type a message…",
+  "send": "Send",
+  "mockNotice": "Responses are simulated. Real inference will be available after backend integration."
+}

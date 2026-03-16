@@ -1,0 +1,8 @@
+{
+  "title": "对话调试",
+  "description": "和你的 AI 助手对话测试",
+  "emptyHint": "选择一个 AI 助手，开始对话测试",
+  "inputPlaceholder": "输入消息…",
+  "send": "发送",
+  "mockNotice": "当前为模拟响应，接入真实推理后将显示实际结果"
+}

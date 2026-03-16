@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const AUTH_STATE_COOKIE = "auth_state";
+const AUTH_STATE_COOKIE_VALUE = "1";
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
@@ -90,12 +92,43 @@ function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
 export function proxy(request: NextRequest) {
   const rawPathname = new URL(request.url).pathname;
   const allowSameOriginFrame = isSameOriginEmbeddablePath(rawPathname);
+  const hasAccessToken = Boolean(request.cookies.get("access_token")?.value);
+  const hasAuthState = request.cookies.get(AUTH_STATE_COOKIE)?.value === AUTH_STATE_COOKIE_VALUE;
 
-  // Auth check — strip locale prefix so /en/app/* is also protected
+  // Strip locale prefix so /en/app/* is also handled correctly
   const strippedPath = rawPathname.replace(/^\/(en|zh)(?=\/|$)/, "") || "/";
-  if (isProtectedConsolePath(strippedPath) && !request.cookies.get("auth_state")?.value) {
-    const loginUrl = new URL(`${getLocalePrefix(request)}/login`, request.url);
-    return NextResponse.redirect(loginUrl);
+  const localePrefix = getLocalePrefix(request);
+
+  // Route redirects — old paths → new paths (before auth so bookmarks work)
+  const ROUTE_REDIRECTS: Record<string, string> = {
+    "/app/projects": "/app/assistants",
+    "/app/datasets": "/app/knowledge",
+    "/app/train": "/app/training",
+    "/app/models": "/app/assistants",
+    "/app/eval": "/app/assistants",
+    "/app/billing": "/app/settings",
+  };
+
+  const redirectTarget = ROUTE_REDIRECTS[strippedPath];
+  if (redirectTarget) {
+    const redirectUrl = new URL(`${localePrefix}${redirectTarget}`, request.url);
+    return NextResponse.redirect(redirectUrl, 301);
+  }
+
+  // Bare /app → /app/assistants (temporary redirect)
+  if (strippedPath === "/app") {
+    const redirectUrl = new URL(`${localePrefix}/app/assistants`, request.url);
+    return NextResponse.redirect(redirectUrl, 302);
+  }
+
+  // Auth check
+  if (isProtectedConsolePath(strippedPath) && !hasAccessToken) {
+    const loginUrl = new URL(`${localePrefix}/login`, request.url);
+    const redirect = NextResponse.redirect(loginUrl);
+    if (hasAuthState) {
+      redirect.cookies.delete(AUTH_STATE_COOKIE);
+    }
+    return redirect;
   }
 
   const isLocalHost = request.nextUrl.hostname === "localhost" || request.nextUrl.hostname === "127.0.0.1";
@@ -132,6 +165,15 @@ export function proxy(request: NextRequest) {
       "Content-Security-Policy",
       buildCsp(allowSameOriginFrame, scriptSrc),
     );
+  }
+
+  if (hasAccessToken && !hasAuthState) {
+    response.cookies.set(AUTH_STATE_COOKIE, AUTH_STATE_COOKIE_VALUE, {
+      path: "/",
+      sameSite: "lax",
+    });
+  } else if (!hasAccessToken && hasAuthState) {
+    response.cookies.delete(AUTH_STATE_COOKIE);
   }
 
   return response;

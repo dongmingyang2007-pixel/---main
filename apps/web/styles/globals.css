@@ -5713,6 +5713,87 @@ button {
   }
 }
 
+/* ── Console Page Header ─────────────────────── */
+
+.console-page-header {
+  margin-bottom: 24px;
+}
+
+.console-page-title {
+  font-family: var(--font-title);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+}
+
+.console-page-desc {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* ── Assistant Cards ─────────────────────────── */
+
+.assistant-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.assistant-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 18px;
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 150ms, transform 150ms;
+  display: block;
+}
+
+.assistant-card:hover {
+  box-shadow: var(--shadow-raised);
+  transform: translateY(-1px);
+}
+
+.assistant-card.is-create {
+  border-style: dashed;
+  border-color: var(--border-light);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  min-height: 120px;
+}
+
+.assistant-card.is-create:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.assistant-card-plus {
+  font-size: 24px;
+  font-weight: 300;
+}
+
+.assistant-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.assistant-card-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+
 /* ── Reduced Motion ──────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

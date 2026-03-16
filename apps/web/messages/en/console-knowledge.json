@@ -1,0 +1,9 @@
+{
+  "title": "Knowledge",
+  "description": "Manage your knowledge packs, shareable across AI assistants",
+  "createNew": "New Knowledge Pack",
+  "noItems": "No knowledge packs yet",
+  "upload": "Upload Files",
+  "indexed": "Indexed",
+  "indexing": "Indexing"
+}

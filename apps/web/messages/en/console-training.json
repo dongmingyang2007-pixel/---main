@@ -1,0 +1,8 @@
+{
+  "title": "Training",
+  "description": "View all training job status",
+  "noJobs": "No training jobs yet",
+  "progress": "Training Progress",
+  "expandDetails": "Show Details",
+  "collapseDetails": "Hide Details"
+}
