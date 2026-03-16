@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.entities import Memory, ModelCatalog, PipelineConfig, Project
-from app.services.dashscope_client import chat_completion
+from app.services.dashscope_client import chat_completion, omni_completion
 from app.services.embedding import search_similar
 
 
@@ -186,6 +186,128 @@ async def orchestrate_voice_inference(
     from app.services.asr_client import transcribe_audio
     from app.services.tts_client import synthesize_speech
     from app.services.vision_client import describe_image
+
+    # ⓪ Check for omni model (handles audio in/out directly)  -------------
+    llm_config = (
+        db.query(PipelineConfig)
+        .filter(
+            PipelineConfig.project_id == project_id,
+            PipelineConfig.model_type == "llm",
+        )
+        .first()
+    )
+    llm_model_id = llm_config.model_id if llm_config else settings.dashscope_model
+
+    model_info = (
+        db.query(ModelCatalog)
+        .filter(ModelCatalog.model_id == llm_model_id)
+        .first()
+    )
+    capabilities = model_info.capabilities if model_info else []
+    is_omni = "audio_input" in capabilities and "audio_output" in capabilities
+
+    if is_omni and (audio_bytes or image_bytes):
+        # Omni mode: skip ASR (model understands audio directly)
+        # Build context from recent messages
+        recent = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+
+        user_text = text_input or "(audio input)"
+
+        # Build system prompt via shared helper internals
+        # We reuse _build_and_call_llm logic but need multimodal input,
+        # so we assemble system prompt here and call omni_completion directly.
+        knowledge_chunks: list[dict] = []
+        try:
+            knowledge_chunks = await search_similar(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                query=user_text if text_input else "voice conversation",
+                limit=5,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        permanent_memories = (
+            db.query(Memory)
+            .filter(Memory.project_id == project_id, Memory.type == "permanent")
+            .order_by(Memory.updated_at.desc())
+            .limit(20)
+            .all()
+        )
+        temporary_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project_id,
+                Memory.type == "temporary",
+                Memory.source_conversation_id == conversation_id,
+            )
+            .all()
+        )
+        project = db.query(Project).filter(Project.id == project_id).first()
+        personality = ""
+        if project and project.description:
+            desc = project.description
+            match = re.search(r"\[personality:(.*?)\]", desc, re.DOTALL)
+            personality = match.group(1).strip() if match else desc
+
+        system_parts: list[str] = []
+        if personality:
+            system_parts.append(f"你的人格设定：\n{personality}")
+        if permanent_memories or temporary_memories:
+            memory_lines = [f"- [永久] {m.content}" for m in permanent_memories]
+            memory_lines += [f"- [本次对话] {m.content}" for m in temporary_memories]
+            system_parts.append("你记住的关于用户的信息：\n" + "\n".join(memory_lines))
+        if knowledge_chunks:
+            knowledge_text = "\n---\n".join([c["chunk_text"] for c in knowledge_chunks])
+            system_parts.append(f"相关知识参考（来自用户上传的资料）：\n{knowledge_text}")
+
+        system_prompt = "\n\n".join(system_parts) if system_parts else "你是一个有帮助的 AI 助手。"
+
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        messages.extend(recent_msgs[-20:])
+        messages.append({"role": "user", "content": user_text})
+
+        try:
+            omni_result = await omni_completion(
+                messages,
+                audio_bytes=audio_bytes,
+                image_bytes=image_bytes,
+                model=llm_model_id,
+            )
+            text_response = omni_result["text"]
+        except Exception as e:  # noqa: BLE001
+            text_response = f"抱歉，AI 暂时无法响应。错误信息：{e!s}"
+
+        # TTS: still separate for now (omni audio output requires WebSocket streaming)
+        audio_response: bytes | None = None
+        if return_audio and text_response:
+            try:
+                tts_config = (
+                    db.query(PipelineConfig)
+                    .filter(
+                        PipelineConfig.project_id == project_id,
+                        PipelineConfig.model_type == "tts",
+                    )
+                    .first()
+                )
+                tts_model = tts_config.model_id if tts_config else "cosyvoice-v1"
+                audio_response = await synthesize_speech(text_response, model=tts_model)
+            except Exception:  # noqa: BLE001
+                pass
+
+        return {
+            "text_input": user_text,
+            "text_response": text_response,
+            "audio_response": audio_response,
+        }
 
     # ① ASR: audio → text  ------------------------------------------------
     user_text = text_input or ""
