@@ -105,5 +105,11 @@
   "dashboard.rulesBody": "这套工作台优先保证边界、回滚和复盘链路始终可见。",
   "dashboard.rule0": "上传和模型产物都走受管签名路径。",
   "dashboard.rule1": "敏感操作要求 Cookie、workspace 和 CSRF 同时成立。",
-  "dashboard.rule2": "训练、评测和发布默认保留复盘信息。"
+  "dashboard.rule2": "训练、评测和发布默认保留复盘信息。",
+  "mobile.assistants.meta": "创建和管理 AI",
+  "mobile.knowledge.meta": "知识资料管理",
+  "mobile.training.meta": "训练任务状态",
+  "mobile.chat.meta": "对话测试",
+  "mobile.devices.meta": "耳机管理",
+  "mobile.settings.meta": "账户与安全"
 }

@@ -105,5 +105,11 @@
   "dashboard.rulesBody": "This workspace ensures boundaries, rollbacks, and audit trails are always visible.",
   "dashboard.rule0": "Uploads and model artifacts go through managed signed paths.",
   "dashboard.rule1": "Sensitive operations require Cookie, workspace, and CSRF to all be valid.",
-  "dashboard.rule2": "Training, eval, and deployment preserve audit information by default."
+  "dashboard.rule2": "Training, eval, and deployment preserve audit information by default.",
+  "mobile.assistants.meta": "Create & manage AI",
+  "mobile.knowledge.meta": "Knowledge management",
+  "mobile.training.meta": "Training job status",
+  "mobile.chat.meta": "Chat testing",
+  "mobile.devices.meta": "Device management",
+  "mobile.settings.meta": "Account & security"
 }

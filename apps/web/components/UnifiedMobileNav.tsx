@@ -23,7 +23,6 @@ const PUBLIC_NAV_KEYS = [
 ] as const;
 
 const CONSOLE_NAV_ITEMS = [
-  { href: "/app", navKey: "dashboard" },
   { href: "/app/assistants", navKey: "assistants" },
   { href: "/app/knowledge", navKey: "knowledge" },
   { href: "/app/training", navKey: "training" },

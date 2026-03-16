@@ -99,9 +99,9 @@ export default function SettingsPage() {
                   aria-checked={isDeveloperMode}
                   onClick={toggleDeveloperMode}
                   className={[
-                    "relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-amber)]",
+                    "relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warning)]",
                     isDeveloperMode
-                      ? "bg-[var(--accent-amber)]"
+                      ? "bg-[var(--warning)]"
                       : "bg-[var(--border)]",
                   ].join(" ")}
                 >
@@ -127,7 +127,7 @@ export default function SettingsPage() {
                 <p className="console-panel-description">{t("settings.subscriptionDesc")}</p>
               </div>
               <div className="flex-none">
-                <span className="inline-flex items-center px-2.5 py-1 rounded text-xs font-semibold bg-[var(--accent-amber)] text-[var(--bg)]">
+                <span className="inline-flex items-center px-2.5 py-1 rounded text-xs font-semibold bg-[var(--warning)] text-white">
                   {t("settings.freePlan")}
                 </span>
               </div>
