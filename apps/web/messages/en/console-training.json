@@ -1,8 +1,38 @@
 {
+  "kicker": "Training",
   "title": "Training",
   "description": "View all training job status",
   "noJobs": "No training jobs yet",
   "progress": "Training Progress",
   "expandDetails": "Show Details",
-  "collapseDetails": "Hide Details"
+  "collapseDetails": "Hide Details",
+  "table": {
+    "caption": "Training Jobs",
+    "id": "ID",
+    "recipe": "Recipe",
+    "datasetVersion": "Dataset Version",
+    "status": "Status",
+    "createdAt": "Created At",
+    "detail": "Detail",
+    "emptyTitle": "No training jobs yet",
+    "emptyBody": "Training jobs are triggered from the canvas workbench and will appear here.",
+    "viewDetail": "View Detail"
+  },
+  "detail": {
+    "title": "Training Detail",
+    "description": "View logs, metrics, and artifacts.",
+    "jobKicker": "Training Job",
+    "jobId": "Job ID:",
+    "run": "Run:",
+    "noRun": "Not created yet",
+    "runStatus": "Run status:",
+    "sseToggle": "Use SSE live stream; disabling falls back to 2-second polling.",
+    "params": "Parameters",
+    "paramsDescription": "Original training parameters are preserved for post-mortem or replay.",
+    "artifacts": "Artifacts",
+    "artifactsDescription": "Download links are backend-signed; raw object keys are never exposed to the frontend.",
+    "noArtifacts": "No artifacts yet",
+    "openArtifact": "Open artifact",
+    "loading": "Loading..."
+  }
 }
