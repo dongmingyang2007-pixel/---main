@@ -82,13 +82,16 @@ export default function RegisterPage() {
     e.preventDefault();
     setError("");
     try {
-      const auth = await apiPost<{ workspace: { id: string } }>("/api/v1/auth/register", {
-        email,
-        password,
-        display_name: displayName,
-        code,
-      });
-      persistWorkspaceId(auth.workspace.id);
+      const auth = await apiPost<{ workspace: { id: string }; access_token_expires_in_seconds: number }>(
+        "/api/v1/auth/register",
+        {
+          email,
+          password,
+          display_name: displayName,
+          code,
+        },
+      );
+      persistWorkspaceId(auth.workspace.id, auth.access_token_expires_in_seconds);
       router.push("/app");
       router.refresh();
     } catch (err) {

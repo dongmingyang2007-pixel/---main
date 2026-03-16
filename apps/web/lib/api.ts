@@ -2,6 +2,7 @@ import { getApiBaseUrl } from "@/lib/env";
 import { clearAuthState, setAuthState } from "@/lib/auth-state";
 
 const WORKSPACE_COOKIE_NAME = "mingrun_workspace_id";
+const LEGACY_WORKSPACE_COOKIE_NAME = "qihang_workspace_id";
 
 let cachedCsrfToken: string | null = null;
 
@@ -19,6 +20,17 @@ function writeCookie(name: string, value: string): void {
     return;
   }
   document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+}
+
+function clearCookie(name: string): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+function readWorkspaceId(): string | null {
+  return readCookie(WORKSPACE_COOKIE_NAME) || readCookie(LEGACY_WORKSPACE_COOKIE_NAME);
 }
 
 function clearCachedSecurityState(): void {
@@ -45,6 +57,10 @@ async function ensureCsrfToken(): Promise<string> {
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    clearCachedSecurityState();
+    clearAuthState();
+  }
   if (!res.ok || !data?.csrf_token) {
     throw new Error(data?.error?.message || "无法获取安全令牌");
   }
@@ -63,7 +79,7 @@ function buildHeaders(
   if (contentType && !headers.has("Content-Type")) {
     headers.set("Content-Type", contentType);
   }
-  const workspaceId = readCookie(WORKSPACE_COOKIE_NAME);
+  const workspaceId = readWorkspaceId();
   if (workspaceId && !headers.has("X-Workspace-ID")) {
     headers.set("X-Workspace-ID", workspaceId);
   }
@@ -76,9 +92,11 @@ function buildHeaders(
 async function parseResponse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       clearCachedSecurityState();
       clearAuthState();
+    } else if (res.status === 403) {
+      clearCachedSecurityState();
     }
     const errorMessage = data?.error?.message || `Request failed with status ${res.status}`;
     throw new Error(errorMessage);
@@ -154,7 +172,7 @@ export async function uploadToPresignedUrl(
   const headers = new Headers(init.headers || {});
   if (authenticated && isApiUrl) {
     const csrfToken = await ensureCsrfToken();
-    const workspaceId = readCookie(WORKSPACE_COOKIE_NAME);
+    const workspaceId = readWorkspaceId();
     headers.set("X-CSRF-Token", csrfToken);
     if (workspaceId) {
       headers.set("X-Workspace-ID", workspaceId);
@@ -168,13 +186,15 @@ export async function uploadToPresignedUrl(
   });
 }
 
-export function persistWorkspaceId(workspaceId: string): void {
+export function persistWorkspaceId(workspaceId: string, authStateMaxAgeSeconds?: number): void {
   writeCookie(WORKSPACE_COOKIE_NAME, workspaceId);
-  setAuthState();
+  clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
+  setAuthState(authStateMaxAgeSeconds);
 }
 
 export function clearWorkspaceId(): void {
-  writeCookie(WORKSPACE_COOKIE_NAME, "");
+  clearCookie(WORKSPACE_COOKIE_NAME);
+  clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
 }
 
 export async function logout(): Promise<void> {

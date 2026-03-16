@@ -180,6 +180,12 @@ async function fulfillJson(route: Route, payload: unknown, status = 200): Promis
 async function setAuthenticatedCookies(page: Page, workspaceId: string): Promise<void> {
   await page.context().addCookies([
     {
+      name: "auth_state",
+      value: "1",
+      url: APP_ORIGIN,
+      sameSite: "Lax",
+    },
+    {
       name: "access_token",
       value: "playwright-access-token",
       url: APP_ORIGIN,
@@ -187,7 +193,7 @@ async function setAuthenticatedCookies(page: Page, workspaceId: string): Promise
       sameSite: "Lax",
     },
     {
-      name: "qihang_workspace_id",
+      name: "mingrun_workspace_id",
       value: workspaceId,
       url: APP_ORIGIN,
       sameSite: "Lax",
@@ -232,13 +238,19 @@ export async function installWorkbenchApiMock(
         return;
       }
       await setAuthenticatedCookies(page, db.workspaceId);
-      await fulfillJson(route, { workspace: { id: db.workspaceId } });
+      await fulfillJson(route, {
+        workspace: { id: db.workspaceId },
+        access_token_expires_in_seconds: 3600,
+      });
       return;
     }
 
     if (pathname === "/api/v1/auth/login" && method === "POST") {
       await setAuthenticatedCookies(page, db.workspaceId);
-      await fulfillJson(route, { workspace: { id: db.workspaceId } });
+      await fulfillJson(route, {
+        workspace: { id: db.workspaceId },
+        access_token_expires_in_seconds: 3600,
+      });
       return;
     }
 

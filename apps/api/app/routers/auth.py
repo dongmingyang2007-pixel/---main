@@ -119,6 +119,7 @@ def register(
     return AuthResponse(
         user=UserOut.model_validate(user, from_attributes=True),
         workspace=WorkspaceOut.model_validate(workspace, from_attributes=True),
+        access_token_expires_in_seconds=settings.jwt_expire_minutes * 60,
     )
 
 
@@ -195,6 +196,7 @@ def login(
     return AuthResponse(
         user=UserOut.model_validate(user, from_attributes=True),
         workspace=WorkspaceOut.model_validate(workspace, from_attributes=True),
+        access_token_expires_in_seconds=settings.jwt_expire_minutes * 60,
     )
 
 

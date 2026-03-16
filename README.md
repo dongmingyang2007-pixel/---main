@@ -29,11 +29,27 @@ colima start
 docker context use colima
 ```
 
-在仓库根目录执行这一条命令即可：
+首次启动前，建议先复制一份本地 env：
+
+```bash
+cp .env.example .env
+```
+
+然后在仓库根目录执行：
 
 ```bash
 ./scripts/dev.sh
 ```
+
+如果你要启用 Gmail 验证码邮件，再编辑根目录 `.env`，填入：
+
+```bash
+SMTP_USER=your-mailbox@gmail.com
+SMTP_PASSWORD=your-16-char-gmail-app-password
+SMTP_FROM_ADDRESS=your-mailbox@gmail.com
+```
+
+`.env` 已被 `.gitignore` 忽略，不要把真实密码写回仓库里的 `docker/docker-compose.yml`。
 
 如果这里报：
 
@@ -109,7 +125,34 @@ docker compose -f docker/docker-compose.yml down
 
 API 启动时会自动建表，因此本地一键启动不需要再手动执行迁移。
 
-如果你想改本地默认值，直接编辑 [docker-compose.yml](/Users/dog/Desktop/铭润/docker/docker-compose.yml) 即可。`apps/api/.env.example` 和 `apps/web/.env.local.example` 仍保留给非 Docker 手动运行场景。
+如果你想改本地非敏感默认值，可以编辑 [docker-compose.yml](/Users/dog/Desktop/铭润/docker/docker-compose.yml)。涉及密码、JWT、SMTP 这类 secret 时，改根目录 `.env`，不要直接改 compose。`apps/api/.env.example` 和 `apps/web/.env.local.example` 仍保留给非 Docker 手动运行场景。
+
+## Gmail SMTP 与部署
+
+推荐约定：
+
+- 本地开发：复制 `.env.example` 为 `.env`
+- 服务器部署：把同样的变量放到仓库外的文件，例如 `/etc/mingrun/mingrun.env`
+- 该文件权限设为 `600`
+- Gmail 只使用 App Password，不使用邮箱登录密码
+
+服务器上建议这样启动：
+
+```bash
+docker compose \
+  --env-file /etc/mingrun/mingrun.env \
+  -f docker/docker-compose.yml \
+  up -d --build
+```
+
+这样做的好处是：
+
+- secret 不进 Git
+- 更新代码时不需要重写密码
+- 同一套 compose 可以同时用于本地和服务器
+- 以后切换到 SES、Postmark、Resend 时，只需要改 env 文件，不用改代码
+
+如果当前仓库里出现过真实 Gmail App Password，建议现在就去 Google 账户后台把这枚 App Password 轮换掉。
 
 ## API 重点
 

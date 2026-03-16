@@ -1,5 +1,4 @@
 const AUTH_STATE_COOKIE = "auth_state";
-const AUTH_STATE_MAX_AGE = 3600;
 
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -26,8 +25,8 @@ export function isLoggedIn(): boolean {
   return readCookie(AUTH_STATE_COOKIE) === "1";
 }
 
-export function setAuthState(): void {
-  writeCookie(AUTH_STATE_COOKIE, "1", AUTH_STATE_MAX_AGE);
+export function setAuthState(maxAgeSeconds?: number): void {
+  writeCookie(AUTH_STATE_COOKIE, "1", maxAgeSeconds);
 }
 
 export function clearAuthState(): void {

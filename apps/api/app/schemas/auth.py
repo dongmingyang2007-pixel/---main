@@ -105,3 +105,4 @@ class WorkspaceOut(BaseModel):
 class AuthResponse(BaseModel):
     user: UserOut
     workspace: WorkspaceOut
+    access_token_expires_in_seconds: int

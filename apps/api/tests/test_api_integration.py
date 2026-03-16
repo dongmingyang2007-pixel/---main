@@ -202,6 +202,7 @@ def test_auth_cookie_and_me() -> None:
     )
     assert resp.status_code == 200
     assert "access_token" in resp.cookies
+    assert resp.json()["access_token_expires_in_seconds"] == config_module.settings.jwt_expire_minutes * 60
 
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
