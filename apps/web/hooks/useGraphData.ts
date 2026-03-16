@@ -60,6 +60,41 @@ export function useGraphData(projectId: string, conversationId?: string) {
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
 
+  // SSE subscription for real-time memory updates
+  useEffect(() => {
+    if (!projectId) return;
+
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+    const eventSource = new EventSource(
+      `${apiBase}/api/v1/memory/${projectId}/stream`,
+      { withCredentials: true }
+    );
+
+    eventSource.addEventListener("new_memory", (event) => {
+      const newNode = JSON.parse(event.data);
+      setData((prev) => ({
+        ...prev,
+        nodes: [...prev.nodes, newNode as MemoryNode],
+      }));
+    });
+
+    eventSource.addEventListener("memory_promoted", (event) => {
+      const { id } = JSON.parse(event.data);
+      setData((prev) => ({
+        ...prev,
+        nodes: prev.nodes.map((n) =>
+          n.id === id ? { ...n, type: "permanent" as const } : n
+        ),
+      }));
+    });
+
+    eventSource.addEventListener("error", () => {
+      // Reconnect handled by EventSource automatically
+    });
+
+    return () => eventSource.close();
+  }, [projectId]);
+
   const createMemory = async (content: string, category?: string) => {
     const node = await apiPost<MemoryNode>("/api/v1/memory", {
       project_id: projectId, content, category: category || "",
