@@ -18,7 +18,7 @@ from app.core.http_security import SecurityHeadersMiddleware
 from app.core.request_id import RequestIDMiddleware
 from app.db.base import Base
 from app.db.session import engine
-from app.routers import auth, datasets, demo, eval, memory, models, projects, train, uploads, waitlist
+from app.routers import auth, chat, datasets, demo, eval, memory, models, projects, train, uploads, waitlist
 from app.services.runtime_state import runtime_state
 
 
@@ -73,3 +73,4 @@ app.include_router(models.router)
 app.include_router(demo.router)
 app.include_router(eval.router)
 app.include_router(memory.router)
+app.include_router(chat.router)

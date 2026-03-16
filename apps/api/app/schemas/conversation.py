@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class ConversationCreate(BaseModel):
+    project_id: str
     title: str = ""
 
 
