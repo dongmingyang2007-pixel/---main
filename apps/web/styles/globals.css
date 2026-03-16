@@ -6021,6 +6021,149 @@ button {
   opacity: 0.8;
 }
 
+/* Wizard model picker (v2) */
+.wizard-model-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 24px;
+  border-radius: var(--radius-card, 14px);
+  background: var(--bg-card);
+  border: 2px dashed var(--border);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.wizard-model-picker-btn:hover {
+  border-color: var(--accent, var(--brand-v2));
+  color: var(--accent, var(--brand-v2));
+  background: var(--accent-soft, rgba(200, 115, 74, 0.04));
+}
+
+.wizard-selected-model {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: var(--radius-card, 14px);
+  background: var(--bg-card);
+  border: 2px solid var(--accent, var(--brand-v2));
+  box-shadow: 0 0 0 3px var(--accent-soft, rgba(200, 115, 74, 0.15));
+}
+
+.wizard-selected-model-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wizard-selected-model-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wizard-selected-model-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.wizard-selected-model-change {
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius-badge);
+  transition: background 0.15s;
+}
+
+.wizard-selected-model-change:hover {
+  background: var(--accent-soft, rgba(200, 115, 74, 0.1));
+}
+
+.wizard-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 20px;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.wizard-advanced-toggle:hover {
+  color: var(--accent);
+}
+
+.wizard-advanced-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.wizard-advanced-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.wizard-advanced-section {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-card, 14px);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wizard-pipeline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-pipeline-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.wizard-pipeline-value {
+  font-size: 13px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizard-pipeline-pick-btn {
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-badge);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.wizard-pipeline-pick-btn:hover {
+  background: var(--accent-soft, rgba(200, 115, 74, 0.1));
+}
+
 /* ─ Step Knowledge ─ */
 
 .wizard-step-knowledge {
@@ -6745,6 +6888,35 @@ button {
 .canvas-model-desc {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* Pipeline card */
+.canvas-grid--pipeline {
+  margin-top: 14px;
+}
+
+.canvas-pipeline-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.canvas-pipeline-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.canvas-pipeline-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.canvas-pipeline-muted {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Knowledge card */

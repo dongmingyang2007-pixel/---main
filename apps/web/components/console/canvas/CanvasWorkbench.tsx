@@ -5,11 +5,14 @@ import { useTranslations } from "next-intl";
 
 import { useRouter } from "@/i18n/navigation";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
+import { usePipelineConfig } from "@/hooks/usePipelineConfig";
 
 import { KnowledgeCard } from "./KnowledgeCard";
 import { ModelCard } from "./ModelCard";
 import { PersonalityCard } from "./PersonalityCard";
+import { PipelineCard } from "./PipelineCard";
 import { SkillsCard } from "./SkillsCard";
+import { ModelPickerModal } from "../ModelPickerModal";
 
 /* ── Description parser ─────────────────────────── */
 
@@ -62,6 +65,14 @@ export function parseDescription(raw: string): ParsedDescription {
   return result;
 }
 
+/* ── Catalog model type ─────────────────────────── */
+
+interface CatalogModelInfo {
+  model_id: string;
+  display_name: string;
+  capabilities: string[];
+}
+
 /* ── Component ──────────────────────────────────── */
 
 interface ProjectData {
@@ -77,6 +88,7 @@ interface CanvasWorkbenchProps {
 
 export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   const t = useTranslations("console-assistants");
+  const tModels = useTranslations("console-models-v2");
   const router = useRouter();
 
   const [project, setProject] = useState<ProjectData | null>(null);
@@ -85,6 +97,20 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   const [training, setTraining] = useState(false);
   const [trainProgress, setTrainProgress] = useState(0);
   const [saving, setSaving] = useState(false);
+
+  /* Pipeline config */
+  const { getConfig, updateConfig, loading: pipelineLoading } =
+    usePipelineConfig(assistantId);
+
+  /* Model picker modal state */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCategory, setPickerCategory] = useState<
+    "llm" | "asr" | "tts" | "vision"
+  >("llm");
+
+  /* LLM catalog info for vision capability check */
+  const [llmCatalogInfo, setLlmCatalogInfo] =
+    useState<CatalogModelInfo | null>(null);
 
   /* Fetch project data */
   useEffect(() => {
@@ -95,6 +121,23 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
     });
   }, [assistantId]);
 
+  /* Fetch LLM catalog info when pipeline LLM config changes */
+  const llmConfig = getConfig("llm");
+  useEffect(() => {
+    if (!llmConfig?.model_id) {
+      setLlmCatalogInfo(null);
+      return;
+    }
+    void apiGet<CatalogModelInfo>(
+      `/api/v1/models/catalog/${llmConfig.model_id}`,
+    )
+      .then((info) => setLlmCatalogInfo(info))
+      .catch(() => setLlmCatalogInfo(null));
+  }, [llmConfig?.model_id]);
+
+  const llmHasVision =
+    llmCatalogInfo?.capabilities?.includes("vision") ?? false;
+
   /* Inline name edit */
   const handleNameBlur = useCallback(async () => {
     setEditingName(false);
@@ -103,10 +146,12 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
       await apiPatch(`/api/v1/projects/${assistantId}`, {
         name: nameValue.trim(),
       });
-      setProject((prev) => (prev ? { ...prev, name: nameValue.trim() } : prev));
+      setProject((prev) =>
+        prev ? { ...prev, name: nameValue.trim() } : prev,
+      );
     } catch {
       // Revert on error
-      setNameValue(project.name);
+      if (project) setNameValue(project.name);
     }
   }, [assistantId, nameValue, project]);
 
@@ -186,6 +231,23 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
     [assistantId, parsed, project],
   );
 
+  /* Open model picker for a given category */
+  const openPicker = (category: "llm" | "asr" | "tts" | "vision") => {
+    setPickerCategory(category);
+    setPickerOpen(true);
+  };
+
+  /* Handle model selection from picker */
+  const handleModelSelect = async (modelId: string, _displayName: string) => {
+    await updateConfig(pickerCategory, modelId);
+    setPickerOpen(false);
+  };
+
+  /* Resolve display names from pipeline config */
+  const asrConfig = getConfig("asr");
+  const ttsConfig = getConfig("tts");
+  const visionConfig = getConfig("vision");
+
   if (!project) {
     return (
       <div className="canvas-loading">
@@ -254,7 +316,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
 
       {/* 2x2 Grid */}
       <div className="canvas-grid">
-        <ModelCard parsed={parsed} />
+        <ModelCard parsed={parsed} onChangeClick={() => openPicker("llm")} />
         <KnowledgeCard assistantId={assistantId} />
         <PersonalityCard
           parsed={parsed}
@@ -263,6 +325,58 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
         />
         <SkillsCard parsed={parsed} />
       </div>
+
+      {/* Pipeline row: ASR + TTS (+ Vision if LLM lacks it) */}
+      <div className="canvas-grid canvas-grid--pipeline">
+        <PipelineCard
+          label={tModels("pipelineAsr")}
+          modelType="asr"
+          currentModelId={asrConfig?.model_id}
+          onChangeClick={() => openPicker("asr")}
+        />
+        <PipelineCard
+          label={tModels("pipelineTts")}
+          modelType="tts"
+          currentModelId={ttsConfig?.model_id}
+          onChangeClick={() => openPicker("tts")}
+        />
+        {!llmHasVision && (
+          <PipelineCard
+            label={tModels("pipelineVision")}
+            modelType="vision"
+            currentModelId={visionConfig?.model_id}
+            onChangeClick={() => openPicker("vision")}
+          />
+        )}
+        {llmHasVision && (
+          <PipelineCard
+            label={tModels("pipelineVision")}
+            modelType="vision"
+            disabled
+            disabledText={tModels("pipelineVisionAuto")}
+            onChangeClick={() => {}}
+          />
+        )}
+      </div>
+
+      {/* Model picker modal */}
+      <ModelPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        category={pickerCategory}
+        currentModelId={
+          pickerCategory === "llm"
+            ? llmConfig?.model_id
+            : pickerCategory === "asr"
+              ? asrConfig?.model_id
+              : pickerCategory === "tts"
+                ? ttsConfig?.model_id
+                : visionConfig?.model_id
+        }
+        onSelect={(modelId, displayName) =>
+          void handleModelSelect(modelId, displayName)
+        }
+      />
     </div>
   );
 }

@@ -35,9 +35,10 @@ const MODEL_NAMES: Record<string, string> = {
 
 interface ModelCardProps {
   parsed: ParsedDescription;
+  onChangeClick?: () => void;
 }
 
-export function ModelCard({ parsed }: ModelCardProps) {
+export function ModelCard({ parsed, onChangeClick }: ModelCardProps) {
   const t = useTranslations("console-assistants");
   const { isDeveloperMode } = useDeveloperMode();
 
@@ -50,7 +51,7 @@ export function ModelCard({ parsed }: ModelCardProps) {
     <div className="canvas-card">
       <div className="canvas-card-header">
         <span className="canvas-card-label">{t("canvas.model")}</span>
-        <button type="button" className="canvas-card-action">
+        <button type="button" className="canvas-card-action" onClick={onChangeClick}>
           {t("canvas.change")}
         </button>
       </div>
