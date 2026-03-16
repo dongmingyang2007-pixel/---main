@@ -209,6 +209,18 @@ export async function logout(): Promise<void> {
   window.location.href = "/login";
 }
 
+export async function apiPostFormData<T>(path: string, formData: FormData, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(
+    path,
+    {
+      method: "POST",
+      ...init,
+      body: formData,
+    },
+    { requireCsrf: !isPublicMutation(path), contentType: "" },
+  );
+}
+
 export async function apiPut<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
   return apiRequest<T>(
     path,

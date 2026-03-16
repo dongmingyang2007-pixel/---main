@@ -9,5 +9,10 @@
   "deleteConversation": "删除对话",
   "selectAssistant": "选择 AI 助手",
   "noConversations": "暂无对话，点击下方创建",
-  "confirmDelete": "确定删除这个对话？"
+  "confirmDelete": "确定删除这个对话？",
+  "voiceRecord": "按住录音",
+  "voiceRecording": "录音中…松开发送",
+  "voiceSending": "语音识别中…",
+  "voicePlay": "播放语音",
+  "micPermissionDenied": "麦克风权限被拒绝"
 }

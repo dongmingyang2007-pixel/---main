@@ -9,5 +9,10 @@
   "deleteConversation": "Delete Conversation",
   "selectAssistant": "Select AI Assistant",
   "noConversations": "No conversations yet. Create one below.",
-  "confirmDelete": "Delete this conversation?"
+  "confirmDelete": "Delete this conversation?",
+  "voiceRecord": "Hold to record",
+  "voiceRecording": "Recording... release to send",
+  "voiceSending": "Transcribing...",
+  "voicePlay": "Play audio",
+  "micPermissionDenied": "Microphone permission denied"
 }

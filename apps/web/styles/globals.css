@@ -8000,6 +8000,75 @@ button {
 .model-picker-link { font-size: 12px; color: var(--accent); text-decoration: none; }
 .model-picker-link:hover { text-decoration: underline; }
 
+/* ── Voice Chat ──────────────────────────────── */
+
+.chat-input-bar-voice {
+  display: flex;
+  gap: 8px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  align-items: center;
+}
+
+.chat-mic-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 150ms;
+}
+
+.chat-mic-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chat-mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-mic-btn.is-recording {
+  background: var(--error);
+  color: white;
+  animation: mic-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 74, 74, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(196, 74, 74, 0); }
+}
+
+.chat-audio-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+.chat-audio-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chat-voice-indicator {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 16px;
+}
+
 /* ── Reduced Motion ──────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
