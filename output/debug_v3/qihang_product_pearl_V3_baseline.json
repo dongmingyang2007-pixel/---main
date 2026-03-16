@@ -1,6 +1,6 @@
 {
-  "inputGlbPath": "apps/web/public/qihang_product_pearl_V2.glb",
-  "inputGlbSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0",
+  "modelGlbPath": "apps/web/public/qihang_product_pearl_V3.glb",
+  "modelGlbSha256": "16918e9787581b2dad6f367c1518eb2a315a61815f1fa2cc081aa76b5174fb86",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
@@ -57,8 +57,17 @@
         "Earbud_Right"
       ],
       "mesh": null,
-      "translation": [],
-      "rotation": [],
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.70710678,
+        0.0,
+        0.70710678
+      ],
       "scale": [],
       "productLocalOriginMm": [
         0.0,
@@ -100,16 +109,21 @@
       ],
       "mesh": null,
       "translation": [
-        0.0,
+        -0.0334,
         0.01026441,
-        -0.0334
+        -0.0
       ],
-      "rotation": [],
+      "rotation": [
+        0.0,
+        0.70710678,
+        0.0,
+        0.70710678
+      ],
       "scale": [],
       "productLocalOriginMm": [
-        0.0,
+        -33.4,
         10.2644,
-        -33.4
+        -0.0
       ]
     },
     "Case_Base_Shell": {
@@ -173,9 +187,9 @@
         2.33999991
       ],
       "productLocalOriginMm": [
-        -20.8176,
+        1.2488,
         -1.205,
-        1.2488
+        20.8176
       ]
     },
     "Earbud_Right": {
@@ -203,9 +217,9 @@
         2.33999991
       ],
       "productLocalOriginMm": [
-        20.8176,
+        1.2488,
         -1.205,
-        1.2488
+        -20.8176
       ]
     },
     "Brooch_Camera": {
@@ -227,9 +241,9 @@
         1.73999989
       ],
       "productLocalOriginMm": [
-        0.0,
+        1.0,
         1.945,
-        1.0
+        0.0
       ]
     },
     "Pivot_Pin_Printable": {
@@ -245,9 +259,9 @@
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
-        0.0,
+        -33.4,
         10.625,
-        -33.4
+        -0.0
       ]
     },
     "Lid_Pivot_Hole_Center": {
@@ -263,9 +277,9 @@
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
-        0.0,
+        -33.4,
         10.625,
-        -33.4
+        -0.0
       ]
     },
     "DockWell_L": {
@@ -281,9 +295,9 @@
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
-        -19.6176,
+        1.2488,
         9.545,
-        1.2488
+        19.6176
       ]
     },
     "DockWell_R": {
@@ -299,28 +313,28 @@
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
-        19.6176,
+        1.2488,
         9.545,
-        1.2488
+        -19.6176
       ]
     }
   },
   "partBoundingBoxes": {
     "Case_Base_Shell": {
       "bboxMinMm": [
-        -16.2,
+        -42.944,
         -11.4034,
-        -42.944
+        -16.2
       ],
       "bboxMaxMm": [
-        16.2,
+        42.944,
         11.4034,
-        42.944
+        16.2
       ],
       "bboxSizeMm": [
-        32.4,
+        85.888,
         22.8068,
-        85.888
+        32.4
       ],
       "bboxCenterMm": [
         0.0,
@@ -330,19 +344,19 @@
     },
     "Case_Lid_Shell": {
       "bboxMinMm": [
-        -16.2,
+        -42.944,
         11.6237,
-        -42.944
+        -16.2
       ],
       "bboxMaxMm": [
-        16.2,
+        42.944,
         18.8356,
-        42.944
+        16.2
       ],
       "bboxSizeMm": [
-        32.4,
+        85.888,
         7.2119,
-        85.888
+        32.4
       ],
       "bboxCenterMm": [
         0.0,
@@ -352,80 +366,80 @@
     },
     "Earbud_Left": {
       "bboxMinMm": [
-        -25.4576,
+        -3.0881,
         -6.1629,
-        -3.0881
+        16.1776
       ],
       "bboxMaxMm": [
-        -16.1776,
+        11.2446,
         3.951,
-        11.2446
+        25.4576
       ],
       "bboxSizeMm": [
-        9.2799,
+        14.3327,
         10.1139,
-        14.3327
+        9.2799
       ],
       "bboxCenterMm": [
-        -20.8176,
+        4.0782,
         -1.1059,
-        4.0782
+        20.8176
       ]
     },
     "Earbud_Right": {
       "bboxMinMm": [
-        16.1776,
+        -3.0881,
         -6.1629,
-        -3.0881
+        -25.4576
       ],
       "bboxMaxMm": [
-        25.4576,
+        11.2446,
         3.951,
-        11.2446
+        -16.1776
       ],
       "bboxSizeMm": [
-        9.2799,
+        14.3327,
         10.1139,
-        14.3327
+        9.2799
       ],
       "bboxCenterMm": [
-        20.8176,
+        4.0782,
         -1.1059,
-        4.0782
+        -20.8176
       ]
     },
     "Brooch_Camera": {
       "bboxMinMm": [
-        -2.8582,
+        -2.2112,
         -5.2658,
-        -2.2112
+        -2.8582
       ],
       "bboxMaxMm": [
-        2.8582,
+        4.065,
         0.9917,
-        4.065
+        2.8582
       ],
       "bboxSizeMm": [
-        5.7165,
+        6.2762,
         6.2575,
-        6.2762
+        5.7165
       ],
       "bboxCenterMm": [
-        0.0,
+        0.9269,
         -2.137,
-        0.9269
+        0.0
       ]
     },
     "Pivot_Pin_Printable": {
       "bboxMinMm": [
-        -5.475,
+        -38.875,
         9.705,
-        -38.875
+        -5.475
       ],
       "bboxMaxMm": [
-        5.475,
+        -27.925,
         16.745,
-        -27.925
+        5.475
       ],
       "bboxSizeMm": [
         10.95,
@@ -433,9 +447,9 @@
         10.95
       ],
       "bboxCenterMm": [
-        0.0,
+        -33.4,
         13.225,
-        -33.4
+        -0.0
       ]
     }
   },
@@ -466,6 +480,59 @@
       "Pivot_Plug_Seat_Anchor"
     ]
   },
-  "outputGlbPath": "apps/web/public/qihang_product_pearl_V3.glb",
-  "outputGlbSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0"
+  "sourceInputPath": "apps/web/public/qihang_product_pearl_V2.glb",
+  "sourceInputSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0",
+  "v3RotationDegreesY": 90.0,
+  "topLevelRotationChangeLog": [
+    {
+      "node": "Case_Base",
+      "translationBefore": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "translationAfter": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotationBefore": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "rotationAfter": [
+        0.0,
+        0.70710678,
+        0.0,
+        0.70710678
+      ]
+    },
+    {
+      "node": "Case_Lid_Pivot",
+      "translationBefore": [
+        0.0,
+        0.01026441,
+        -0.0334
+      ],
+      "translationAfter": [
+        -0.0334,
+        0.01026441,
+        -0.0
+      ],
+      "rotationBefore": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "rotationAfter": [
+        0.0,
+        0.70710678,
+        0.0,
+        0.70710678
+      ]
+    }
+  ]
 }

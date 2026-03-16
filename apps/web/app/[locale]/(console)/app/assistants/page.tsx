@@ -10,6 +10,24 @@ import { apiGet } from "@/lib/api";
 
 type Project = { id: string; name: string; description?: string; created_at: string };
 
+/** Strip [model:...] [personality:...] [tags:...] [color:...] metadata from description */
+function cleanDescription(desc?: string): string {
+  if (!desc) return "";
+  return desc
+    .replace(/\[model:[^\]]*\]/g, "")
+    .replace(/\[personality:[^\]]*\]/g, "")
+    .replace(/\[tags:[^\]]*\]/g, "")
+    .replace(/\[color:[^\]]*\]/g, "")
+    .trim();
+}
+
+/** Extract model name from description metadata */
+function extractModelName(desc?: string): string | null {
+  if (!desc) return null;
+  const match = desc.match(/\[model:([^|]*)\|/);
+  return match ? match[1] : null;
+}
+
 export default function AssistantsPage() {
   const [items, setItems] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,18 +75,25 @@ export default function AssistantsPage() {
                 <span>{t("createNew")}</span>
               </Link>
 
-              {items.map((project) => (
-                <Link
-                  key={project.id}
-                  href={`/app/assistants/${project.id}`}
-                  className="assistant-card"
-                >
-                  <div className="assistant-card-name">{project.name}</div>
-                  <div className="assistant-card-desc">
-                    {project.description || t("noDescription")}
-                  </div>
-                </Link>
-              ))}
+              {items.map((project) => {
+                const modelName = extractModelName(project.description);
+                const desc = cleanDescription(project.description);
+                return (
+                  <Link
+                    key={project.id}
+                    href={`/app/assistants/${project.id}`}
+                    className="assistant-card"
+                  >
+                    <div className="assistant-card-name">{project.name}</div>
+                    {modelName && (
+                      <div className="assistant-card-model">{modelName}</div>
+                    )}
+                    <div className="assistant-card-desc">
+                      {desc || t("noDescription")}
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
