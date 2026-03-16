@@ -50,8 +50,9 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
     )
       .then((data) => {
         if (!cancelled) {
+          const list = Array.isArray(data) ? data : [];
           setMessages(
-            data.map((m) => ({ id: m.id, role: m.role, content: m.content })),
+            list.map((m) => ({ id: m.id, role: m.role, content: m.content })),
           );
         }
       })

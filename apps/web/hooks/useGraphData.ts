@@ -62,38 +62,56 @@ export function useGraphData(projectId: string, conversationId?: string) {
 
   // SSE subscription for real-time memory updates
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || loading) return;
 
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-    const eventSource = new EventSource(
-      `${apiBase}/api/v1/memory/${projectId}/stream`,
-      { withCredentials: true }
-    );
+    let eventSource: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout>;
 
-    eventSource.addEventListener("new_memory", (event) => {
-      const newNode = JSON.parse(event.data);
-      setData((prev) => ({
-        ...prev,
-        nodes: [...prev.nodes, newNode as MemoryNode],
-      }));
-    });
+    function connect() {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+      eventSource = new EventSource(
+        `${apiBase}/api/v1/memory/${projectId}/stream`,
+        { withCredentials: true }
+      );
 
-    eventSource.addEventListener("memory_promoted", (event) => {
-      const { id } = JSON.parse(event.data);
-      setData((prev) => ({
-        ...prev,
-        nodes: prev.nodes.map((n) =>
-          n.id === id ? { ...n, type: "permanent" as const } : n
-        ),
-      }));
-    });
+      eventSource.addEventListener("new_memory", (event) => {
+        try {
+          const newNode = JSON.parse(event.data);
+          setData((prev) => ({
+            ...prev,
+            nodes: [...prev.nodes, newNode as MemoryNode],
+          }));
+        } catch { /* ignore parse errors */ }
+      });
 
-    eventSource.addEventListener("error", () => {
-      // Reconnect handled by EventSource automatically
-    });
+      eventSource.addEventListener("memory_promoted", (event) => {
+        try {
+          const { id } = JSON.parse(event.data);
+          setData((prev) => ({
+            ...prev,
+            nodes: prev.nodes.map((n) =>
+              n.id === id ? { ...n, type: "permanent" as const } : n
+            ),
+          }));
+        } catch { /* ignore parse errors */ }
+      });
 
-    return () => eventSource.close();
-  }, [projectId]);
+      eventSource.onerror = () => {
+        // Close on error and don't auto-reconnect (avoids 401 spam)
+        eventSource?.close();
+        eventSource = null;
+        // Retry after 30 seconds (in case auth was restored)
+        retryTimeout = setTimeout(connect, 30000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      eventSource?.close();
+      clearTimeout(retryTimeout);
+    };
+  }, [projectId, loading]);
 
   const createMemory = async (content: string, category?: string) => {
     const node = await apiPost<MemoryNode>("/api/v1/memory", {

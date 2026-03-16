@@ -53,12 +53,13 @@ export default function ChatPage() {
   useEffect(() => {
     apiGet<Project[]>("/api/v1/projects")
       .then((data) => {
-        setProjects(data);
-        if (data.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(data[0].id);
+        const list = Array.isArray(data) ? data : [];
+        setProjects(list);
+        if (list.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(list[0].id);
         }
       })
-      .catch(() => {});
+      .catch(() => setProjects([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -78,10 +79,10 @@ export default function ChatPage() {
     )
       .then((data) => {
         if (!cancelled) {
-          setConversations(data);
-          // Auto-select first conversation if available
-          if (data.length > 0) {
-            setActiveConversationId(data[0].id);
+          const list = Array.isArray(data) ? data : [];
+          setConversations(list);
+          if (list.length > 0) {
+            setActiveConversationId(list[0].id);
           } else {
             setActiveConversationId(null);
           }
