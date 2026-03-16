@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
 from app.core.errors import ApiError
 from app.models import Conversation, Memory, Message, Project, User
 from app.schemas.conversation import ConversationCreate, ConversationOut, MessageCreate, MessageOut
+from app.services.orchestrator import orchestrate_inference
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -125,7 +127,7 @@ def list_messages(
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=MessageOut)
-def send_message(
+async def send_message(
     conversation_id: str,
     payload: MessageCreate,
     db: Session = Depends(get_db_session),
@@ -147,9 +149,34 @@ def send_message(
         content=payload.content,
     )
     db.add(user_message)
+    db.flush()
 
-    # Generate and save mock AI response
-    ai_response_text = random.choice(_MOCK_AI_RESPONSES)  # noqa: S311
+    # Generate AI response
+    if not settings.dashscope_api_key:
+        # Fallback to mock responses when no API key configured (local dev)
+        ai_response_text = random.choice(_MOCK_AI_RESPONSES)  # noqa: S311
+    else:
+        # Load recent messages for context
+        recent = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+
+        # Real inference
+        ai_response_text = await orchestrate_inference(
+            db,
+            workspace_id=workspace_id,
+            project_id=conversation.project_id,
+            conversation_id=conversation_id,
+            user_message=payload.content,
+            recent_messages=recent_msgs,
+        )
+
+    # Save AI response
     ai_message = Message(
         conversation_id=conversation_id,
         role="assistant",
@@ -162,4 +189,20 @@ def send_message(
 
     db.commit()
     db.refresh(ai_message)
+
+    # Trigger async memory extraction (non-fatal)
+    if settings.dashscope_api_key:
+        try:
+            from app.tasks.worker_tasks import extract_memories
+
+            extract_memories.delay(
+                workspace_id,
+                conversation.project_id,
+                conversation_id,
+                payload.content,
+                ai_response_text,
+            )
+        except Exception:  # noqa: BLE001
+            pass  # Celery failure is non-fatal
+
     return MessageOut.model_validate(ai_message, from_attributes=True)
