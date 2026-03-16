@@ -233,6 +233,48 @@ def cleanup_deleted_project(project_id: str) -> None:
         db.close()
 
 
+@celery_app.task(name="app.tasks.worker_tasks.index_data_item")
+def index_data_item(
+    workspace_id: str,
+    project_id: str,
+    data_item_id: str,
+    object_key: str,
+    filename: str,
+) -> None:
+    """Download file from S3, extract text, chunk, and vectorize for RAG."""
+    import asyncio
+
+    from app.services.document_indexer import index_document
+    from app.services.storage import get_s3_client
+
+    if not settings.dashscope_api_key:
+        return  # Skip if no API key configured
+
+    db = SessionLocal()
+    try:
+        s3 = get_s3_client()
+        response = s3.get_object(
+            Bucket=settings.s3_private_bucket,
+            Key=object_key,
+        )
+        content = response["Body"].read()
+
+        asyncio.run(
+            index_document(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                data_item_id=data_item_id,
+                content=content,
+                filename=filename,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.tasks.worker_tasks.extract_memories")
 def extract_memories(
     workspace_id: str,

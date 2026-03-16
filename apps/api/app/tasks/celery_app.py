@@ -9,6 +9,7 @@ celery_app.conf.task_routes = {
     "app.tasks.worker_tasks.run_training_job": {"queue": "train"},
     "app.tasks.worker_tasks.cleanup_deleted_dataset": {"queue": "cleanup"},
     "app.tasks.worker_tasks.cleanup_deleted_project": {"queue": "cleanup"},
+    "app.tasks.worker_tasks.index_data_item": {"queue": "data"},
     "app.tasks.worker_tasks.extract_memories": {"queue": "inference"},
 }
 celery_app.conf.update(
