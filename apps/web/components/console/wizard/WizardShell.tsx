@@ -39,7 +39,12 @@ export function WizardShell() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [data, setData] = useState<WizardData>({
     model: null,
-    pipeline: {},
+    pipeline: {
+      asrModelId: "paraformer-v2",
+      asrModelName: "Paraformer V2",
+      ttsModelId: "cosyvoice-v1",
+      ttsModelName: "CosyVoice V1",
+    },
     knowledgeFiles: [],
     personality: { description: "", tags: [] },
     name: "",

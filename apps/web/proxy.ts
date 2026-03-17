@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
+const CSP_LOOPBACK_HOSTS = ["localhost", "127.0.0.1"] as const;
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
 function isPageRoute(pathname: string): boolean {
@@ -25,7 +26,10 @@ function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.includes(hostname as (typeof LOOPBACK_HOSTS)[number]);
 }
 
-function expandLoopbackOrigins(origin: string | null): string[] {
+function expandLoopbackOrigins(
+  origin: string | null,
+  loopbackHosts: readonly string[] = LOOPBACK_HOSTS,
+): string[] {
   if (!origin) {
     return [];
   }
@@ -34,7 +38,7 @@ function expandLoopbackOrigins(origin: string | null): string[] {
   try {
     const url = new URL(origin);
     if (isLoopbackHost(url.hostname)) {
-      for (const loopbackHost of LOOPBACK_HOSTS) {
+      for (const loopbackHost of loopbackHosts) {
         if (loopbackHost === url.hostname) {
           continue;
         }
@@ -67,8 +71,14 @@ function getLocalePrefix(request: NextRequest): string {
 }
 
 function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
-  const apiOrigins = expandLoopbackOrigins(normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL));
-  const assetOrigins = expandLoopbackOrigins(normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN));
+  const apiOrigins = expandLoopbackOrigins(
+    normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL),
+    CSP_LOOPBACK_HOSTS,
+  );
+  const assetOrigins = expandLoopbackOrigins(
+    normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN),
+    CSP_LOOPBACK_HOSTS,
+  );
   const connectSrc = ["'self'", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
   const assetSrc = ["'self'", "data:", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
   const frameAncestors = allowSameOriginFrame ? "'self'" : "'none'";
@@ -130,7 +140,7 @@ export function proxy(request: NextRequest) {
     return redirect;
   }
 
-  const isLocalHost = request.nextUrl.hostname === "localhost" || request.nextUrl.hostname === "127.0.0.1";
+  const isLocalHost = isLoopbackHost(request.nextUrl.hostname);
   const isLocalStack = process.env.QIHANG_LOCAL_STACK === "true";
   const useNonceCsp = process.env.NODE_ENV === "production" && !isLocalHost && !isLocalStack;
   let nonce: string | null = null;

@@ -1,7 +1,8 @@
 import type { Page, Route } from "@playwright/test";
 
-const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3000";
+const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100";
 const CONFIGURED_API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const COOKIE_ORIGINS = expandLoopbackOrigins(APP_ORIGIN);
 
 function alignLoopbackHost(origin: string, appOrigin: string): string {
   try {
@@ -19,6 +20,23 @@ function alignLoopbackHost(origin: string, appOrigin: string): string {
   }
 
   return origin;
+}
+
+function expandLoopbackOrigins(origin: string): string[] {
+  try {
+    const url = new URL(origin);
+    if (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+      return [origin];
+    }
+    const variants = ["localhost", "127.0.0.1"].map((hostname) => {
+      const next = new URL(origin);
+      next.hostname = hostname;
+      return next.origin;
+    });
+    return Array.from(new Set(variants));
+  } catch {
+    return [origin];
+  }
 }
 
 const API_ORIGINS = Array.from(
@@ -178,27 +196,29 @@ async function fulfillJson(route: Route, payload: unknown, status = 200): Promis
 }
 
 async function setAuthenticatedCookies(page: Page, workspaceId: string): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: "auth_state",
-      value: "1",
-      url: APP_ORIGIN,
-      sameSite: "Lax",
-    },
-    {
-      name: "access_token",
-      value: "playwright-access-token",
-      url: APP_ORIGIN,
-      httpOnly: true,
-      sameSite: "Lax",
-    },
-    {
-      name: "mingrun_workspace_id",
-      value: workspaceId,
-      url: APP_ORIGIN,
-      sameSite: "Lax",
-    },
-  ]);
+  await page.context().addCookies(
+    COOKIE_ORIGINS.flatMap((origin) => [
+      {
+        name: "auth_state",
+        value: "1",
+        url: origin,
+        sameSite: "Lax" as const,
+      },
+      {
+        name: "access_token",
+        value: "playwright-access-token",
+        url: origin,
+        httpOnly: true,
+        sameSite: "Lax" as const,
+      },
+      {
+        name: "mingrun_workspace_id",
+        value: workspaceId,
+        url: origin,
+        sameSite: "Lax" as const,
+      },
+    ]),
+  );
 }
 
 function readJsonBody<T>(route: Route): T {

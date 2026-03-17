@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
@@ -45,6 +44,7 @@ def get_pipeline(
 
 
 @router.patch("", response_model=PipelineConfigOut)
+@router.put("", response_model=PipelineConfigOut)
 def upsert_pipeline_config(
     payload: PipelineConfigUpdate,
     db: Session = Depends(get_db_session),
@@ -58,33 +58,31 @@ def upsert_pipeline_config(
     catalog_entry = db.query(ModelCatalog).filter(ModelCatalog.model_id == payload.model_id).first()
     if not catalog_entry:
         raise ApiError("invalid_model", "Model not found in catalog", status_code=400)
+    if catalog_entry.category != payload.model_type:
+        raise ApiError("invalid_model_type", "Model category does not match pipeline slot", status_code=400)
 
     now = datetime.now(timezone.utc)
-
-    # Upsert using INSERT ON CONFLICT
-    from uuid import uuid4
-
-    new_id = str(uuid4())
-    db.execute(
-        text(
-            """
-            INSERT INTO pipeline_configs (id, project_id, model_type, model_id, config_json, created_at, updated_at)
-            VALUES (:id, :project_id, :model_type, :model_id, :config_json::jsonb, :now, :now)
-            ON CONFLICT (project_id, model_type) DO UPDATE SET
-                model_id = EXCLUDED.model_id,
-                config_json = EXCLUDED.config_json,
-                updated_at = EXCLUDED.updated_at
-            """
-        ),
-        {
-            "id": new_id,
-            "project_id": payload.project_id,
-            "model_type": payload.model_type,
-            "model_id": payload.model_id,
-            "config_json": "{}",
-            "now": now,
-        },
+    config = (
+        db.query(PipelineConfig)
+        .filter(
+            PipelineConfig.project_id == payload.project_id,
+            PipelineConfig.model_type == payload.model_type,
+        )
+        .first()
     )
+    if config is None:
+        config = PipelineConfig(
+            project_id=payload.project_id,
+            model_type=payload.model_type,
+            model_id=payload.model_id,
+            config_json=payload.config_json or {},
+        )
+        config.created_at = now
+        db.add(config)
+    else:
+        config.model_id = payload.model_id
+        config.config_json = payload.config_json or {}
+    config.updated_at = now
 
     # Auto-create vision config if setting a non-vision LLM and no vision config exists
     if payload.model_type == "llm":
@@ -94,28 +92,17 @@ def upsert_pipeline_config(
             .first()
         )
         if not existing_vision:
-            vision_id = str(uuid4())
-            db.execute(
-                text(
-                    """
-                    INSERT INTO pipeline_configs (id, project_id, model_type, model_id, config_json, created_at, updated_at)
-                    VALUES (:id, :project_id, 'vision', 'qwen-vl-plus', '{}'::jsonb, :now, :now)
-                    ON CONFLICT (project_id, model_type) DO NOTHING
-                    """
+            db.add(
+                PipelineConfig(
+                    project_id=payload.project_id,
+                    model_type="vision",
+                    model_id="qwen-vl-plus",
+                    config_json={},
+                    created_at=now,
+                    updated_at=now,
                 ),
-                {
-                    "id": vision_id,
-                    "project_id": payload.project_id,
-                    "now": now,
-                },
             )
 
     db.commit()
-
-    # Fetch the upserted row
-    config = (
-        db.query(PipelineConfig)
-        .filter(PipelineConfig.project_id == payload.project_id, PipelineConfig.model_type == payload.model_type)
-        .first()
-    )
+    db.refresh(config)
     return PipelineConfigOut.model_validate(config, from_attributes=True)

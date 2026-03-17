@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
 from app.core.errors import ApiError
-from app.models import Project, User
+from app.models import PipelineConfig, Project, User
 from app.schemas.project import PaginatedProjects, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.audit import write_audit_log
 from app.tasks.worker_tasks import cleanup_deleted_project
@@ -39,6 +39,30 @@ def create_project(
 ) -> ProjectOut:
     project = Project(workspace_id=workspace_id, name=payload.name, description=payload.description)
     db.add(project)
+    db.flush()
+
+    db.add_all(
+        [
+            PipelineConfig(
+                project_id=project.id,
+                model_type="llm",
+                model_id="qwen3.5-plus",
+                config_json={},
+            ),
+            PipelineConfig(
+                project_id=project.id,
+                model_type="asr",
+                model_id="paraformer-v2",
+                config_json={},
+            ),
+            PipelineConfig(
+                project_id=project.id,
+                model_type="tts",
+                model_id="cosyvoice-v1",
+                config_json={},
+            ),
+        ]
+    )
     write_audit_log(
         db,
         workspace_id=workspace_id,

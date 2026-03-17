@@ -8,6 +8,7 @@ async function fillRegisterForm(page: Page, localePrefix: "" | "/en", stamp: str
   await page.locator("#register-display-name").fill(`User ${stamp}`);
   await page.locator("#register-email").fill(`user-${stamp}@example.com`);
   await page.locator("#register-password").fill("password-1234");
+  await page.locator("#register-confirm-password").fill("password-1234");
 }
 
 test("public pages smoke", async ({ page }) => {
@@ -29,9 +30,9 @@ test("english register flow uses two-step verification and enters the english co
   await page.locator("#register-code").fill("654321");
   await page.getByRole("button", { name: "Register and enter console" }).click();
 
-  await expect(page).toHaveURL(/\/en\/app$/);
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "console");
+  await expect(page).toHaveURL(/\/en\/app\/assistants$/);
+  await expect(page.getByRole("heading", { name: "My AI" })).toBeVisible();
+  await expect(page.locator("[data-theme='console']").first()).toBeVisible();
 });
 
 test("chinese forgot-password flow uses verification code and shows success state", async ({ page }) => {
@@ -47,7 +48,7 @@ test("chinese forgot-password flow uses verification code and shows success stat
   await page.getByRole("button", { name: "确认重设" }).click();
 
   await expect(page.getByRole("heading", { name: "密码已更新" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "去登录" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "去登录" }).or(page.getByRole("button", { name: "去登录" }))).toBeVisible();
 });
 
 test("console pages load correctly against mocked API", async ({ page }) => {
@@ -56,7 +57,7 @@ test("console pages load correctly against mocked API", async ({ page }) => {
   // Assistants page loads and shows the seed project as an assistant card
   await page.goto("/app/assistants");
   await expect(page.getByRole("heading", { name: "我的 AI", exact: true })).toBeVisible();
-  await expect(page.getByText("Seed Console Project")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Seed Console Project/i }).first()).toBeVisible();
 
   // Knowledge page loads and shows the create form
   await page.goto("/app/knowledge");

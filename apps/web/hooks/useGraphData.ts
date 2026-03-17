@@ -42,6 +42,45 @@ interface GraphData {
   edges: MemoryEdge[];
 }
 
+interface NormalizeStreamNodeOptions {
+  projectId: string;
+  previous?: MemoryNode;
+}
+
+function normalizeStreamNode(
+  node: Partial<MemoryNode>,
+  options: NormalizeStreamNodeOptions,
+): MemoryNode {
+  const { projectId, previous } = options;
+  const now = new Date().toISOString();
+  return {
+    id: node.id || previous?.id || "",
+    workspace_id: node.workspace_id || previous?.workspace_id || "",
+    project_id: node.project_id || previous?.project_id || projectId,
+    content: node.content || previous?.content || "",
+    category: node.category || previous?.category || "",
+    type: node.type || previous?.type || "temporary",
+    source_conversation_id:
+      node.source_conversation_id !== undefined
+        ? node.source_conversation_id
+        : (previous?.source_conversation_id ?? null),
+    parent_memory_id:
+      node.parent_memory_id !== undefined
+        ? node.parent_memory_id
+        : (previous?.parent_memory_id ?? null),
+    position_x:
+      node.position_x !== undefined ? node.position_x : (previous?.position_x ?? null),
+    position_y:
+      node.position_y !== undefined ? node.position_y : (previous?.position_y ?? null),
+    metadata_json:
+      (node.metadata_json as Record<string, unknown> | undefined) ||
+      previous?.metadata_json ||
+      {},
+    created_at: node.created_at || previous?.created_at || now,
+    updated_at: node.updated_at || previous?.updated_at || node.created_at || now,
+  };
+}
+
 export function useGraphData(projectId: string, conversationId?: string) {
   const [data, setData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(true);
@@ -77,10 +116,23 @@ export function useGraphData(projectId: string, conversationId?: string) {
 
       eventSource.addEventListener("new_memory", (event) => {
         try {
-          const newNode = JSON.parse(event.data);
+          const newNode = JSON.parse(event.data) as Partial<MemoryNode>;
+          if (
+            conversationId &&
+            newNode.type === "temporary" &&
+            newNode.source_conversation_id !== conversationId
+          ) {
+            return;
+          }
           setData((prev) => ({
             ...prev,
-            nodes: [...prev.nodes, newNode as MemoryNode],
+            nodes: prev.nodes.some((node) => node.id === newNode.id)
+              ? prev.nodes.map((node) =>
+                  node.id === newNode.id
+                    ? normalizeStreamNode(newNode, { projectId, previous: node })
+                    : node,
+                )
+              : [...prev.nodes, normalizeStreamNode(newNode, { projectId })],
           }));
         } catch { /* ignore parse errors */ }
       });
@@ -91,7 +143,9 @@ export function useGraphData(projectId: string, conversationId?: string) {
           setData((prev) => ({
             ...prev,
             nodes: prev.nodes.map((n) =>
-              n.id === id ? { ...n, type: "permanent" as const } : n
+              n.id === id
+                ? { ...n, type: "permanent" as const, updated_at: new Date().toISOString() }
+                : n
             ),
           }));
         } catch { /* ignore parse errors */ }
@@ -112,7 +166,7 @@ export function useGraphData(projectId: string, conversationId?: string) {
       eventSource?.close();
       clearTimeout(retryTimeout);
     };
-  }, [projectId, loading]);
+  }, [conversationId, loading, projectId]);
 
   const createMemory = async (content: string, category?: string) => {
     const node = await apiPost<MemoryNode>("/api/v1/memory", {

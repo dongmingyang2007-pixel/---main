@@ -37,6 +37,29 @@ wait_for_http() {
   return 1
 }
 
+wait_for_service_health() {
+  local service="$1"
+  local attempts="${2:-60}"
+  local delay="${3:-2}"
+  local container_id=""
+  local status=""
+
+  for ((i = 1; i <= attempts; i++)); do
+    container_id="$(compose_cmd ps -q "$service" 2>/dev/null | tr -d '\n')"
+    if [ -n "$container_id" ]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null || true)"
+      if [ "$status" = "healthy" ] || [ "$status" = "none" ]; then
+        echo "$service healthcheck is $status"
+        return 0
+      fi
+    fi
+    sleep "$delay"
+  done
+
+  echo "Timed out waiting for $service healthcheck (last status: ${status:-unknown})" >&2
+  return 1
+}
+
 cleanup_playwright_outputs() {
   local dir
   for dir in "${PLAYWRIGHT_OUTPUT_DIRS[@]}"; do
@@ -63,6 +86,8 @@ compose_cmd up --build -d --remove-orphans
 
 wait_for_http "API" "http://localhost:8000/health"
 wait_for_http "Web" "http://localhost:3000"
+wait_for_service_health "api"
+wait_for_service_health "web"
 
 echo
 echo "QIHANG local stack is ready:"

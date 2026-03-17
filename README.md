@@ -65,8 +65,9 @@ chmod +x ./scripts/dev.sh
 
 这个脚本会自动完成：
 - 构建并启动 `web`、`api`、`worker`、`postgres`、`redis`、`minio`、`minio-init`
-- 等待 API 和 Web 健康可用后输出访问地址
+- 等待 API 和 Web 都可访问，并且对应容器 healthcheck 进入稳定状态后输出访问地址
 - `web` 容器会先执行基于 webpack 的生产构建，再启动 `next start`，避免本地一键启动时出现 Turbopack 开发态 `ChunkLoadError`
+- 不需要再额外执行 `npm install`、`next dev`、`uvicorn`、`docker compose up` 之类的第二条启动命令
 
 启动完成后访问：
 - Web: `http://localhost:3000`
@@ -114,7 +115,7 @@ docker compose -f docker/docker-compose.yml down
 ## 本地开发默认值
 
 一键启动使用 compose 内置的本地开发配置，核心值包括：
-- `COOKIE_DOMAIN=localhost`
+- `COOKIE_DOMAIN=""`
 - `COOKIE_SECURE=false`
 - `S3_ENDPOINT=http://minio:9000`
 - `S3_PRESIGN_ENDPOINT=http://localhost:9000`

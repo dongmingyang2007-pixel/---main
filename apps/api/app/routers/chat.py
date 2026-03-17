@@ -146,7 +146,7 @@ async def send_message(
     # Save user message
     user_message = Message(
         conversation_id=conversation_id,
-        role=payload.role,
+        role="user",
         content=payload.content,
     )
     db.add(user_message)
@@ -160,7 +160,10 @@ async def send_message(
         # Load recent messages for context
         recent = (
             db.query(Message)
-            .filter(Message.conversation_id == conversation_id)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.id != user_message.id,
+            )
             .order_by(Message.created_at.desc())
             .limit(20)
             .all()

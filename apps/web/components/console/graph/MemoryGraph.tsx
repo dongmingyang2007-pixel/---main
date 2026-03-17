@@ -78,19 +78,18 @@ function getLabel(node: MemoryNode): string {
 
 /* ── Component ─────────────────────────────────── */
 
-export default function MemoryGraph({
-  nodes,
-  edges,
-  onNodeSelect,
-  onCreateMemory,
-  onUpdateMemory,
-  onDeleteMemory,
-  onPromoteMemory,
-  onCreateEdge: _onCreateEdge,
-  onDeleteEdge: _onDeleteEdge,
-  searchQuery: externalSearchQuery,
-  filters: externalFilters,
-}: MemoryGraphProps) {
+export default function MemoryGraph(props: MemoryGraphProps) {
+  const {
+    nodes,
+    edges,
+    onNodeSelect,
+    onCreateMemory,
+    onUpdateMemory,
+    onDeleteMemory,
+    onPromoteMemory,
+    searchQuery: externalSearchQuery,
+    filters: externalFilters,
+  } = props;
   /* refs */
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
@@ -192,28 +191,6 @@ export default function MemoryGraph({
     });
     return ids;
   }, [simNodes, searchQuery]);
-
-  /* ── Hit test ───────────────────────────────── */
-
-  const hitTest = useCallback(
-    (mx: number, my: number): SimNode | null => {
-      const t = transformRef.current;
-      const x = (mx - t.x) / t.k;
-      const y = (my - t.y) / t.k;
-      // Test nodes in reverse (top-most first)
-      for (let i = simNodes.length - 1; i >= 0; i--) {
-        const n = simNodes[i];
-        if (!visibleNodeIds.has(n.id)) continue;
-        const isCenter = n.id === centerNodeId;
-        const r = nodeRadius(n, isCenter);
-        const dx = x - n.x;
-        const dy = y - n.y;
-        if (dx * dx + dy * dy <= r * r) return n;
-      }
-      return null;
-    },
-    [simNodes, centerNodeId, visibleNodeIds]
-  );
 
   /* ── Canvas draw ────────────────────────────── */
 
@@ -746,6 +723,7 @@ export default function MemoryGraph({
 
       {selectedNode && (
         <NodeDetail
+          key={selectedNode.id}
           node={selectedNode}
           onClose={() => {
             setSelectedNode(null);

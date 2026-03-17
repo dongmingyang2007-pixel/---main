@@ -34,9 +34,11 @@ import app.main as main_module
 
 importlib.reload(main_module)
 
+import app.routers.chat as chat_router
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import AuditLog
+from app.services.model_catalog_seed import seed_model_catalog
 from app.services import storage as storage_service
 from app.services.runtime_state import runtime_state
 
@@ -46,6 +48,8 @@ ORIGIN = "http://localhost:3000"
 def setup_function() -> None:
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        seed_model_catalog(db)
     with runtime_state._memory._lock:
         runtime_state._memory._data.clear()
 
@@ -639,3 +643,75 @@ def test_create_presigned_get_preserves_unicode_download_name(monkeypatch) -> No
     disposition = captured["params"]["ResponseContentDisposition"]
     assert 'filename="测试_图片.png"' in disposition
     assert "filename*=UTF-8''%E6%B5%8B%E8%AF%95%20%E5%9B%BE%E7%89%87.png" in disposition
+
+
+def test_pipeline_patch_persists_config_json() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "pipeline@example.com", "Pipeline")
+    project = create_project(client, "Pipeline Project")
+
+    payload = {
+        "project_id": project["id"],
+        "model_type": "tts",
+        "model_id": "cosyvoice-v1",
+        "config_json": {"voice_id": "cosy-cn", "speed": 1.1},
+    }
+    resp = client.patch(
+        "/api/v1/pipeline",
+        json=payload,
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["config_json"] == payload["config_json"]
+
+    current = client.get(f"/api/v1/pipeline?project_id={project['id']}")
+    assert current.status_code == 200
+    matching = [item for item in current.json()["items"] if item["model_type"] == "tts"]
+    assert matching[0]["config_json"] == payload["config_json"]
+
+
+def test_project_creation_seeds_default_pipeline() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "defaults@example.com", "Defaults")
+    project = create_project(client, "Defaults Project")
+
+    current = client.get(f"/api/v1/pipeline?project_id={project['id']}")
+    assert current.status_code == 200
+    items = {item["model_type"]: item["model_id"] for item in current.json()["items"]}
+    assert items["llm"] == "qwen3.5-plus"
+    assert items["asr"] == "paraformer-v2"
+    assert items["tts"] == "cosyvoice-v1"
+
+
+def test_send_message_does_not_duplicate_current_user_message(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat@example.com", "Chat")
+    project = create_project(client, "Chat Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        captured["user_message"] = kwargs["user_message"]
+        captured["recent_messages"] = kwargs["recent_messages"]
+        return "mocked ai reply"
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "hello world"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["user_message"] == "hello world"
+    assert captured["recent_messages"] == []

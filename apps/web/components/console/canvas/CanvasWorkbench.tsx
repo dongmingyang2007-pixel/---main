@@ -236,6 +236,25 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   /* Handle model selection from picker */
   const handleModelSelect = async (modelId: string) => {
     await updateConfig(pickerCategory, modelId);
+    if (pickerCategory === "llm" && project) {
+      const parts: string[] = [`[model:${modelId}|custom]`];
+      if (parsed.personality) {
+        parts.push(`[personality:${parsed.personality}]`);
+      }
+      if (parsed.tags.length > 0) {
+        parts.push(`[tags:${parsed.tags.join(",")}]`);
+      }
+      if (parsed.color) {
+        parts.push(`[color:${parsed.color}]`);
+      }
+      const description = parts.join("\n");
+      try {
+        await apiPatch(`/api/v1/projects/${assistantId}`, { description });
+        setProject((prev) => (prev ? { ...prev, description } : prev));
+      } catch {
+        // Keep pipeline update even if description sync fails.
+      }
+    }
     setPickerOpen(false);
   };
 
