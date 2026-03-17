@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
 import { useRouter } from "@/i18n/navigation";
-import { apiGet, apiPatch, apiPost } from "@/lib/api";
+import { apiGet, apiPatch } from "@/lib/api";
+import { startAssistantTraining } from "@/lib/assistant-training";
 import { usePipelineConfig } from "@/hooks/usePipelineConfig";
 
 import { KnowledgeCard } from "./KnowledgeCard";
@@ -99,8 +100,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   const [saving, setSaving] = useState(false);
 
   /* Pipeline config */
-  const { getConfig, updateConfig, loading: pipelineLoading } =
-    usePipelineConfig(assistantId);
+  const { getConfig, updateConfig } = usePipelineConfig(assistantId);
 
   /* Model picker modal state */
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -174,11 +174,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
     setTrainProgress(0);
 
     try {
-      await apiPost("/api/v1/train/jobs", {
-        project_id: assistantId,
-        recipe: "default",
-        params_json: "{}",
-      });
+      await startAssistantTraining(assistantId);
 
       // Simulate progress for UX (real polling would replace this)
       let progress = 0;
@@ -238,7 +234,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   };
 
   /* Handle model selection from picker */
-  const handleModelSelect = async (modelId: string, _displayName: string) => {
+  const handleModelSelect = async (modelId: string) => {
     await updateConfig(pickerCategory, modelId);
     setPickerOpen(false);
   };
@@ -373,9 +369,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
                 ? ttsConfig?.model_id
                 : visionConfig?.model_id
         }
-        onSelect={(modelId, displayName) =>
-          void handleModelSelect(modelId, displayName)
-        }
+        onSelect={(modelId) => void handleModelSelect(modelId)}
       />
     </div>
   );

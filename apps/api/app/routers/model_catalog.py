@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user, get_db_session
@@ -32,7 +33,10 @@ def get_catalog_item(
     _ = current_user
     item = (
         db.query(ModelCatalog)
-        .filter(ModelCatalog.model_id == model_id, ModelCatalog.is_active.is_(True))
+        .filter(
+            or_(ModelCatalog.model_id == model_id, ModelCatalog.id == model_id),
+            ModelCatalog.is_active.is_(True),
+        )
         .first()
     )
     if not item:

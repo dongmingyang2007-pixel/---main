@@ -26,6 +26,15 @@ type ProjectContextValue = {
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
 
+function extractProjectIdFromPath(pathname: string): string {
+  const match = pathname.match(/^\/app\/assistants\/([^/]+)(?:\/|$)/);
+  if (!match) {
+    return "";
+  }
+  const candidate = decodeURIComponent(match[1]);
+  return candidate === "new" ? "" : candidate;
+}
+
 export function useProjectContext(): ProjectContextValue {
   const ctx = useContext(ProjectContext);
   if (!ctx) {
@@ -47,7 +56,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const applyProjects = useCallback(
     (list: ProjectOption[], options: { revalidateOnly?: boolean } = {}) => {
-      const preferredProjectId = projectIdRef.current;
+      const routeProjectId = extractProjectIdFromPath(pathname);
+      const preferredProjectId = routeProjectId || projectIdRef.current;
       const currentProjectStillExists = list.some(
         (project) => project.id === preferredProjectId,
       );
@@ -60,7 +70,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         setProjectIdState(nextProjectId);
       }
     },
-    [],
+    [pathname],
   );
 
   const loadProjects = useCallback(async (options: { revalidateOnly?: boolean } = {}) => {

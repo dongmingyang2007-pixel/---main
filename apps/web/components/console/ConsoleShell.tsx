@@ -1,8 +1,10 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { ConsoleTopBar } from "./ConsoleTopBar";
+import { usePathname } from "@/i18n/navigation";
 import { IconBar } from "./IconBar";
+import { ConsoleSectionList } from "./ConsoleSectionList";
+import { InlineTopBar } from "./InlineTopBar";
 import { ListPanel } from "./ListPanel";
 import { StatusBar } from "./StatusBar";
 
@@ -12,15 +14,25 @@ interface ConsoleShellProps {
 }
 
 export function ConsoleShell({ listContent, children }: ConsoleShellProps) {
+  const pathname = usePathname();
+  const resolvedListContent =
+    listContent !== undefined
+      ? listContent
+      : /^\/app\/(assistants|knowledge|training|chat)(?:\/|$)/.test(pathname)
+        ? <ConsoleSectionList />
+        : undefined;
+
   return (
     <div className="console-shell-v2">
-      <ConsoleTopBar />
       <div className="console-shell-body-v2">
         <IconBar />
-        {listContent !== undefined && (
-          <ListPanel>{listContent}</ListPanel>
+        {resolvedListContent !== undefined && (
+          <ListPanel>{resolvedListContent}</ListPanel>
         )}
-        <main className="console-shell-main">{children}</main>
+        <main className="console-shell-main">
+          <InlineTopBar />
+          <div className="console-shell-content">{children}</div>
+        </main>
       </div>
       <StatusBar />
     </div>

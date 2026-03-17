@@ -62,10 +62,20 @@ REPORT_PARTS = (
     "Brooch_Camera",
     "Pivot_Pin_Printable",
 )
+OPTIONAL_REPORT_PARTS = (
+    "Case_Base_Linear_Tray_V3",
+)
 ROTATABLE_TOP_LEVEL_NODES = (
     "Case_Base",
     "Case_Lid_Pivot",
 )
+LAYOUT_TARGETS_PRODUCT_M = {
+    "Earbud_Left": (-0.0090, -0.001205, 0.0),
+    "DockWell_L": (-0.0090, 0.009545, 0.0),
+    "Earbud_Right": (0.0085, -0.001205, 0.0),
+    "DockWell_R": (0.0085, 0.009545, 0.0),
+    "Brooch_Camera": (0.0290, 0.001945, 0.0),
+}
 
 
 @dataclass(frozen=True)
@@ -213,6 +223,49 @@ def update_accessor_min_max(gltf: dict, accessor_index: int, rows: list[list[flo
     accessor["max"] = maxes
 
 
+def append_aligned_bytes(bin_chunk: bytearray, data: bytes, alignment: int = 4) -> int:
+    while len(bin_chunk) % alignment != 0:
+        bin_chunk.append(0)
+    byte_offset = len(bin_chunk)
+    bin_chunk.extend(data)
+    return byte_offset
+
+
+def append_buffer_view(gltf: dict, byte_offset: int, byte_length: int, target: int | None = None) -> int:
+    buffer_view = {
+        "buffer": 0,
+        "byteOffset": byte_offset,
+        "byteLength": byte_length,
+    }
+    if target is not None:
+        buffer_view["target"] = target
+    gltf["bufferViews"].append(buffer_view)
+    return len(gltf["bufferViews"]) - 1
+
+
+def append_accessor(
+    gltf: dict,
+    buffer_view_index: int,
+    component_type: int,
+    count: int,
+    accessor_type: str,
+    mins: list[float] | None = None,
+    maxes: list[float] | None = None,
+) -> int:
+    accessor = {
+        "bufferView": buffer_view_index,
+        "componentType": component_type,
+        "count": count,
+        "type": accessor_type,
+    }
+    if mins is not None:
+        accessor["min"] = mins
+    if maxes is not None:
+        accessor["max"] = maxes
+    gltf["accessors"].append(accessor)
+    return len(gltf["accessors"]) - 1
+
+
 def get_named_node_indices(gltf: dict) -> dict[str, int]:
     return {
         node.get("name"): index
@@ -307,6 +360,110 @@ def collect_subtree_node_indices(gltf: dict, root_index: int) -> list[int]:
     return collected
 
 
+def normalize_vector(vector: np.ndarray) -> np.ndarray:
+    length = float(np.linalg.norm(vector))
+    if length <= 1e-12:
+        return np.array([0.0, 1.0, 0.0], dtype=float)
+    return vector / length
+
+
+def build_linear_tray_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    stations = [
+        (-0.0365, 0.0024, 0.0068, 0.0002),
+        (-0.0190, 0.0024, 0.0068, 0.0002),
+        (0.0060, -0.0005, 0.0068, -0.0027),
+        (0.0260, -0.0034, 0.0062, -0.0056),
+        (0.0350, -0.0034, 0.0052, -0.0056),
+    ]
+
+    def profile_vertices(station: tuple[float, float, float, float]) -> dict[str, np.ndarray]:
+        x_value, top_y, half_width, bottom_y = station
+        return {
+            "front_top": np.array([x_value, top_y, half_width], dtype=float),
+            "back_top": np.array([x_value, top_y, -half_width], dtype=float),
+            "front_bottom": np.array([x_value, bottom_y, half_width], dtype=float),
+            "back_bottom": np.array([x_value, bottom_y, -half_width], dtype=float),
+        }
+
+    def oriented_triangles(
+        a: np.ndarray,
+        b: np.ndarray,
+        c: np.ndarray,
+        d: np.ndarray,
+        preferred_normal: np.ndarray,
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        tri1 = (a, b, c)
+        tri2 = (a, c, d)
+        normal = np.cross(b - a, c - a)
+        if float(np.dot(normalize_vector(normal), normalize_vector(preferred_normal))) < 0.0:
+            tri1 = (a, c, b)
+            tri2 = (a, d, c)
+        return [tri1, tri2]
+
+    profiles = [profile_vertices(station) for station in stations]
+    triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+
+    for left_profile, right_profile in zip(profiles[:-1], profiles[1:]):
+        triangles.extend(
+            oriented_triangles(
+                left_profile["back_top"],
+                left_profile["front_top"],
+                right_profile["front_top"],
+                right_profile["back_top"],
+                np.array([0.0, 1.0, 0.0], dtype=float),
+            )
+        )
+        triangles.extend(
+            oriented_triangles(
+                left_profile["front_bottom"],
+                left_profile["back_bottom"],
+                right_profile["back_bottom"],
+                right_profile["front_bottom"],
+                np.array([0.0, -1.0, 0.0], dtype=float),
+            )
+        )
+        triangles.extend(
+            oriented_triangles(
+                left_profile["front_top"],
+                left_profile["front_bottom"],
+                right_profile["front_bottom"],
+                right_profile["front_top"],
+                np.array([0.0, 0.0, 1.0], dtype=float),
+            )
+        )
+        triangles.extend(
+            oriented_triangles(
+                left_profile["back_bottom"],
+                left_profile["back_top"],
+                right_profile["back_top"],
+                right_profile["back_bottom"],
+                np.array([0.0, 0.0, -1.0], dtype=float),
+            )
+        )
+
+    start_profile = profiles[0]
+    end_profile = profiles[-1]
+    triangles.extend(
+        oriented_triangles(
+            start_profile["back_bottom"],
+            start_profile["front_bottom"],
+            start_profile["front_top"],
+            start_profile["back_top"],
+            np.array([-1.0, 0.0, 0.0], dtype=float),
+        )
+    )
+    triangles.extend(
+        oriented_triangles(
+            end_profile["front_bottom"],
+            end_profile["back_bottom"],
+            end_profile["back_top"],
+            end_profile["front_top"],
+            np.array([1.0, 0.0, 0.0], dtype=float),
+        )
+    )
+    return triangles
+
+
 def transform_points(points: list[list[float]], matrix: np.ndarray) -> list[np.ndarray]:
     transformed: list[np.ndarray] = []
     for row in points:
@@ -361,6 +518,21 @@ def validate_required_nodes(named_node_indices: dict[str, int]) -> None:
         raise ValueError(f"Input GLB is missing required nodes: {missing}")
 
 
+def build_world_matrix_getter(gltf: dict):
+    parent_lookup = build_parent_lookup(gltf)
+
+    @lru_cache(maxsize=None)
+    def get_world_matrix(node_index: int) -> np.ndarray:
+        node = gltf["nodes"][node_index]
+        local_matrix = get_local_matrix(node)
+        parent_index = parent_lookup.get(node_index)
+        if parent_index is None:
+            return local_matrix
+        return get_world_matrix(parent_index) @ local_matrix
+
+    return parent_lookup, get_world_matrix
+
+
 def apply_horizontal_case_rotation(gltf: dict, degrees: float) -> list[dict[str, object]]:
     named_node_indices = get_named_node_indices(gltf)
     validate_required_nodes(named_node_indices)
@@ -393,6 +565,165 @@ def apply_horizontal_case_rotation(gltf: dict, degrees: float) -> list[dict[str,
     return change_log
 
 
+def set_node_origin_in_product_space(
+    gltf: dict,
+    node_name: str,
+    target_product_position: tuple[float, float, float],
+) -> dict[str, object]:
+    named_node_indices = get_named_node_indices(gltf)
+    validate_required_nodes(named_node_indices)
+    parent_lookup, get_world_matrix = build_world_matrix_getter(gltf)
+    product_root_index = named_node_indices["QIHANG_Product"]
+    node_index = named_node_indices[node_name]
+    node = gltf["nodes"][node_index]
+
+    if "matrix" in node:
+        raise ValueError(f"Node {node_name} uses matrix transforms; product-space placement expects TRS.")
+
+    parent_index = parent_lookup.get(node_index)
+    if parent_index is None:
+        raise ValueError(f"Node {node_name} has no parent; expected a parented node.")
+
+    product_world = get_world_matrix(product_root_index)
+    parent_world = get_world_matrix(parent_index)
+    target_product_vector = np.array(
+        [float(target_product_position[0]), float(target_product_position[1]), float(target_product_position[2]), 1.0],
+        dtype=float,
+    )
+    target_world = product_world @ target_product_vector
+    target_local = np.linalg.inv(parent_world) @ target_world
+    target_translation = [float(target_local[0]), float(target_local[1]), float(target_local[2])]
+
+    original_translation = [float(value) for value in node.get("translation", [0.0, 0.0, 0.0])]
+    node["translation"] = target_translation
+    return {
+        "node": node_name,
+        "translationBefore": [round(value, 8) for value in original_translation],
+        "translationAfter": [round(value, 8) for value in target_translation],
+        "targetProductOriginMm": [round(value * 1000.0, 4) for value in target_product_position],
+    }
+
+
+def apply_linear_device_layout(gltf: dict) -> list[dict[str, object]]:
+    change_log: list[dict[str, object]] = []
+    for node_name, target_position in LAYOUT_TARGETS_PRODUCT_M.items():
+        change_log.append(set_node_origin_in_product_space(gltf, node_name, target_position))
+    return change_log
+
+
+def append_linear_tray_mesh(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    named_node_indices = get_named_node_indices(gltf)
+    validate_required_nodes(named_node_indices)
+    if "Case_Base_Linear_Tray_V3" in named_node_indices:
+        raise ValueError("Case_Base_Linear_Tray_V3 already exists; expected a clean V2 input.")
+
+    _, get_world_matrix = build_world_matrix_getter(gltf)
+    product_root_index = named_node_indices["QIHANG_Product"]
+    case_base_index = named_node_indices["Case_Base"]
+    product_inverse = np.linalg.inv(get_world_matrix(product_root_index))
+    case_base_in_product = product_inverse @ get_world_matrix(case_base_index)
+    product_to_case_base = np.linalg.inv(case_base_in_product)
+
+    product_triangles = build_linear_tray_triangles_product()
+    local_positions: list[list[float]] = []
+    local_normals: list[list[float]] = []
+    product_points: list[np.ndarray] = []
+
+    for p0_product, p1_product, p2_product in product_triangles:
+        local_triangle = []
+        for product_point in (p0_product, p1_product, p2_product):
+            transformed = product_to_case_base @ np.array(
+                [float(product_point[0]), float(product_point[1]), float(product_point[2]), 1.0],
+                dtype=float,
+            )
+            local_triangle.append(transformed[:3] / max(transformed[3], 1e-12))
+            product_points.append(product_point)
+
+        p0_local, p1_local, p2_local = local_triangle
+        normal_local = normalize_vector(np.cross(p1_local - p0_local, p2_local - p0_local))
+        for point_local in local_triangle:
+            local_positions.append([float(value) for value in point_local])
+            local_normals.append([float(value) for value in normal_local])
+
+    position_bytes = struct.pack(
+        "<" + ("f" * (len(local_positions) * 3)),
+        *(value for row in local_positions for value in row),
+    )
+    normal_bytes = struct.pack(
+        "<" + ("f" * (len(local_normals) * 3)),
+        *(value for row in local_normals for value in row),
+    )
+
+    position_offset = append_aligned_bytes(bin_chunk, position_bytes)
+    normal_offset = append_aligned_bytes(bin_chunk, normal_bytes)
+    gltf["buffers"][0]["byteLength"] = len(bin_chunk)
+
+    position_view_index = append_buffer_view(gltf, position_offset, len(position_bytes), target=34962)
+    normal_view_index = append_buffer_view(gltf, normal_offset, len(normal_bytes), target=34962)
+
+    position_mins = [min(row[index] for row in local_positions) for index in range(3)]
+    position_maxes = [max(row[index] for row in local_positions) for index in range(3)]
+    normal_mins = [min(row[index] for row in local_normals) for index in range(3)]
+    normal_maxes = [max(row[index] for row in local_normals) for index in range(3)]
+
+    position_accessor_index = append_accessor(
+        gltf,
+        position_view_index,
+        component_type=5126,
+        count=len(local_positions),
+        accessor_type="VEC3",
+        mins=position_mins,
+        maxes=position_maxes,
+    )
+    normal_accessor_index = append_accessor(
+        gltf,
+        normal_view_index,
+        component_type=5126,
+        count=len(local_normals),
+        accessor_type="VEC3",
+        mins=normal_mins,
+        maxes=normal_maxes,
+    )
+
+    base_shell_primitive = gltf["meshes"][gltf["nodes"][named_node_indices["Case_Base_Shell"]]["mesh"]]["primitives"][0]
+    tray_mesh_index = len(gltf["meshes"])
+    gltf["meshes"].append(
+        {
+            "name": "Case_Base_Linear_Tray_V3",
+            "primitives": [
+                {
+                    "attributes": {
+                        "POSITION": position_accessor_index,
+                        "NORMAL": normal_accessor_index,
+                    },
+                    "material": base_shell_primitive["material"],
+                    "mode": 4,
+                }
+            ],
+        }
+    )
+
+    tray_node_index = len(gltf["nodes"])
+    gltf["nodes"].append(
+        {
+            "name": "Case_Base_Linear_Tray_V3",
+            "mesh": tray_mesh_index,
+        }
+    )
+    gltf["nodes"][case_base_index].setdefault("children", []).append(tray_node_index)
+
+    mins_product, maxes_product = compute_bbox(product_points)
+    return {
+        "node": "Case_Base_Linear_Tray_V3",
+        "meshIndex": tray_mesh_index,
+        "nodeIndex": tray_node_index,
+        "triangleCount": len(product_triangles),
+        "bboxMinProductMm": vector_to_mm_list(mins_product),
+        "bboxMaxProductMm": vector_to_mm_list(maxes_product),
+        "bboxSizeProductMm": vector_to_mm_list(maxes_product - mins_product),
+    }
+
+
 def build_baseline_report(
     model_path: Path,
     gltf: dict,
@@ -400,17 +731,8 @@ def build_baseline_report(
 ) -> dict:
     named_node_indices = get_named_node_indices(gltf)
     validate_required_nodes(named_node_indices)
-    parent_lookup = build_parent_lookup(gltf)
+    parent_lookup, get_world_matrix = build_world_matrix_getter(gltf)
     product_root_index = named_node_indices["QIHANG_Product"]
-
-    @lru_cache(maxsize=None)
-    def get_world_matrix(node_index: int) -> np.ndarray:
-        node = gltf["nodes"][node_index]
-        local_matrix = get_local_matrix(node)
-        parent_index = parent_lookup.get(node_index)
-        if parent_index is None:
-            return local_matrix
-        return get_world_matrix(parent_index) @ local_matrix
 
     product_inverse = np.linalg.inv(get_world_matrix(product_root_index))
 
@@ -439,7 +761,8 @@ def build_baseline_report(
         }
 
     part_reports: dict[str, dict[str, object]] = {}
-    for part_name in REPORT_PARTS:
+    report_part_names = list(REPORT_PARTS) + [name for name in OPTIONAL_REPORT_PARTS if name in named_node_indices]
+    for part_name in report_part_names:
         root_index = named_node_indices[part_name]
         points: list[np.ndarray] = []
         for node_index in collect_subtree_node_indices(gltf, root_index):
@@ -532,6 +855,8 @@ def main() -> None:
 
     gltf, bin_chunk = parse_glb(args.input)
     change_log = apply_horizontal_case_rotation(gltf, args.rotate_y_deg)
+    layout_change_log = apply_linear_device_layout(gltf)
+    tray_change = append_linear_tray_mesh(gltf, bin_chunk)
 
     output_sha = None
     if not args.report_only:
@@ -547,6 +872,8 @@ def main() -> None:
     report["sourceInputSha256"] = sha256_for_bytes(args.input.read_bytes())
     report["v3RotationDegreesY"] = args.rotate_y_deg
     report["topLevelRotationChangeLog"] = change_log
+    report["deviceLayoutChangeLog"] = layout_change_log
+    report["trayChangeLog"] = tray_change
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -560,6 +887,8 @@ def main() -> None:
         "sceneRoots": report["sceneRoots"],
         "requiredNodes": list(report["requiredNodeSummaries"].keys()),
         "topLevelRotationChangeLog": change_log,
+        "deviceLayoutChangeLog": layout_change_log,
+        "trayChangeLog": tray_change,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

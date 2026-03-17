@@ -1,9 +1,10 @@
 "use client";
 
-import { type ReactNode, useState, useEffect, useCallback } from "react";
+import { type ReactNode, useCallback, useSyncExternalStore } from "react";
 import clsx from "clsx";
 
 const STORAGE_KEY = "console-list-panel-collapsed";
+const STORAGE_EVENT = "console-list-panel-collapsed-change";
 
 function readPersistedState(): boolean {
   if (typeof window === "undefined") return false;
@@ -15,27 +16,42 @@ function readPersistedState(): boolean {
 }
 
 function persistState(collapsed: boolean): void {
+  if (typeof window === "undefined") return;
   try {
     localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
+    window.dispatchEvent(new Event(STORAGE_EVENT));
   } catch {
     // Ignore storage errors
   }
 }
 
-export function ListPanel({ children }: { children: ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false);
+function subscribeCollapsedState(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  const handleStorage = (event: Event) => {
+    if (!(event instanceof StorageEvent) || event.key === STORAGE_KEY) {
+      onStoreChange();
+    }
+  };
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(STORAGE_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(STORAGE_EVENT, onStoreChange);
+  };
+}
 
-  useEffect(() => {
-    setCollapsed(readPersistedState());
-  }, []);
+export function ListPanel({ children }: { children: ReactNode }) {
+  const collapsed = useSyncExternalStore(
+    subscribeCollapsedState,
+    readPersistedState,
+    () => false,
+  );
 
   const toggle = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      persistState(next);
-      return next;
-    });
-  }, []);
+    persistState(!collapsed);
+  }, [collapsed]);
 
   return (
     <aside className={clsx("list-panel", collapsed && "is-collapsed")}>

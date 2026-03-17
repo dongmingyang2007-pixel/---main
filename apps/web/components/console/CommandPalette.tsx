@@ -17,6 +17,7 @@ const NAVIGATION_ITEMS = [
   { key: "nav.knowledge", href: "/app/knowledge" },
   { key: "nav.training", href: "/app/training" },
   { key: "nav.chat", href: "/app/chat" },
+  { key: "nav.models", href: "/app/models" },
   { key: "nav.devices", href: "/app/devices" },
   { key: "nav.settings", href: "/app/settings" },
 ];

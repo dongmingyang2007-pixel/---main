@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 
@@ -16,16 +16,27 @@ interface CatalogModel {
   category: "llm" | "asr" | "tts" | "vision";
   description: string;
   capabilities: string[];
-  input_price_per_1k: number;
-  output_price_per_1k: number;
+  input_price: number;
+  output_price: number;
   context_window: number;
-  max_output_tokens: number;
+  max_output: number;
 }
 
 const TABS = ["all", "llm", "asr", "tts", "vision"] as const;
 type Tab = (typeof TABS)[number];
 
+type ModelState = {
+  loading: boolean;
+  models: CatalogModel[];
+};
+
+type ModelAction =
+  | { type: "request" }
+  | { type: "success"; models: CatalogModel[] }
+  | { type: "failure" };
+
 const PROVIDER_GRADIENTS: Record<string, string> = {
+  alibaba: "linear-gradient(135deg, #c8734a, #e8925a)",
   qwen: "linear-gradient(135deg, #c8734a, #e8925a)",
   deepseek: "linear-gradient(135deg, #3a6a9a, #4a8ac8)",
 };
@@ -43,27 +54,44 @@ function formatPrice(price: number, t: (key: string) => string): string {
   return `¥${price.toFixed(2)}`;
 }
 
+function modelsReducer(state: ModelState, action: ModelAction): ModelState {
+  switch (action.type) {
+    case "request":
+      return { ...state, loading: true };
+    case "success":
+      return { loading: false, models: action.models };
+    case "failure":
+      return { loading: false, models: [] };
+    default:
+      return state;
+  }
+}
+
 export default function ModelsPage() {
   const t = useTranslations("console-models-v2");
-  const [models, setModels] = useState<CatalogModel[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [{ loading, models }, dispatch] = useReducer(modelsReducer, {
+    loading: true,
+    models: [],
+  });
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    dispatch({ type: "request" });
     apiGet<CatalogModel[]>("/api/v1/models/catalog")
       .then((data) => {
         if (!cancelled) {
-          setModels(Array.isArray(data) ? data : []);
+          dispatch({
+            type: "success",
+            models: Array.isArray(data) ? data : [],
+          });
         }
       })
       .catch(() => {
-        if (!cancelled) setModels([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          dispatch({ type: "failure" });
+        }
       });
     return () => {
       cancelled = true;
@@ -145,14 +173,14 @@ export default function ModelsPage() {
 
                   <div className="marketplace-card-footer">
                     <div className="marketplace-card-price">
-                      <span>{t("inputPrice")}: {formatPrice(model.input_price_per_1k, t)}</span>
+                      <span>{t("inputPrice")}: {formatPrice(model.input_price, t)}</span>
                       {" / "}
-                      <span>{t("outputPrice")}: {formatPrice(model.output_price_per_1k, t)}</span>
-                      {model.input_price_per_1k > 0 || model.output_price_per_1k > 0 ? (
+                      <span>{t("outputPrice")}: {formatPrice(model.output_price, t)}</span>
+                      {model.input_price > 0 || model.output_price > 0 ? (
                         <span> {t("priceUnit")}</span>
                       ) : null}
                     </div>
-                    <Link href={`/app/models/${model.id}`} className="marketplace-card-btn">
+                    <Link href={`/app/models/${model.model_id}`} className="marketplace-card-btn">
                       {t("detail")}
                     </Link>
                   </div>

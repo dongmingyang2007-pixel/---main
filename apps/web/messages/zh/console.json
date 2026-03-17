@@ -112,6 +112,7 @@
   "mobile.knowledge.meta": "知识资料管理",
   "mobile.training.meta": "训练任务状态",
   "mobile.chat.meta": "对话测试",
+  "mobile.models.meta": "浏览模型能力",
   "mobile.devices.meta": "耳机管理",
   "mobile.settings.meta": "账户与安全"
 }

@@ -17,8 +17,9 @@ from app.core.errors import (
 from app.core.http_security import SecurityHeadersMiddleware
 from app.core.request_id import RequestIDMiddleware
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import SessionLocal, engine
 from app.routers import auth, chat, datasets, demo, eval, memory, memory_stream, model_catalog, models, pipeline, projects, train, uploads, waitlist
+from app.services.model_catalog_seed import seed_model_catalog
 from app.services.runtime_state import runtime_state
 
 
@@ -27,6 +28,11 @@ async def lifespan(_: FastAPI):
     settings.validate_runtime_configuration()
     runtime_state.ensure_available()
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        seed_model_catalog(db)
+    finally:
+        db.close()
     yield
 
 

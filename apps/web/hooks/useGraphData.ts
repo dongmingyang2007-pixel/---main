@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/env";
 
 export interface MemoryNode {
   id: string;
@@ -68,7 +69,7 @@ export function useGraphData(projectId: string, conversationId?: string) {
     let retryTimeout: ReturnType<typeof setTimeout>;
 
     function connect() {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+      const apiBase = getApiBaseUrl();
       eventSource = new EventSource(
         `${apiBase}/api/v1/memory/${projectId}/stream`,
         { withCredentials: true }

@@ -29,8 +29,14 @@ const TIER_CONFIG: Record<string, { icon: string; gradient: string; label: strin
 
 const MODEL_NAMES: Record<string, string> = {
   "qwen3.5-7b": "Qwen3.5-7B",
+  "qwen3.5-flash": "Qwen3.5 Flash",
+  "qwen3.5-plus": "Qwen3.5 Plus",
+  "qwen3-max": "Qwen3 Max",
   "deepseek-v3": "DeepSeek-V3",
+  "deepseek-v3.2": "DeepSeek V3.2",
+  "deepseek-r1": "DeepSeek R1",
   "qwen-72b": "Qwen-72B",
+  "qwen3-omni-flash-realtime": "Qwen3 Omni Flash Realtime",
 };
 
 interface ModelCardProps {

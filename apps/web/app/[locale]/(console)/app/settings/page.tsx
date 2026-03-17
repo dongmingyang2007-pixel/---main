@@ -10,7 +10,7 @@ import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, logout } from "@/lib/api";
 import { useDeveloperMode } from "@/lib/developer-mode";
 
-type UserMe = { id: string; email: string; name?: string };
+type UserMe = { id: string; email: string; display_name?: string };
 
 export default function SettingsPage() {
   const t = useTranslations("console-settings");
@@ -25,8 +25,8 @@ export default function SettingsPage() {
   const targetLabel = locale === "zh" ? "English" : "中文";
 
   useEffect(() => {
-    void apiGet<{ user: UserMe }>("/api/v1/auth/me")
-      .then((data) => setUser(data.user))
+    void apiGet<UserMe>("/api/v1/auth/me")
+      .then((data) => setUser(data))
       .catch(() => {});
   }, []);
 
@@ -56,10 +56,10 @@ export default function SettingsPage() {
                   {user ? user.email : t("settings.loadingUser")}
                 </div>
               </div>
-              {user?.name && (
+              {user?.display_name && (
                 <div className="console-key-item mt-3">
                   <div className="console-key-label">{t("settings.name")}</div>
-                  <div className="console-key-value">{user.name}</div>
+                  <div className="console-key-value">{user.display_name}</div>
                 </div>
               )}
             </div>

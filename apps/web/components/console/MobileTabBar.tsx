@@ -141,6 +141,7 @@ const MAIN_TABS = [
 ];
 
 const MORE_ITEMS = [
+  { href: "/app/models", labelKey: "nav.models" as const, Icon: ChatIcon },
   { href: "/app/devices", labelKey: "nav.devices" as const, Icon: DevicesIcon },
   { href: "/app/settings", labelKey: "nav.settings" as const, Icon: SettingsIcon },
 ];
@@ -165,11 +166,6 @@ export function MobileTabBar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [moreOpen]);
 
-  // Close the dropdown on route change
-  useEffect(() => {
-    setMoreOpen(false);
-  }, [pathname]);
-
   const moreIsActive = MORE_ITEMS.some((item) => isActive(item.href));
 
   return (
@@ -183,6 +179,7 @@ export function MobileTabBar() {
             className={clsx("mobile-tab-item", active && "is-active")}
             aria-current={active ? "page" : undefined}
             aria-label={t(tab.labelKey)}
+            onClick={() => setMoreOpen(false)}
           >
             <span className="mobile-tab-icon">
               <tab.Icon />

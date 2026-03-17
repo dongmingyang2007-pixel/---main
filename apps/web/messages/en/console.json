@@ -112,6 +112,7 @@
   "mobile.knowledge.meta": "Knowledge management",
   "mobile.training.meta": "Training job status",
   "mobile.chat.meta": "Chat testing",
+  "mobile.models.meta": "Browse models",
   "mobile.devices.meta": "Device management",
   "mobile.settings.meta": "Account & security"
 }

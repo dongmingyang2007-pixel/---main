@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useReducer } from "react";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
@@ -17,13 +17,25 @@ interface CatalogModel {
   category: "llm" | "asr" | "tts" | "vision";
   description: string;
   capabilities: string[];
-  input_price_per_1k: number;
-  output_price_per_1k: number;
+  input_price: number;
+  output_price: number;
   context_window: number;
-  max_output_tokens: number;
+  max_output: number;
 }
 
+type DetailState = {
+  loading: boolean;
+  model: CatalogModel | null;
+  error: string;
+};
+
+type DetailAction =
+  | { type: "request" }
+  | { type: "success"; model: CatalogModel }
+  | { type: "failure"; error: string };
+
 const PROVIDER_GRADIENTS: Record<string, string> = {
+  alibaba: "linear-gradient(135deg, #c8734a, #e8925a)",
   qwen: "linear-gradient(135deg, #c8734a, #e8925a)",
   deepseek: "linear-gradient(135deg, #3a6a9a, #4a8ac8)",
 };
@@ -41,28 +53,47 @@ function formatPrice(price: number, t: (key: string) => string): string {
   return `¥${price.toFixed(2)}`;
 }
 
+function detailReducer(state: DetailState, action: DetailAction): DetailState {
+  switch (action.type) {
+    case "request":
+      return { loading: true, model: null, error: "" };
+    case "success":
+      return { loading: false, model: action.model, error: "" };
+    case "failure":
+      return { loading: false, model: null, error: action.error };
+    default:
+      return state;
+  }
+}
+
 export default function ModelDetailPage() {
   const params = useParams<{ modelId: string }>();
   const modelId = Array.isArray(params.modelId) ? params.modelId[0] : params.modelId;
   const t = useTranslations("console-models-v2");
 
-  const [model, setModel] = useState<CatalogModel | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [{ loading, model, error }, dispatch] = useReducer(detailReducer, {
+    loading: true,
+    model: null,
+    error: "",
+  });
 
   useEffect(() => {
     if (!modelId) return;
     let cancelled = false;
-    setLoading(true);
+    dispatch({ type: "request" });
     apiGet<CatalogModel>(`/api/v1/models/catalog/${modelId}`)
       .then((data) => {
-        if (!cancelled) setModel(data);
+        if (!cancelled) {
+          dispatch({ type: "success", model: data });
+        }
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message || "Failed to load model");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          dispatch({
+            type: "failure",
+            error: err.message || "Failed to load model",
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -127,10 +158,10 @@ export default function ModelDetailPage() {
                   </thead>
                   <tbody>
                     <tr>
-                      <td>{formatPrice(model.input_price_per_1k, t)} {model.input_price_per_1k > 0 ? t("priceUnit") : ""}</td>
-                      <td>{formatPrice(model.output_price_per_1k, t)} {model.output_price_per_1k > 0 ? t("priceUnit") : ""}</td>
+                      <td>{formatPrice(model.input_price, t)} {model.input_price > 0 ? t("priceUnit") : ""}</td>
+                      <td>{formatPrice(model.output_price, t)} {model.output_price > 0 ? t("priceUnit") : ""}</td>
                       <td>{model.context_window.toLocaleString()} {t("tokens")}</td>
-                      <td>{model.max_output_tokens.toLocaleString()} {t("tokens")}</td>
+                      <td>{model.max_output.toLocaleString()} {t("tokens")}</td>
                     </tr>
                   </tbody>
                 </table>

@@ -24,7 +24,7 @@ export function PipelineCard({
   const t = useTranslations("console-models-v2");
 
   return (
-    <div className="canvas-card">
+    <div className="canvas-card" data-model-type={modelType}>
       <div className="canvas-card-header">
         <span className="canvas-card-label">{label}</span>
         <button

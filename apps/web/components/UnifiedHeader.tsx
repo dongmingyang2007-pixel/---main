@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useSyncExternalStore } from "react";
 import clsx from "clsx";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
@@ -8,7 +8,11 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useScrollNav } from "@/lib/useScrollNav";
-import { isLoggedIn } from "@/lib/auth-state";
+import {
+  getAuthStateServerSnapshot,
+  getAuthStateSnapshot,
+  subscribeAuthState,
+} from "@/lib/auth-state";
 import { logout } from "@/lib/api";
 import { useMobileMenu } from "@/components/MobileMenuProvider";
 import {
@@ -26,7 +30,6 @@ const NAV_KEYS = [
   { href: "/pricing", key: "nav.pricing" },
   { href: "/support", key: "nav.support" },
 ] as const;
-
 
 function UserAvatarDropdown({ isConsole }: { isConsole: boolean }) {
   const t = useTranslations("common");
@@ -78,11 +81,11 @@ export function UnifiedHeader() {
   // In console mode we simply ignore the returned values.
   const { scrolled, hidden, progress } = useScrollNav();
 
-  // Defer cookie read to client-side to avoid SSR/hydration mismatch
-  const [loggedIn, setLoggedIn] = useState(false);
-  useEffect(() => {
-    setLoggedIn(isLoggedIn());
-  }, []);
+  const loggedIn = useSyncExternalStore(
+    subscribeAuthState,
+    getAuthStateSnapshot,
+    getAuthStateServerSnapshot,
+  );
 
   const navItems = NAV_KEYS.map((item) => ({
     href: item.href,

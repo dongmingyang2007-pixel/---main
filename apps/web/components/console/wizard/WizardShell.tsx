@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 
 import { useRouter } from "@/i18n/navigation";
 import { apiPatch, apiPost } from "@/lib/api";
+import { startAssistantTraining } from "@/lib/assistant-training";
 
 import { StepFinish } from "./StepFinish";
 import { StepKnowledge } from "./StepKnowledge";
@@ -127,6 +128,7 @@ export function WizardShell() {
 
       // Fire all pipeline config calls concurrently
       await Promise.all(pipelinePromises);
+      await startAssistantTraining(result.id);
 
       router.push(`/app/assistants/${result.id}`);
     } catch {

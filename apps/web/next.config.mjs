@@ -21,6 +21,7 @@ const nextConfig = {
     return {
       beforeFiles: [
         { source: "/", destination: "/zh" },
+        { source: "/app/models/:modelId", destination: "/zh/app/models/:modelId" },
         {
           source: "/:path((?!en(?:/|$)|zh(?:/|$)|api(?:/|$)|_next(?:/|$)|favicon\\.ico$|.*\\..*).*)",
           destination: "/zh/:path",

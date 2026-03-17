@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
-import { isLoggedIn } from "@/lib/auth-state";
+import {
+  getAuthStateServerSnapshot,
+  getAuthStateSnapshot,
+  subscribeAuthState,
+} from "@/lib/auth-state";
 import { logout } from "@/lib/api";
 import { useMobileMenu } from "@/components/MobileMenuProvider";
 
@@ -27,6 +31,7 @@ const CONSOLE_NAV_ITEMS = [
   { href: "/app/knowledge", navKey: "knowledge" },
   { href: "/app/training", navKey: "training" },
   { href: "/app/chat", navKey: "chat" },
+  { href: "/app/models", navKey: "models" },
   { href: "/app/devices", navKey: "devices" },
   { href: "/app/settings", navKey: "settings" },
 ] as const;
@@ -36,11 +41,11 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
   const pathname = usePathname();
   const tCommon = useTranslations("common");
   const tConsole = useTranslations("console");
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  useEffect(() => {
-    setLoggedIn(isLoggedIn());
-  }, [open]);
+  const loggedIn = useSyncExternalStore(
+    subscribeAuthState,
+    getAuthStateSnapshot,
+    getAuthStateServerSnapshot,
+  );
 
   useEffect(() => {
     if (!open) return;

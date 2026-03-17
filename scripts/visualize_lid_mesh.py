@@ -2,86 +2,50 @@
 from __future__ import annotations
 
 import argparse
-import json
+from functools import lru_cache
 import math
-import struct
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.collections as mc
 import numpy as np
-
-
-GLB_HEADER_STRUCT = struct.Struct("<4sII")
-GLB_CHUNK_HEADER_STRUCT = struct.Struct("<I4s")
-COMPONENT_COUNTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
-COMPONENT_BYTE_SIZES = {5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4}
-COMPONENT_STRUCT_FORMATS = {5120: "b", 5121: "B", 5122: "h", 5123: "H", 5125: "I", 5126: "f"}
-
-
-def parse_glb(path: Path):
-    raw = path.read_bytes()
-    magic, version, total_length = GLB_HEADER_STRUCT.unpack_from(raw, 0)
-    offset = GLB_HEADER_STRUCT.size
-    gltf = None
-    bin_chunk = None
-    while offset < len(raw):
-        chunk_length, chunk_type = GLB_CHUNK_HEADER_STRUCT.unpack_from(raw, offset)
-        offset += GLB_CHUNK_HEADER_STRUCT.size
-        chunk_data = raw[offset : offset + chunk_length]
-        offset += chunk_length
-        if chunk_type == b"JSON":
-            gltf = json.loads(chunk_data.rstrip(b"\x00 ").decode("utf-8"))
-        elif chunk_type == b"BIN\x00":
-            bin_chunk = bytearray(chunk_data)
-    return gltf, bin_chunk
-
-
-def read_accessor_rows(gltf, bin_chunk, accessor_index):
-    accessor = gltf["accessors"][accessor_index]
-    view = gltf["bufferViews"][accessor["bufferView"]]
-    component_count = COMPONENT_COUNTS[accessor["type"]]
-    component_size = COMPONENT_BYTE_SIZES[accessor["componentType"]]
-    stride = view.get("byteStride", component_count * component_size)
-    offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-    count = accessor["count"]
-    fmt = "<" + (COMPONENT_STRUCT_FORMATS[accessor["componentType"]] * component_count)
-    rows = []
-    for i in range(count):
-        rows.append(list(struct.unpack_from(fmt, bin_chunk, offset + i * stride)))
-    return rows
-
-
-def read_accessor_scalars(gltf, bin_chunk, accessor_index):
-    accessor = gltf["accessors"][accessor_index]
-    view = gltf["bufferViews"][accessor["bufferView"]]
-    component_size = COMPONENT_BYTE_SIZES[accessor["componentType"]]
-    stride = view.get("byteStride", component_size)
-    offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-    count = accessor["count"]
-    fmt = "<" + COMPONENT_STRUCT_FORMATS[accessor["componentType"]]
-    values = []
-    for i in range(count):
-        (v,) = struct.unpack_from(fmt, bin_chunk, offset + i * stride)
-        values.append(int(v))
-    return values
+from make_qihang_pearl_v3 import (
+    build_parent_lookup,
+    get_local_matrix,
+    get_named_node_indices,
+    parse_glb,
+    read_accessor_rows,
+    read_accessor_scalars,
+)
 
 
 def get_lid_triangles(gltf, bin_chunk):
-    """Extract lid shell triangles in world space."""
-    node_lookup = {n.get("name"): n for n in gltf["nodes"] if n.get("name")}
-    shell_node = node_lookup["Case_Lid_Shell"]
+    """Extract lid shell triangles in product-local space."""
+    named_node_indices = get_named_node_indices(gltf)
+    parent_lookup = build_parent_lookup(gltf)
+    product_root_index = named_node_indices["QIHANG_Product"]
+    shell_node_index = named_node_indices["Case_Lid_Shell"]
+    shell_node = gltf["nodes"][shell_node_index]
     prim = gltf["meshes"][shell_node["mesh"]]["primitives"][0]
     positions = read_accessor_rows(gltf, bin_chunk, prim["attributes"]["POSITION"])
 
-    scale = shell_node.get("scale", [1, 1, 1])
-    translation = shell_node.get("translation", [0, 0, 0])
-    sx, sy, sz = float(scale[0]), float(scale[1]), float(scale[2])
-    tx, ty, tz = float(translation[0]), float(translation[1]), float(translation[2])
+    @lru_cache(maxsize=None)
+    def get_world_matrix(node_index: int) -> np.ndarray:
+        node = gltf["nodes"][node_index]
+        local_matrix = get_local_matrix(node)
+        parent_index = parent_lookup.get(node_index)
+        if parent_index is None:
+            return local_matrix
+        return get_world_matrix(parent_index) @ local_matrix
+
+    product_inverse = np.linalg.inv(get_world_matrix(product_root_index))
+    shell_matrix = product_inverse @ get_world_matrix(shell_node_index)
 
     world_pos = []
     for r in positions:
-        world_pos.append((r[0] * sx + tx, r[1] * sy + ty, r[2] * sz + tz))
+        local = np.array([float(r[0]), float(r[1]), float(r[2]), 1.0], dtype=float)
+        product_local = shell_matrix @ local
+        world_pos.append(tuple(float(value) for value in (product_local[:3] / max(product_local[3], 1e-12))))
 
     if "indices" in prim:
         indices = read_accessor_scalars(gltf, bin_chunk, prim["indices"])
@@ -97,7 +61,11 @@ def get_lid_triangles(gltf, bin_chunk):
             continue
         triangles.append((p0, p1, p2))
 
-    hole_center = tuple(float(v) for v in node_lookup["Lid_Pivot_Hole_Center"]["translation"])
+    hole_center_local = product_inverse @ get_world_matrix(named_node_indices["Lid_Pivot_Hole_Center"]) @ np.array(
+        [0.0, 0.0, 0.0, 1.0],
+        dtype=float,
+    )
+    hole_center = tuple(float(value) for value in (hole_center_local[:3] / max(hole_center_local[3], 1e-12)))
     return triangles, hole_center, world_pos
 
 
@@ -192,9 +160,9 @@ def main():
     # 5. Side view zoomed on hole (forward vs Y relative to hole center)
     draw_wireframe_2d(
         axes[1][1], triangles,
-        project=lambda p: ((p[2] - hz) * 1000, p[1] * 1000),
-        xlim=(-10, 15), ylim=(-5, 6),
-        title="Hole Side Section (mm)",
+        project=lambda p: ((p[2] - hz) * 1000, (p[1] - hy) * 1000),
+        xlim=(-10, 15), ylim=(-5, 8),
+        title="Hole Side Section (mm from center)",
         linewidth=0.4,
     )
 

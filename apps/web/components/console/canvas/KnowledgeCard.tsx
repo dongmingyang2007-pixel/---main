@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -18,25 +18,55 @@ interface KnowledgeCardProps {
   assistantId: string;
 }
 
+type KnowledgeState = {
+  loading: boolean;
+  datasets: DatasetInfo[];
+};
+
+type KnowledgeAction =
+  | { type: "request" }
+  | { type: "success"; datasets: DatasetInfo[] }
+  | { type: "failure" };
+
+function knowledgeReducer(
+  state: KnowledgeState,
+  action: KnowledgeAction,
+): KnowledgeState {
+  switch (action.type) {
+    case "request":
+      return { ...state, loading: true };
+    case "success":
+      return { loading: false, datasets: action.datasets };
+    case "failure":
+      return { loading: false, datasets: [] };
+    default:
+      return state;
+  }
+}
+
 export function KnowledgeCard({ assistantId }: KnowledgeCardProps) {
   const t = useTranslations("console-assistants");
   const { isDeveloperMode } = useDeveloperMode();
 
-  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [{ datasets, loading }, dispatch] = useReducer(knowledgeReducer, {
+    loading: true,
+    datasets: [],
+  });
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!assistantId) return;
-    setLoading(true);
+    dispatch({ type: "request" });
     void apiGet<DatasetInfo[]>(`/api/v1/datasets?project_id=${assistantId}`)
       .then((data) => {
-        setDatasets(Array.isArray(data) ? data : []);
+        dispatch({
+          type: "success",
+          datasets: Array.isArray(data) ? data : [],
+        });
       })
       .catch(() => {
-        setDatasets([]);
-      })
-      .finally(() => setLoading(false));
+        dispatch({ type: "failure" });
+      });
   }, [assistantId]);
 
   const firstDatasetId = datasets.length > 0 ? datasets[0].id : null;

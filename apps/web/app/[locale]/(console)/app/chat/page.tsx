@@ -1,17 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
 import { ChatInterface } from "@/components/console/ChatInterface";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
-
-interface Project {
-  id: string;
-  name: string;
-}
+import { useProjectSelection } from "@/lib/useProjectSelection";
 
 interface Conversation {
   id: string;
@@ -41,67 +37,40 @@ function formatTime(dateStr: string): string {
 export default function ChatPage() {
   const t = useTranslations("console-chat");
 
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<
     string | null
   >(null);
   const [loadingConversations, setLoadingConversations] = useState(false);
 
-  // Load projects
-  useEffect(() => {
-    apiGet<Project[]>("/api/v1/projects")
-      .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        setProjects(list);
-        if (list.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(list[0].id);
-        }
-      })
-      .catch(() => setProjects([]));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load conversations when project changes
-  useEffect(() => {
-    if (!selectedProjectId) {
+  const loadConversations = useCallback(async (projectId: string) => {
+    if (!projectId) {
       setConversations([]);
       setActiveConversationId(null);
       return;
     }
 
-    let cancelled = false;
     setLoadingConversations(true);
+    try {
+      const data = await apiGet<Conversation[]>(
+        `/api/v1/chat/conversations?project_id=${projectId}`,
+      );
+      const list = Array.isArray(data) ? data : [];
+      setConversations(list);
+      setActiveConversationId(list[0]?.id ?? null);
+    } catch {
+      setConversations([]);
+      setActiveConversationId(null);
+    } finally {
+      setLoadingConversations(false);
+    }
+  }, []);
 
-    apiGet<Conversation[]>(
-      `/api/v1/chat/conversations?project_id=${selectedProjectId}`,
-    )
-      .then((data) => {
-        if (!cancelled) {
-          const list = Array.isArray(data) ? data : [];
-          setConversations(list);
-          if (list.length > 0) {
-            setActiveConversationId(list[0].id);
-          } else {
-            setActiveConversationId(null);
-          }
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setConversations([]);
-          setActiveConversationId(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingConversations(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProjectId]);
+  const {
+    projectId: selectedProjectId,
+    projects,
+    selectProject,
+  } = useProjectSelection(loadConversations);
 
   // Create new conversation
   const handleNewConversation = useCallback(async () => {
@@ -150,7 +119,9 @@ export default function ChatPage() {
               <div className="chat-sidebar-header">
                 <select
                   value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  onChange={(e) => {
+                    void selectProject(e.target.value);
+                  }}
                 >
                   {projects.length === 0 && (
                     <option value="">{t("selectAssistant")}</option>
