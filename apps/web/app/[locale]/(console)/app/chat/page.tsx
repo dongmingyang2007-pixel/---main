@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -8,7 +8,9 @@ import { ChatInterface } from "@/components/console/ChatInterface";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useProjectSelection } from "@/lib/useProjectSelection";
+import { useModal } from "@/components/ui/modal-dialog";
 
 interface Conversation {
   id: string;
@@ -16,6 +18,18 @@ interface Conversation {
   project_id: string;
   updated_at: string;
 }
+
+interface ApiMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+}
+
+type ConversationSummary = {
+  title: string;
+  preview: string;
+};
 
 function formatTime(dateStr: string): string {
   try {
@@ -35,8 +49,42 @@ function formatTime(dateStr: string): string {
   }
 }
 
+function normalizeConversationText(content: string): string {
+  return content.replace(/\s+/g, " ").trim();
+}
+
+function summarizeConversationText(content: string, maxLength = 26): string {
+  const normalized = normalizeConversationText(content);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}…`
+    : normalized;
+}
+
+function isMeaningfulConversationTitle(
+  title: string,
+  fallbackTitle: string,
+  timeLabel: string,
+): boolean {
+  const normalized = title.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    normalized === fallbackTitle ||
+    normalized === timeLabel ||
+    normalized === "New Conversation"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function ChatPageContent() {
   const t = useTranslations("console-chat");
+  const modal = useModal();
   const searchParams = useSearchParams();
   const requestedProjectId = searchParams.get("project_id") || "";
 
@@ -45,6 +93,10 @@ function ChatPageContent() {
     string | null
   >(null);
   const [loadingConversations, setLoadingConversations] = useState(false);
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [conversationSummaries, setConversationSummaries] = useState<
+    Record<string, ConversationSummary>
+  >({});
 
   const loadConversations = useCallback(async (projectId: string) => {
     if (!projectId) {
@@ -60,7 +112,20 @@ function ChatPageContent() {
       );
       const list = Array.isArray(data) ? data : [];
       setConversations(list);
-      setActiveConversationId(list[0]?.id ?? null);
+      setConversationSummaries((prev) => {
+        const next: Record<string, ConversationSummary> = {};
+        list.forEach((conversation) => {
+          if (prev[conversation.id]) {
+            next[conversation.id] = prev[conversation.id];
+          }
+        });
+        return next;
+      });
+      setActiveConversationId((current) =>
+        current && list.some((conversation) => conversation.id === current)
+          ? current
+          : (list[0]?.id ?? null),
+      );
     } catch {
       setConversations([]);
       setActiveConversationId(null);
@@ -74,6 +139,67 @@ function ChatPageContent() {
     projects,
     selectProject,
   } = useProjectSelection(loadConversations);
+  const projectLabels = useMemo(() => buildProjectDisplayMap(projects), [projects]);
+
+  useEffect(() => {
+    if (conversations.length === 0) {
+      setConversationSummaries({});
+      return;
+    }
+
+    let cancelled = false;
+    const fallbackTitle = t("newConversation");
+    const targets = conversations.filter((conversation) => {
+      const timeLabel = formatTime(conversation.updated_at);
+      return !isMeaningfulConversationTitle(
+        conversation.title,
+        fallbackTitle,
+        timeLabel,
+      );
+    });
+
+    if (targets.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      targets.map(async (conversation) => {
+        const messages = await apiGet<ApiMessage[]>(
+          `/api/v1/chat/conversations/${conversation.id}/messages`,
+        ).catch(() => []);
+        const list = Array.isArray(messages) ? messages : [];
+        const firstMessage =
+          list.find(
+            (message) =>
+              message.role === "user" &&
+              normalizeConversationText(message.content).length > 0,
+          ) ||
+          list.find(
+            (message) => normalizeConversationText(message.content).length > 0,
+          );
+        const preview = summarizeConversationText(firstMessage?.content || "");
+        return [
+          conversation.id,
+          {
+            title: preview || fallbackTitle,
+            preview,
+          },
+        ] as const;
+      }),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+      setConversationSummaries((prev) => ({
+        ...prev,
+        ...Object.fromEntries(entries),
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversations, t]);
 
   useEffect(() => {
     if (!requestedProjectId || requestedProjectId === selectedProjectId) {
@@ -87,34 +213,115 @@ function ChatPageContent() {
 
   // Create new conversation
   const handleNewConversation = useCallback(async () => {
-    if (!selectedProjectId) return;
+    if (!selectedProjectId || creatingConversation) return;
+    setCreatingConversation(true);
     try {
       const conv = await apiPost<Conversation>("/api/v1/chat/conversations", {
         project_id: selectedProjectId,
       });
       setConversations((prev) => [conv, ...prev]);
+      setConversationSummaries((prev) => ({
+        ...prev,
+        [conv.id]: {
+          title: t("newConversation"),
+          preview: "",
+        },
+      }));
       setActiveConversationId(conv.id);
     } catch {
       // silently fail
+    } finally {
+      setCreatingConversation(false);
     }
-  }, [selectedProjectId]);
+  }, [creatingConversation, selectedProjectId, t]);
 
   // Delete conversation
   const handleDeleteConversation = useCallback(
     async (convId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!window.confirm(t("confirmDelete"))) return;
+      if (!(await modal.confirm(t("confirmDelete")))) return;
       try {
         await apiDelete(`/api/v1/chat/conversations/${convId}`);
-        setConversations((prev) => prev.filter((c) => c.id !== convId));
-        if (activeConversationId === convId) {
-          setActiveConversationId(null);
-        }
+        setConversations((prev) => {
+          const next = prev.filter((c) => c.id !== convId);
+          if (activeConversationId === convId) {
+            setActiveConversationId(next[0]?.id ?? null);
+          }
+          return next;
+        });
+        setConversationSummaries((prev) => {
+          const next = { ...prev };
+          delete next[convId];
+          return next;
+        });
       } catch {
         // silently fail
       }
     },
-    [activeConversationId, t],
+    [activeConversationId, modal, t],
+  );
+
+  const handleConversationActivity = useCallback(
+    ({ conversationId, previewText }: { conversationId: string; previewText: string }) => {
+      const preview = summarizeConversationText(previewText);
+      const now = new Date().toISOString();
+
+      setConversationSummaries((prev) => {
+        const current = prev[conversationId];
+        return {
+          ...prev,
+          [conversationId]: {
+            title: current?.title || preview || t("newConversation"),
+            preview,
+          },
+        };
+      });
+
+      setConversations((prev) => {
+        const current = prev.find((conversation) => conversation.id === conversationId);
+        if (!current) {
+          return prev;
+        }
+        return [
+          {
+            ...current,
+            updated_at: now,
+          },
+          ...prev.filter((conversation) => conversation.id !== conversationId),
+        ];
+      });
+    },
+    [t],
+  );
+
+  const getConversationTitle = useCallback(
+    (conversation: Conversation) => {
+      const timeLabel = formatTime(conversation.updated_at);
+      if (
+        isMeaningfulConversationTitle(
+          conversation.title,
+          t("newConversation"),
+          timeLabel,
+        )
+      ) {
+        return conversation.title.trim();
+      }
+      return conversationSummaries[conversation.id]?.title || t("newConversation");
+    },
+    [conversationSummaries, t],
+  );
+
+  const getConversationMeta = useCallback(
+    (conversation: Conversation) => {
+      const timeLabel = formatTime(conversation.updated_at);
+      const summary = conversationSummaries[conversation.id];
+      const title = getConversationTitle(conversation);
+      if (summary?.preview && summary.preview !== title) {
+        return `${summary.preview} · ${timeLabel}`;
+      }
+      return timeLabel;
+    },
+    [conversationSummaries, getConversationTitle],
   );
 
   return (
@@ -141,7 +348,7 @@ function ChatPageContent() {
                   )}
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name}
+                      {projectLabels.get(p.id) || p.name}
                     </option>
                   ))}
                 </select>
@@ -166,10 +373,10 @@ function ChatPageContent() {
                   >
                     <div className="chat-sidebar-item-info">
                       <div className="chat-sidebar-item-title">
-                        {conv.title || t("newConversation")}
+                        {getConversationTitle(conv)}
                       </div>
                       <div className="chat-sidebar-item-time">
-                        {formatTime(conv.updated_at)}
+                        {getConversationMeta(conv)}
                       </div>
                     </div>
                     <button
@@ -189,16 +396,20 @@ function ChatPageContent() {
                 <button
                   className="chat-sidebar-new"
                   onClick={() => void handleNewConversation()}
-                  disabled={!selectedProjectId}
+                  disabled={!selectedProjectId || creatingConversation}
                 >
-                  + {t("newConversation")}
+                  + {creatingConversation ? t("creatingConversation") : t("newConversation")}
                 </button>
               </div>
             </div>
 
             {/* Main chat area */}
             <div className="chat-main">
-              <ChatInterface conversationId={activeConversationId} />
+              <ChatInterface
+                key={activeConversationId ?? "no-conversation"}
+                conversationId={activeConversationId}
+                onConversationActivity={handleConversationActivity}
+              />
             </div>
           </div>
         </div>

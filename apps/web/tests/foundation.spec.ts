@@ -54,6 +54,18 @@ test.describe("Foundation design system", () => {
     await expect(page.locator("[data-theme='console']").first()).toBeVisible();
   });
 
+  test("default login lands on the assistants console route", async ({ page }) => {
+    await installWorkbenchApiMock(page);
+
+    await page.goto("/login");
+    await page.locator("#login-email").fill("default-login@example.com");
+    await page.locator("#login-password").fill("password-1234");
+    await page.locator("button[type='submit']").click();
+
+    await expect(page).toHaveURL(/\/app\/assistants$/);
+    await expect(page.getByRole("heading", { name: "我的 AI" })).toBeVisible();
+  });
+
   test("redirects work for removed routes", async ({ page }) => {
     await page.goto("/how-it-works", { waitUntil: "commit" });
     await expect(page).toHaveURL(/\/product/);

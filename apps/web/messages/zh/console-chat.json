@@ -2,10 +2,12 @@
   "title": "对话调试",
   "description": "和你的 AI 助手对话测试",
   "emptyHint": "选择一个 AI 助手，开始对话测试",
+  "emptyConversationHint": "新对话已创建，输入第一条消息开始测试",
   "inputPlaceholder": "输入消息…",
   "send": "发送",
   "mockNotice": "当前为模拟响应，接入真实推理后将显示实际结果",
   "newConversation": "新建对话",
+  "creatingConversation": "创建中…",
   "deleteConversation": "删除对话",
   "selectAssistant": "选择 AI 助手",
   "noConversations": "暂无对话，点击下方创建",
@@ -14,5 +16,11 @@
   "voiceRecording": "录音中…松开发送",
   "voiceSending": "语音识别中…",
   "voicePlay": "播放语音",
-  "micPermissionDenied": "麦克风权限被拒绝"
+  "micPermissionDenied": "麦克风权限被拒绝",
+  "errors": {
+    "generic": "抱歉，刚才出错了，请重试。",
+    "inferenceTimeout": "AI 回复超时，请稍后重试。",
+    "modelUnavailable": "模型服务暂时不可用，请稍后重试。",
+    "voiceFailed": "语音处理失败，请重试。"
+  }
 }

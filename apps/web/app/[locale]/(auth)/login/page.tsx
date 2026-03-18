@@ -9,6 +9,8 @@ import { gsap } from "@/lib/gsap-register";
 import { apiPost, persistWorkspaceId } from "@/lib/api";
 import { getSafeNavigationPath } from "@/lib/security";
 
+const DEFAULT_CONSOLE_PATH = "/app/assistants";
+
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -60,7 +62,7 @@ function LoginPageContent() {
                 { email, password },
               );
               persistWorkspaceId(auth.workspace.id, auth.access_token_expires_in_seconds);
-              router.push(nextPath || "/app");
+              router.push(nextPath || DEFAULT_CONSOLE_PATH);
               router.refresh();
             } catch (err) {
               setError(err instanceof Error ? err.message : t("login.error"));

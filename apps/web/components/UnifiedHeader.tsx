@@ -51,7 +51,7 @@ function UserAvatarDropdown({ isConsole }: { isConsole: boolean }) {
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem asChild>
-            <Link href="/app">{t("user.enterConsole")}</Link>
+            <Link href="/app/assistants">{t("user.enterConsole")}</Link>
           </DropdownMenuItem>
         )}
         <DropdownMenuItem asChild>
@@ -105,9 +105,12 @@ export function UnifiedHeader() {
         {/* ── Left: Brand ── */}
         <div className="flex items-center gap-2">
           <PublicDocumentLink href="/" className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[var(--brand-v2)]" />
+            <span
+              className="h-[10px] w-[10px] rounded-[2px] shrink-0"
+              style={{ background: "linear-gradient(135deg, var(--brand-v2), #7c3aed)" }}
+            />
             <strong className="text-base font-semibold tracking-tight">
-              {t("brand.company")}
+              {isConsole ? t("brand.short") : t("brand.company")}
             </strong>
           </PublicDocumentLink>
           {isConsole && (
@@ -142,6 +145,19 @@ export function UnifiedHeader() {
 
         {/* ── Right: Actions ── */}
         <div className="hidden items-center gap-4 md:flex">
+          {isConsole && (
+            <button
+              type="button"
+              className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-base)] px-2.5 py-1 text-xs text-[var(--text-secondary)] transition-colors hover:border-[var(--brand-v2)] hover:text-[var(--text-primary)]"
+              aria-label="Open command palette"
+              onClick={() => {}}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+              </svg>
+              <span>⌘K</span>
+            </button>
+          )}
           <LanguageSwitcher
             className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
           />

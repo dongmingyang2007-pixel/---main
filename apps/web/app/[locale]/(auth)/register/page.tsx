@@ -10,6 +10,8 @@ import { MagneticButton } from "@/components/MagneticButton";
 import { apiPost, persistWorkspaceId } from "@/lib/api";
 import { getSafeNavigationPath } from "@/lib/security";
 
+const DEFAULT_CONSOLE_PATH = "/app/assistants";
+
 function RegisterPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -96,7 +98,7 @@ function RegisterPageContent() {
         },
       );
       persistWorkspaceId(auth.workspace.id, auth.access_token_expires_in_seconds);
-      router.push(nextPath || "/app");
+      router.push(nextPath || DEFAULT_CONSOLE_PATH);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("register.error"));

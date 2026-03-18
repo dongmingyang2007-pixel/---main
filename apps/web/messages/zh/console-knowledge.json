@@ -4,7 +4,19 @@
   "description": "管理你的知识资料，可跨 AI 共享",
   "createNew": "新建知识包",
   "noItems": "还没有知识包",
-  "upload": "上传资料",
+  "upload": {
+    "kicker": "上传资料",
+    "title": "拖拽文件至此，或点击选择",
+    "description": "支持 PDF、Word、TXT、图片等常见格式，单文件最大 50 MB。",
+    "initializing": "正在初始化上传…",
+    "storageFailed": "存储失败（HTTP {status}）",
+    "complete": "上传完成",
+    "failed": "上传失败，请重试",
+    "uploading": "上传中…",
+    "selectFile": "选择文件",
+    "supportedTypes": "PDF · Word · TXT · 图片",
+    "defaultMessage": "将文件拖至此处，或点击按钮选择"
+  },
   "indexed": "已索引",
   "indexing": "索引中",
   "form": {

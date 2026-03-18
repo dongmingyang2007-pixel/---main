@@ -29,6 +29,7 @@
   "statusbar.noProject": "未选择项目",
   "statusbar.apiConnected": "API 已连接",
   "cmd.placeholder": "输入命令或搜索…",
+  "cmd.title": "命令面板",
   "cmd.empty": "未找到结果",
   "cmd.navigate": "导航",
   "cmd.actions": "操作",

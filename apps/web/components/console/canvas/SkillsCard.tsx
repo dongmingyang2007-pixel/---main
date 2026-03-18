@@ -72,7 +72,7 @@ export function SkillsCard({ parsed }: SkillsCardProps) {
           >
             <div className="canvas-advanced-content">
               <label className="canvas-advanced-label">
-                Skill Parameters (JSON)
+                {t("canvas.skillParameters")}
               </label>
               <textarea
                 className="canvas-system-prompt"

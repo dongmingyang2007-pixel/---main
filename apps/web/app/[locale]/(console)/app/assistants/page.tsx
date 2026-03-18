@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
+import { useProjectSelection } from "@/lib/useProjectSelection";
 
 type Project = { id: string; name: string; description?: string; created_at: string };
 
@@ -32,6 +33,7 @@ export default function AssistantsPage() {
   const [items, setItems] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const t = useTranslations("console-assistants");
+  const { projectId: selectedProjectId } = useProjectSelection();
 
   useEffect(() => {
     let active = true;
@@ -49,6 +51,10 @@ export default function AssistantsPage() {
       active = false;
     };
   }, []);
+
+  const filteredItems = selectedProjectId
+    ? items.filter((project) => project.id === selectedProjectId)
+    : items;
 
   return (
     <PanelLayout>
@@ -75,7 +81,7 @@ export default function AssistantsPage() {
                 <span>{t("createNew")}</span>
               </Link>
 
-              {items.map((project) => {
+              {filteredItems.map((project) => {
                 const modelName = extractModelName(project.description);
                 const desc = cleanDescription(project.description);
                 return (

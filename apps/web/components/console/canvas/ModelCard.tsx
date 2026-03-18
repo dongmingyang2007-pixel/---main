@@ -41,17 +41,24 @@ const MODEL_NAMES: Record<string, string> = {
 
 interface ModelCardProps {
   parsed: ParsedDescription;
+  currentModelId?: string;
+  currentModelName?: string;
   onChangeClick?: () => void;
 }
 
-export function ModelCard({ parsed, onChangeClick }: ModelCardProps) {
+export function ModelCard({
+  parsed,
+  currentModelId,
+  currentModelName,
+  onChangeClick,
+}: ModelCardProps) {
   const t = useTranslations("console-assistants");
   const { isDeveloperMode } = useDeveloperMode();
 
   const tier = parsed.modelTier || "medium";
-  const modelId = parsed.modelId || "";
+  const modelId = currentModelId || parsed.modelId || "";
   const config = TIER_CONFIG[tier] || TIER_CONFIG.medium;
-  const modelName = MODEL_NAMES[modelId] || modelId || "---";
+  const modelName = currentModelName || MODEL_NAMES[modelId] || modelId || "---";
 
   return (
     <div className="canvas-card">

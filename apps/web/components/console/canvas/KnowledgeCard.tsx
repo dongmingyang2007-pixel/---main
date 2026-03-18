@@ -97,7 +97,7 @@ export function KnowledgeCard({ assistantId }: KnowledgeCardProps) {
                 <span className="canvas-knowledge-name">{ds.name}</span>
                 {ds.item_count != null && (
                   <span className="canvas-knowledge-count">
-                    {ds.item_count} items
+                    {t("canvas.knowledgeItems", { count: ds.item_count })}
                   </span>
                 )}
               </li>
@@ -128,7 +128,7 @@ export function KnowledgeCard({ assistantId }: KnowledgeCardProps) {
                 datasets.map((ds) => (
                   <div key={ds.id} className="canvas-advanced-row">
                     <span>{ds.name}</span>
-                    <span>{ds.item_count ?? 0} items</span>
+                    <span>{t("canvas.knowledgeItems", { count: ds.item_count ?? 0 })}</span>
                     {ds.version && <span>v{ds.version}</span>}
                   </div>
                 ))

@@ -1,5 +1,6 @@
 {
   "brand.company": "Mingrun Tech",
+  "brand.short": "Mingrun",
   "brand.product": "Mingrun Tech AI Earphone",
   "nav.product": "Product",
   "nav.ecosystem": "AI Ecosystem",
@@ -14,6 +15,8 @@
   "user.settings": "Account Settings",
   "user.logout": "Log Out",
   "user.login": "Log In",
+  "session.expiredTitle": "Session expired",
+  "session.expiredBody": "Redirecting to login. Please sign in again to continue.",
   "nav.tryDemo": "Try Demo",
   "nav.openMenu": "Open menu",
   "nav.closeMenu": "Close menu",

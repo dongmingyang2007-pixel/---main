@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { apiGet } from "@/lib/api";
 import type { MemoryNode } from "@/hooks/useGraphData";
 import { useDeveloperMode } from "@/lib/developer-mode";
+import { useModal } from "@/components/ui/modal-dialog";
 
 interface MemoryDetailEdge {
   id: string;
@@ -66,6 +67,7 @@ export default function NodeDetail({
 }: NodeDetailProps) {
   const t = useTranslations("console-assistants");
   const { isDeveloperMode } = useDeveloperMode();
+  const modal = useModal();
   const fileNode = isFileNode(node);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(node.content);
@@ -170,14 +172,14 @@ export default function NodeDetail({
   };
 
   const handleDelete = async () => {
-    if (window.confirm(t("graph.confirmDelete"))) {
+    if (await modal.confirm(t("graph.confirmDelete"))) {
       await onDelete(node.id);
       onClose();
     }
   };
 
   const handleDeleteEdge = async (edgeId: string) => {
-    if (!window.confirm(t("graph.confirmDisconnect"))) {
+    if (!(await modal.confirm(t("graph.confirmDisconnect")))) {
       return;
     }
     await onDeleteEdge(edgeId);
@@ -198,7 +200,7 @@ export default function NodeDetail({
   };
 
   const handleDetachFile = async (memoryFileId: string) => {
-    if (!window.confirm(t("graph.confirmDetachFile"))) {
+    if (!(await modal.confirm(t("graph.confirmDetachFile")))) {
       return;
     }
     await onDetachFile(memoryFileId);

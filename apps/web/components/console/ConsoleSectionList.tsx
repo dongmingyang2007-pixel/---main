@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
 import { useProjectContext } from "@/lib/ProjectContext";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 
 type DatasetItem = {
   id: string;
@@ -30,6 +31,7 @@ export function ConsoleSectionList() {
   const tKnowledge = useTranslations("console-knowledge");
   const tTraining = useTranslations("console-training");
   const { projectId, projects, selectProject } = useProjectContext();
+  const projectLabels = useMemo(() => buildProjectDisplayMap(projects), [projects]);
 
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [jobs, setJobs] = useState<TrainingJobItem[]>([]);
@@ -101,7 +103,9 @@ export function ConsoleSectionList() {
                 void selectProject(project.id);
               }}
             >
-              <span className="console-section-list-name">{project.name}</span>
+              <span className="console-section-list-name">
+                {projectLabels.get(project.id) || project.name}
+              </span>
             </Link>
           ))}
         </div>
@@ -128,7 +132,9 @@ export function ConsoleSectionList() {
                 void selectProject(project.id);
               }}
             >
-              <span className="console-section-list-name">{project.name}</span>
+              <span className="console-section-list-name">
+                {projectLabels.get(project.id) || project.name}
+              </span>
             </button>
           ))}
         </div>

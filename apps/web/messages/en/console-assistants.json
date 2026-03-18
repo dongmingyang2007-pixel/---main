@@ -68,7 +68,7 @@
     "noMetrics": "No metrics available."
   },
   "graph": {
-    "tab": "Memory Graph",
+    "tab": "🕸 Memory Graph",
     "addMemory": "Add Memory",
     "search": "Search memories…",
     "stats": "{count} memories",
@@ -138,7 +138,7 @@
     "disconnect": "Disconnect"
   },
   "config": {
-    "tab": "Config"
+    "tab": "⚙️ Config"
   },
   "canvas": {
     "model": "Base Model",
@@ -150,6 +150,10 @@
     "edit": "Edit",
     "save": "Save",
     "add": "Add",
+    "promptLabel": "System Prompt",
+    "personalityUnset": "Not configured yet",
+    "knowledgeItems": "{count, plural, one {# item} other {# items}}",
+    "skillParameters": "Skill Parameters (JSON)",
     "expandAdvanced": "Show advanced options",
     "collapseAdvanced": "Hide advanced options",
     "tryChat": "Try Chat",

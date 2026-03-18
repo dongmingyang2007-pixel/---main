@@ -61,7 +61,7 @@ export function PersonalityCard({
         ) : (
           <div className="canvas-personality-box">
             {parsed.personality || (
-              <span className="canvas-placeholder">---</span>
+              <span className="canvas-placeholder">{t("canvas.personalityUnset")}</span>
             )}
           </div>
         )}
@@ -95,7 +95,7 @@ export function PersonalityCard({
             style={{ overflow: "hidden" }}
           >
             <div className="canvas-advanced-content">
-              <label className="canvas-advanced-label">System Prompt</label>
+              <label className="canvas-advanced-label">{t("canvas.promptLabel")}</label>
               <textarea
                 className="canvas-system-prompt"
                 rows={6}

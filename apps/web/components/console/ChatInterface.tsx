@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
-import { apiGet, apiPost, apiPostFormData } from "@/lib/api";
+import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 
 interface Message {
@@ -28,6 +28,10 @@ interface VoiceResponse {
 
 interface ChatInterfaceProps {
   conversationId?: string | null;
+  onConversationActivity?: (payload: {
+    conversationId: string;
+    previewText: string;
+  }) => void;
 }
 
 function playAudio(base64Audio: string) {
@@ -41,7 +45,10 @@ function playAudio(base64Audio: string) {
   audio.onended = () => URL.revokeObjectURL(url);
 }
 
-export function ChatInterface({ conversationId }: ChatInterfaceProps) {
+export function ChatInterface({
+  conversationId,
+  onConversationActivity,
+}: ChatInterfaceProps) {
   const t = useTranslations("console-chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -104,6 +111,10 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsTyping(true);
+    onConversationActivity?.({
+      conversationId,
+      previewText: text,
+    });
 
     try {
       const response = await apiPost<ApiMessage>(
@@ -116,20 +127,27 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
         content: response.content,
       };
       setMessages((prev) => [...prev, aiMessage]);
-    } catch {
-      // On error, show a fallback message
+    } catch (error) {
+      let content = t("errors.generic");
+      if (isApiRequestError(error)) {
+        if (error.code === "inference_timeout") {
+          content = t("errors.inferenceTimeout");
+        } else if (error.code === "model_api_unavailable") {
+          content = t("errors.modelUnavailable");
+        }
+      }
       setMessages((prev) => [
         ...prev,
         {
           id: `err-${Date.now()}`,
           role: "assistant",
-          content: "Sorry, something went wrong. Please try again.",
+          content,
         },
       ]);
     } finally {
       setIsTyping(false);
     }
-  }, [input, isTyping, conversationId]);
+  }, [conversationId, input, isTyping, onConversationActivity, t]);
 
   const sendVoiceMessage = useCallback(
     async (audioBlob: Blob) => {
@@ -148,6 +166,10 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
 
         // Add user message (transcribed text)
         if (data.text_input) {
+          onConversationActivity?.({
+            conversationId,
+            previewText: data.text_input,
+          });
           setMessages((prev) => [
             ...prev,
             {
@@ -174,13 +196,17 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
         if (data.audio_response) {
           playAudio(data.audio_response);
         }
-      } catch {
+      } catch (error) {
+        let content = t("errors.voiceFailed");
+        if (isApiRequestError(error) && error.code === "inference_timeout") {
+          content = t("errors.inferenceTimeout");
+        }
         setMessages((prev) => [
           ...prev,
           {
             id: `err-${Date.now()}`,
             role: "assistant",
-            content: "语音处理失败，请重试。",
+            content,
           },
         ]);
       } finally {
@@ -188,7 +214,7 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
         setVoiceStatus("idle");
       }
     },
-    [conversationId],
+    [conversationId, onConversationActivity, t],
   );
 
   const handleMicClick = useCallback(async () => {
@@ -225,7 +251,7 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
 
         {!loadingMessages && messages.length === 0 && !isTyping && (
           <div className="chat-empty">
-            {noConversation ? t("emptyHint") : t("emptyHint")}
+            {noConversation ? t("emptyHint") : t("emptyConversationHint")}
           </div>
         )}
 

@@ -472,6 +472,8 @@ def index_data_item(
     import asyncio
 
     from app.services.document_indexer import index_document
+    from app.services.embedding import delete_embeddings_for_data_item
+    from app.services.memory_file_context import sync_memory_links_for_data_item
     from app.services.storage import get_s3_client
 
     if not settings.dashscope_api_key:
@@ -479,6 +481,10 @@ def index_data_item(
 
     db = SessionLocal()
     try:
+        item = db.get(DataItem, data_item_id)
+        if not item or item.deleted_at is not None:
+            return
+
         s3 = get_s3_client()
         response = s3.get_object(
             Bucket=settings.s3_private_bucket,
@@ -486,6 +492,7 @@ def index_data_item(
         )
         content = response["Body"].read()
 
+        delete_embeddings_for_data_item(db, data_item_id)
         asyncio.run(
             index_document(
                 db,
@@ -494,7 +501,13 @@ def index_data_item(
                 data_item_id=data_item_id,
                 content=content,
                 filename=filename,
-            )
+            ),
+        )
+        sync_memory_links_for_data_item(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            data_item_id=data_item_id,
         )
     except Exception:  # noqa: BLE001
         db.rollback()

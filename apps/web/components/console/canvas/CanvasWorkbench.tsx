@@ -281,11 +281,12 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   const visionConfig = getConfig("vision");
   const pipelineModelNames = useMemo(
     () => ({
+      llm: llmConfig?.model_id ? catalogByModelId[llmConfig.model_id]?.display_name : undefined,
       asr: asrConfig?.model_id ? catalogByModelId[asrConfig.model_id]?.display_name : undefined,
       tts: ttsConfig?.model_id ? catalogByModelId[ttsConfig.model_id]?.display_name : undefined,
       vision: visionConfig?.model_id ? catalogByModelId[visionConfig.model_id]?.display_name : undefined,
     }),
-    [asrConfig?.model_id, catalogByModelId, ttsConfig?.model_id, visionConfig?.model_id],
+    [asrConfig?.model_id, catalogByModelId, llmConfig?.model_id, ttsConfig?.model_id, visionConfig?.model_id],
   );
 
   if (!project) {
@@ -356,7 +357,12 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
 
       {/* 2x2 Grid */}
       <div className="canvas-grid">
-        <ModelCard parsed={parsed} onChangeClick={() => openPicker("llm")} />
+        <ModelCard
+          parsed={parsed}
+          currentModelId={llmConfig?.model_id}
+          currentModelName={pipelineModelNames.llm}
+          onChangeClick={() => openPicker("llm")}
+        />
         <KnowledgeCard assistantId={assistantId} />
         <PersonalityCard
           parsed={parsed}

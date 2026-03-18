@@ -8,38 +8,31 @@ import { Link } from "@/i18n/navigation";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
-
-interface CatalogModel {
-  id: string;
-  model_id: string;
-  display_name: string;
-  provider: string;
-  category: "llm" | "asr" | "tts" | "vision";
-  description: string;
-  capabilities: string[];
-  input_price: number;
-  output_price: number;
-  context_window: number;
-  max_output: number;
-}
+import {
+  normalizeCatalogModelSummary,
+  type CatalogModelSummary,
+  type ModelCategory,
+} from "@/lib/model-catalog";
 
 const TABS = ["all", "llm", "asr", "tts", "vision"] as const;
 type Tab = (typeof TABS)[number];
 
 type ModelState = {
   loading: boolean;
-  models: CatalogModel[];
+  models: CatalogModelSummary[];
 };
 
 type ModelAction =
   | { type: "request" }
-  | { type: "success"; models: CatalogModel[] }
+  | { type: "success"; models: CatalogModelSummary[] }
   | { type: "failure" };
 
 const PROVIDER_GRADIENTS: Record<string, string> = {
   alibaba: "linear-gradient(135deg, #c8734a, #e8925a)",
   qwen: "linear-gradient(135deg, #c8734a, #e8925a)",
   deepseek: "linear-gradient(135deg, #3a6a9a, #4a8ac8)",
+  internlm: "linear-gradient(135deg, #1a6b4a, #2ea077)",
+  internvl: "linear-gradient(135deg, #1a6b4a, #2ea077)",
 };
 
 function getProviderGradient(provider: string): string {
@@ -89,12 +82,14 @@ function ModelsPageContent() {
   useEffect(() => {
     let cancelled = false;
     dispatch({ type: "request" });
-    apiGet<CatalogModel[]>("/api/v1/models/catalog")
+    apiGet<unknown[]>("/api/v1/models/catalog")
       .then((data) => {
         if (!cancelled) {
           dispatch({
             type: "success",
-            models: Array.isArray(data) ? data : [],
+            models: Array.isArray(data)
+              ? data.map((item) => normalizeCatalogModelSummary(item as Record<string, unknown>))
+              : [],
           });
         }
       })
@@ -111,7 +106,7 @@ function ModelsPageContent() {
   const filtered = useMemo(() => {
     let list = models;
     if (activeTab !== "all") {
-      list = list.filter((m) => m.category === activeTab);
+      list = list.filter((m) => m.category === (activeTab as ModelCategory));
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 
 import { Link, usePathname } from "@/i18n/navigation";
 import { useProjectContext } from "@/lib/ProjectContext";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useMobileMenu } from "@/components/MobileMenuProvider";
 
 type TranslateFn = ReturnType<typeof useTranslations>;
@@ -13,14 +14,22 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-function formatSegment(segment: string, t: TranslateFn): string {
-  if (t.has(`breadcrumb.${segment}`)) {
-    return t(`breadcrumb.${segment}`);
+function formatSegment(
+  segment: string,
+  t: TranslateFn,
+  projectNames: Map<string, string>,
+): string {
+  const decoded = decodeURIComponent(segment);
+  if (projectNames.has(decoded)) {
+    return projectNames.get(decoded) || decoded;
   }
-  if (isUuid(segment)) {
-    return `${segment.slice(0, 8)}…`;
+  if (t.has(`breadcrumb.${decoded}`)) {
+    return t(`breadcrumb.${decoded}`);
   }
-  return segment;
+  if (isUuid(decoded)) {
+    return `${decoded.slice(0, 8)}…`;
+  }
+  return decoded;
 }
 
 export function InlineTopBar() {
@@ -28,15 +37,20 @@ export function InlineTopBar() {
   const t = useTranslations("console");
   const { openMenu } = useMobileMenu();
   const { projectId, projects, selectProject } = useProjectContext();
+  const projectNames = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.name])),
+    [projects],
+  );
+  const projectLabels = useMemo(() => buildProjectDisplayMap(projects), [projects]);
 
   const crumbs = useMemo(() => {
     const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
     return segments.map((segment, index) => ({
       href: `/${segments.slice(0, index + 1).join("/")}`,
-      label: formatSegment(segment, t),
+      label: formatSegment(segment, t, projectNames),
       isLast: index === segments.length - 1,
     }));
-  }, [pathname, t]);
+  }, [pathname, projectNames, t]);
 
   const showProjectSelect = /^\/app\/(assistants|knowledge|training|chat)(?:\/|$)/.test(pathname);
 
@@ -95,7 +109,7 @@ export function InlineTopBar() {
           >
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
-                {project.name}
+                {projectLabels.get(project.id) || project.name}
               </option>
             ))}
           </select>

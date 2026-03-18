@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useProjectSelection } from "@/lib/useProjectSelection";
 
 type Job = {
@@ -41,6 +42,7 @@ export default function TrainingPage() {
   };
 
   const { projectId, projects, selectProject } = useProjectSelection(loadJobs);
+  const projectLabels = buildProjectDisplayMap(projects);
 
   return (
     <PanelLayout>
@@ -68,7 +70,7 @@ export default function TrainingPage() {
               >
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
-                    {project.name}
+                    {projectLabels.get(project.id) || project.name}
                   </option>
                 ))}
               </select>

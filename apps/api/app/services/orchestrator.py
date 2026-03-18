@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.models.entities import Conversation, DataItem, Dataset, Memory, ModelCatalog, PipelineConfig, Project
 from app.services.dashscope_client import chat_completion, omni_completion
 from app.services.embedding import search_similar
+from app.services.memory_file_context import load_linked_file_chunks_for_memories
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 
 
@@ -109,6 +110,53 @@ def _load_visible_permanent_memories(
     ]
 
 
+def _filter_relevant_memory_ids_for_prompt(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    results: list[dict],
+) -> list[str]:
+    memory_ids = [result["memory_id"] for result in results if result.get("memory_id")]
+    if not memory_ids:
+        return []
+
+    memories = (
+        db.query(Memory)
+        .filter(
+            Memory.id.in_(memory_ids),
+            Memory.workspace_id == workspace_id,
+            Memory.project_id == project_id,
+        )
+        .all()
+    )
+
+    visible_memory_ids: list[str] = []
+    for memory in memories:
+        if memory.type == "temporary":
+            if memory.source_conversation_id != conversation_id:
+                continue
+            visible_memory_ids.append(memory.id)
+            continue
+        if not is_private_memory(memory) or get_memory_owner_user_id(memory) == conversation_created_by:
+            visible_memory_ids.append(memory.id)
+    return visible_memory_ids
+
+
+def _memory_matches_query(memory: Memory, query: str) -> bool:
+    normalized_query = query.strip().lower()
+    normalized_memory = memory.content.strip().lower()
+    if not normalized_query or not normalized_memory:
+        return False
+    if normalized_memory in normalized_query:
+        return True
+
+    tokens = re.findall(r"[\w\u4e00-\u9fff]{2,}", normalized_memory)
+    return any(token in normalized_query for token in tokens[:6])
+
+
 async def _build_and_call_llm(
     db: Session,
     *,
@@ -130,22 +178,9 @@ async def _build_and_call_llm(
     """
     # 1. Retrieve RAG knowledge
     knowledge_chunks: list[dict] = []
-    try:
-        knowledge_chunks = await search_similar(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            query=user_message,
-            limit=5,
-        )
-        knowledge_chunks = _filter_knowledge_chunks_for_prompt(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            results=knowledge_chunks,
-        )
-    except Exception:  # noqa: BLE001
-        pass  # RAG failure is non-fatal, continue without knowledge
+    linked_file_chunks: list[dict] = []
+    semantic_results: list[dict] = []
+    relevant_memory_ids: list[str] = []
 
     # 2. Load memories
     project, conversation_record = _load_active_conversation_context(
@@ -171,6 +206,46 @@ async def _build_and_call_llm(
         )
         .all()
     )
+
+    try:
+        semantic_results = await search_similar(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            query=user_message,
+            limit=12,
+        )
+        relevant_memory_ids = _filter_relevant_memory_ids_for_prompt(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            conversation_created_by=conversation_record.created_by,
+            results=semantic_results,
+        )
+        knowledge_chunks = _filter_knowledge_chunks_for_prompt(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            results=semantic_results,
+        )
+        relevant_memory_ids.extend(
+            memory.id
+            for memory in [*permanent_memories, *temporary_memories]
+            if _memory_matches_query(memory, user_message)
+        )
+        relevant_memory_ids = list(dict.fromkeys(relevant_memory_ids))
+        if relevant_memory_ids:
+            linked_file_chunks = await load_linked_file_chunks_for_memories(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                memory_ids=relevant_memory_ids,
+                query=user_message,
+                limit=4,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # RAG failure is non-fatal, continue without knowledge
 
     # 3. Load project personality
     personality = ""
@@ -199,6 +274,24 @@ async def _build_and_call_llm(
     if knowledge_chunks:
         knowledge_text = "\n---\n".join([c["chunk_text"] for c in knowledge_chunks])
         system_parts.append(f"相关知识参考（来自用户上传的资料）：\n{knowledge_text}")
+
+    linked_seen = {
+        (chunk.get("data_item_id"), chunk.get("chunk_text"))
+        for chunk in knowledge_chunks
+    }
+    linked_file_chunks = [
+        chunk
+        for chunk in linked_file_chunks
+        if (chunk.get("data_item_id"), chunk.get("chunk_text")) not in linked_seen
+    ]
+    if linked_file_chunks:
+        linked_text = "\n---\n".join(
+            [
+                f"[{chunk.get('filename') or '未命名资料'}]\n{chunk['chunk_text']}"
+                for chunk in linked_file_chunks
+            ]
+        )
+        system_parts.append(f"与当前相关记忆直接关联的资料摘录：\n{linked_text}")
 
     system_prompt = "\n\n".join(system_parts) if system_parts else "你是一个有帮助的 AI 助手。"
 

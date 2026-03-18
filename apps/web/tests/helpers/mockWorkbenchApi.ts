@@ -91,15 +91,88 @@ type ModelVersion = {
   version: number;
 };
 
+type Conversation = {
+  id: string;
+  project_id: string;
+  title: string;
+  updated_at: string;
+};
+
+type PipelineConfigItem = {
+  id: string;
+  project_id: string;
+  model_type: "llm" | "asr" | "tts" | "vision";
+  model_id: string;
+  config_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+type CatalogModel = {
+  id: string;
+  model_id: string;
+  display_name: string;
+  provider: string;
+  provider_display?: string;
+  category: "llm" | "asr" | "tts" | "vision";
+  description: string;
+  capabilities: string[];
+  input_price: number;
+  output_price: number;
+  context_window: number;
+  max_output: number;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supports_function_calling?: boolean;
+  supports_web_search?: boolean;
+  supports_structured_output?: boolean;
+  supports_cache?: boolean;
+  batch_input_price?: number | null;
+  batch_output_price?: number | null;
+  cache_read_price?: number | null;
+  cache_write_price?: number | null;
+  price_unit?: string;
+  price_note?: string | null;
+};
+
+type MemoryNode = {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  content: string;
+  category: string;
+  type: "permanent" | "temporary";
+  source_conversation_id: string | null;
+  parent_memory_id: string | null;
+  position_x: number | null;
+  position_y: number | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+type ChatMessage = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
 type MockDb = {
   workspaceId: string;
   projects: Project[];
+  conversationsByProjectId: Record<string, Conversation[]>;
+  messagesByConversationId: Record<string, ChatMessage[]>;
   datasets: Dataset[];
   datasetVersions: DatasetVersion[];
   jobs: Job[];
   models: Model[];
   modelAliasesById: Record<string, ModelAlias[]>;
   modelVersionsById: Record<string, ModelVersion[]>;
+  pipelineConfigs: PipelineConfigItem[];
+  modelCatalog: CatalogModel[];
+  memoryNodesByProjectId: Record<string, MemoryNode[]>;
   counters: Record<string, number>;
 };
 
@@ -135,6 +208,10 @@ function createMockDb(): MockDb {
         created_at: nowIso(),
       },
     ],
+    conversationsByProjectId: {
+      [seedProjectId]: [],
+    },
+    messagesByConversationId: {},
     datasets: [
       {
         id: seedDatasetId,
@@ -176,13 +253,128 @@ function createMockDb(): MockDb {
     modelVersionsById: {
       [seedModelId]: [{ id: seedModelVersionId, version: 3 }],
     },
+    pipelineConfigs: [
+      {
+        id: "pipe-llm-seed",
+        project_id: seedProjectId,
+        model_type: "llm",
+        model_id: "qwen3.5-plus",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+      {
+        id: "pipe-asr-seed",
+        project_id: seedProjectId,
+        model_type: "asr",
+        model_id: "paraformer-v2",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+      {
+        id: "pipe-tts-seed",
+        project_id: seedProjectId,
+        model_type: "tts",
+        model_id: "cosyvoice",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+    ],
+    modelCatalog: [
+      {
+        id: "catalog-qwen3.5-plus",
+        model_id: "qwen3.5-plus",
+        display_name: "Qwen3.5-Plus",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "llm",
+        description: "均衡的旗舰级通用模型，支持视觉、函数调用和联网搜索。",
+        capabilities: ["chat", "vision", "function_calling", "web_search"],
+        input_price: 0.004,
+        output_price: 0.012,
+        context_window: 131072,
+        max_output: 8192,
+        input_modalities: ["text", "image"],
+        output_modalities: ["text"],
+        supports_function_calling: true,
+        supports_web_search: true,
+        supports_structured_output: true,
+        supports_cache: true,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "tokens",
+        price_note: null,
+      },
+      {
+        id: "catalog-paraformer-v2",
+        model_id: "paraformer-v2",
+        display_name: "Paraformer-v2",
+        provider: "alibaba",
+        provider_display: "千问 · 阿里云",
+        category: "asr",
+        description: "实时语音识别模型，支持中英文混合输入。",
+        capabilities: ["asr"],
+        input_price: 0,
+        output_price: 0,
+        context_window: 0,
+        max_output: 0,
+        input_modalities: ["audio"],
+        output_modalities: ["text"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "audio",
+        price_note: "免费额度",
+      },
+      {
+        id: "catalog-cosyvoice",
+        model_id: "cosyvoice",
+        display_name: "CosyVoice",
+        provider: "alibaba",
+        provider_display: "千问 · 阿里云",
+        category: "tts",
+        description: "自然风格语音合成模型，支持多音色和情绪表达。",
+        capabilities: ["tts"],
+        input_price: 0,
+        output_price: 0,
+        context_window: 0,
+        max_output: 0,
+        input_modalities: ["text"],
+        output_modalities: ["audio"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "characters",
+        price_note: "按字符计费",
+      },
+    ],
+    memoryNodesByProjectId: {
+      [seedProjectId]: [],
+    },
     counters: {
       proj: 1,
+      conv: 0,
+      msg: 0,
       dataset: 1,
       dsv: 1,
       job: 1,
       model: 1,
       "model-version": 1,
+      memory: 0,
     },
   };
 }
@@ -307,6 +499,125 @@ export async function installWorkbenchApiMock(
       return;
     }
 
+    const projectDetailMatch = pathname.match(/^\/api\/v1\/projects\/([^/]+)$/);
+    if (projectDetailMatch && method === "GET") {
+      const projectId = projectDetailMatch[1];
+      const project = db.projects.find((item) => item.id === projectId);
+      if (!project) {
+        await fulfillJson(route, { error: { message: "project not found" } }, 404);
+        return;
+      }
+      await fulfillJson(route, project);
+      return;
+    }
+
+    if (pathname === "/api/v1/chat/conversations" && method === "GET") {
+      const projectId = searchParams.get("project_id") || "";
+      await fulfillJson(route, db.conversationsByProjectId[projectId] || []);
+      return;
+    }
+
+    if (pathname === "/api/v1/chat/conversations" && method === "POST") {
+      const body = readJsonBody<{ project_id?: string; title?: string }>(route);
+      const projectId = body.project_id || db.projects[0]?.id || "";
+      const conversation: Conversation = {
+        id: nextId(db, "conv"),
+        project_id: projectId,
+        title: body.title || "New Conversation",
+        updated_at: nowIso(),
+      };
+      db.conversationsByProjectId[projectId] = [
+        conversation,
+        ...(db.conversationsByProjectId[projectId] || []),
+      ];
+      db.messagesByConversationId[conversation.id] = [];
+      await fulfillJson(route, conversation);
+      return;
+    }
+
+    const conversationMessagesMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/messages$/);
+    if (conversationMessagesMatch && method === "GET") {
+      const conversationId = conversationMessagesMatch[1];
+      await fulfillJson(route, db.messagesByConversationId[conversationId] || []);
+      return;
+    }
+
+    if (conversationMessagesMatch && method === "POST") {
+      const conversationId = conversationMessagesMatch[1];
+      const body = readJsonBody<{ content?: string }>(route);
+      const now = nowIso();
+      const userMessage: ChatMessage = {
+        id: nextId(db, "msg"),
+        conversation_id: conversationId,
+        role: "user",
+        content: body.content || "",
+        created_at: now,
+      };
+      const assistantMessage: ChatMessage = {
+        id: nextId(db, "msg"),
+        conversation_id: conversationId,
+        role: "assistant",
+        content: "Mock assistant response",
+        created_at: now,
+      };
+      db.messagesByConversationId[conversationId] = [
+        ...(db.messagesByConversationId[conversationId] || []),
+        userMessage,
+        assistantMessage,
+      ];
+      await fulfillJson(route, assistantMessage);
+      return;
+    }
+
+    if (pathname === "/api/v1/memory" && method === "GET") {
+      const projectId = searchParams.get("project_id") || "";
+      await fulfillJson(route, { nodes: db.memoryNodesByProjectId[projectId] || [], edges: [] });
+      return;
+    }
+
+    if (pathname === "/api/v1/memory" && method === "POST") {
+      const body = readJsonBody<{ project_id?: string; content?: string; category?: string }>(route);
+      const projectId = body.project_id || db.projects[0]?.id || "";
+      const node: MemoryNode = {
+        id: nextId(db, "memory"),
+        workspace_id: db.workspaceId,
+        project_id: projectId,
+        content: body.content || "",
+        category: body.category || "",
+        type: "permanent",
+        source_conversation_id: null,
+        parent_memory_id: null,
+        position_x: null,
+        position_y: null,
+        metadata_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      db.memoryNodesByProjectId[projectId] = [...(db.memoryNodesByProjectId[projectId] || []), node];
+      await fulfillJson(route, node);
+      return;
+    }
+
+    const projectStreamMatch = pathname.match(/^\/api\/v1\/memory\/([^/]+)\/stream$/);
+    if (projectStreamMatch && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: "",
+      });
+      return;
+    }
+
+    const conversationStreamMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/memory-stream$/);
+    if (conversationStreamMatch && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: "",
+      });
+      return;
+    }
+
     if (pathname === "/api/v1/datasets" && method === "GET") {
       const projectId = searchParams.get("project_id") || "";
       await fulfillJson(
@@ -392,6 +703,64 @@ export async function installWorkbenchApiMock(
       db.modelAliasesById[model.id] = [{ alias: "prod", model_version_id: versionId }];
       db.modelVersionsById[model.id] = [{ id: versionId, version: 1 }];
       await fulfillJson(route, model, 201);
+      return;
+    }
+
+    if (pathname === "/api/v1/models/catalog" && method === "GET") {
+      await fulfillJson(route, db.modelCatalog);
+      return;
+    }
+
+    const modelCatalogDetailMatch = pathname.match(/^\/api\/v1\/models\/catalog\/([^/]+)$/);
+    if (modelCatalogDetailMatch && method === "GET") {
+      const modelId = modelCatalogDetailMatch[1];
+      const model = db.modelCatalog.find((item) => item.model_id === modelId);
+      if (!model) {
+        await fulfillJson(route, { error: { message: "catalog model not found" } }, 404);
+        return;
+      }
+      await fulfillJson(route, model);
+      return;
+    }
+
+    if (pathname === "/api/v1/pipeline" && method === "GET") {
+      const projectId = searchParams.get("project_id") || "";
+      await fulfillJson(route, {
+        items: db.pipelineConfigs.filter((item) => item.project_id === projectId),
+      });
+      return;
+    }
+
+    if (pathname === "/api/v1/pipeline" && method === "PATCH") {
+      const body = readJsonBody<{
+        project_id?: string;
+        model_type?: "llm" | "asr" | "tts" | "vision";
+        model_id?: string;
+        config_json?: Record<string, unknown>;
+      }>(route);
+      const projectId = body.project_id || db.projects[0]?.id || "";
+      const modelType = body.model_type || "llm";
+      const current = db.pipelineConfigs.find(
+        (item) => item.project_id === projectId && item.model_type === modelType,
+      );
+      if (current) {
+        current.model_id = body.model_id || current.model_id;
+        current.config_json = body.config_json || current.config_json;
+        current.updated_at = nowIso();
+        await fulfillJson(route, current);
+        return;
+      }
+      const created: PipelineConfigItem = {
+        id: `pipe-${modelType}-${nextId(db, "proj")}`,
+        project_id: projectId,
+        model_type: modelType,
+        model_id: body.model_id || "",
+        config_json: body.config_json || {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      db.pipelineConfigs.push(created);
+      await fulfillJson(route, created);
       return;
     }
 

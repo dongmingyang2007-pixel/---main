@@ -1,14 +1,16 @@
 "use client";
 
 import clsx from "clsx";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { Link, usePathname } from "@/i18n/navigation";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { routing } from "@/i18n/routing";
 
 interface NavItem {
   href: string;
@@ -169,26 +171,62 @@ const ICON_MAP: Record<string, () => JSX.Element> = {
 
 export function IconBar() {
   const pathname = usePathname();
+  const locale = useLocale();
   const t = useTranslations("console");
 
   const isActive = (href: string) => pathname.startsWith(href);
+  const shouldForceDocumentNavigation = (href: string) =>
+    ["/app/models", "/app/devices", "/app/settings"].includes(href);
+  const localizedHref = (href: string) =>
+    locale === routing.defaultLocale ? href : `/${locale}${href}`;
+  const handleDocumentNavigation = (
+    event: ReactMouseEvent<HTMLAnchorElement>,
+  ) => {
+    if (
+      event.defaultPrevented
+      || event.button !== 0
+      || event.metaKey
+      || event.ctrlKey
+      || event.shiftKey
+      || event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    window.location.assign(event.currentTarget.href);
+  };
 
   const renderItem = (item: NavItem) => {
     const IconComponent = ICON_MAP[item.key];
+    const commonProps = {
+      className: clsx(
+        "icon-bar-item",
+        isActive(item.href) && "is-active",
+      ),
+      "aria-label": t(item.key),
+      "aria-current": isActive(item.href) ? "page" : undefined,
+    } as const;
     return (
       <Tooltip key={item.href}>
         <TooltipTrigger asChild>
-          <Link
-            href={item.href}
-            className={clsx(
-              "icon-bar-item",
-              isActive(item.href) && "is-active",
-            )}
-            aria-label={t(item.key)}
-            aria-current={isActive(item.href) ? "page" : undefined}
-          >
-            {IconComponent && <IconComponent />}
-          </Link>
+          {shouldForceDocumentNavigation(item.href) ? (
+            <a
+              href={localizedHref(item.href)}
+              onClick={handleDocumentNavigation}
+              {...commonProps}
+            >
+              {IconComponent && <IconComponent />}
+            </a>
+          ) : (
+            <Link
+              href={item.href}
+              prefetch={false}
+              {...commonProps}
+            >
+              {IconComponent && <IconComponent />}
+            </Link>
+          )}
         </TooltipTrigger>
         <TooltipContent side="right" sideOffset={8} className="pointer-events-none">
           {t(item.key)}

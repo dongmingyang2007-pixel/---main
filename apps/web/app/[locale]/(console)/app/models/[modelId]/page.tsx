@@ -8,44 +8,18 @@ import { Link, useRouter } from "@/i18n/navigation";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
+import { normalizeCatalogModelDetail, type CatalogModelDetail } from "@/lib/model-catalog";
 import { getSafeNavigationPath } from "@/lib/security";
-
-interface CatalogModel {
-  id: string;
-  model_id: string;
-  display_name: string;
-  provider: string;
-  provider_display: string;
-  category: "llm" | "asr" | "tts" | "vision";
-  description: string;
-  capabilities: string[];
-  input_price: number;
-  output_price: number;
-  context_window: number;
-  max_output: number;
-  input_modalities: string[];
-  output_modalities: string[];
-  supports_function_calling: boolean;
-  supports_web_search: boolean;
-  supports_structured_output: boolean;
-  supports_cache: boolean;
-  batch_input_price?: number | null;
-  batch_output_price?: number | null;
-  cache_read_price?: number | null;
-  cache_write_price?: number | null;
-  price_unit: string;
-  price_note?: string | null;
-}
 
 type DetailState = {
   loading: boolean;
-  model: CatalogModel | null;
+  model: CatalogModelDetail | null;
   error: string;
 };
 
 type DetailAction =
   | { type: "request" }
-  | { type: "success"; model: CatalogModel }
+  | { type: "success"; model: CatalogModelDetail }
   | { type: "failure"; error: string };
 const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
 
@@ -133,7 +107,7 @@ function formatPriceUnit(unit: string, t: (key: string) => string): string {
   return t("priceUnit");
 }
 
-function formatPriceNote(model: CatalogModel, t: (key: string) => string): string {
+function formatPriceNote(model: CatalogModelDetail, t: (key: string) => string): string {
   if (model.price_unit === "characters") {
     return t("priceNoteCharacters");
   }
@@ -173,10 +147,10 @@ function ModelDetailPageContent() {
     if (!modelId) return;
     let cancelled = false;
     dispatch({ type: "request" });
-    apiGet<CatalogModel>(`/api/v1/models/catalog/${modelId}`)
+    apiGet<Record<string, unknown>>(`/api/v1/models/catalog/${modelId}`)
       .then((data) => {
         if (!cancelled) {
-          dispatch({ type: "success", model: data });
+          dispatch({ type: "success", model: normalizeCatalogModelDetail(data) });
         }
       })
       .catch((err: Error) => {

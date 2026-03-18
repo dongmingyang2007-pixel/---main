@@ -9,7 +9,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [dragActive, setDragActive] = useState(false);
-  const t = useTranslations("console-datasets");
+  const t = useTranslations("console-knowledge");
 
   const onUpload = async (file: File) => {
     setBusy(true);

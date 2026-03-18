@@ -27,7 +27,7 @@ from app.services.storage import (
     put_object_bytes,
 )
 from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
-from app.tasks.worker_tasks import cleanup_pending_upload_session, process_data_item
+from app.tasks.worker_tasks import cleanup_pending_upload_session, index_data_item, process_data_item
 
 
 router = APIRouter(prefix="/api/v1/uploads", tags=["uploads"])
@@ -48,6 +48,28 @@ def _upload_session_ttl_seconds(session: dict) -> int:
 def _is_completed_data_item(item: DataItem) -> bool:
     status = (item.meta_json or {}).get("upload_status")
     return status in {None, "completed"}
+
+
+def _run_or_enqueue_upload_followups(
+    *,
+    workspace_id: str,
+    project_id: str,
+    item: DataItem,
+) -> None:
+    followups = [
+        (process_data_item, (item.id,)),
+        (index_data_item, (workspace_id, project_id, item.id, item.object_key, item.filename)),
+    ]
+    if settings.env == "test":
+        for task, args in followups:
+            task(*args)
+        return
+
+    for task, args in followups:
+        try:
+            task.delay(*args)
+        except Exception:  # noqa: BLE001
+            task(*args)
 
 
 @router.post("/presign", response_model=UploadPresignResponse)
@@ -269,12 +291,11 @@ def complete_upload(
     )
     db.commit()
 
-    try:
-        if settings.env == "test":
-            raise RuntimeError("execute_inline_in_test")
-        process_data_item.delay(item.id)
-    except Exception:  # noqa: BLE001
-        process_data_item(item.id)
+    _run_or_enqueue_upload_followups(
+        workspace_id=workspace_id,
+        project_id=dataset.project_id,
+        item=item,
+    )
 
     runtime_state.delete(_upload_session_scope(payload.upload_id), "session")
     return {"ok": True}

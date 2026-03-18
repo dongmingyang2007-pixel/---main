@@ -198,8 +198,6 @@ def build_thin_surface_triangles(
     bottom_grid: list[list[np.ndarray]],
     *,
     cap_z_edges: bool = True,
-    cap_x_start: bool = True,
-    cap_x_end: bool = True,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     row_count = len(top_grid)
@@ -270,30 +268,28 @@ def build_thin_surface_triangles(
     end_top = top_grid[-1]
     end_bottom = bottom_grid[-1]
     for column_index in range(column_count - 1):
-        if cap_x_start:
-            triangles.extend(
-                oriented_quad_triangles(
-                    start_bottom[column_index],
-                    start_bottom[column_index + 1],
-                    start_top[column_index + 1],
-                    start_top[column_index],
-                    np.array([-1.0, 0.0, 0.0], dtype=float),
-                )
+        triangles.extend(
+            oriented_quad_triangles(
+                start_bottom[column_index],
+                start_bottom[column_index + 1],
+                start_top[column_index + 1],
+                start_top[column_index],
+                np.array([-1.0, 0.0, 0.0], dtype=float),
             )
-        if cap_x_end:
-            triangles.extend(
-                oriented_quad_triangles(
-                    end_top[column_index],
-                    end_top[column_index + 1],
-                    end_bottom[column_index + 1],
-                    end_bottom[column_index],
-                    np.array([1.0, 0.0, 0.0], dtype=float),
-                )
+        )
+        triangles.extend(
+            oriented_quad_triangles(
+                end_top[column_index],
+                end_top[column_index + 1],
+                end_bottom[column_index + 1],
+                end_bottom[column_index],
+                np.array([1.0, 0.0, 0.0], dtype=float),
             )
+        )
     return triangles
 
 
-def build_platform_surface_grids() -> tuple[list[list[np.ndarray]], list[list[np.ndarray]]]:
+def build_platform_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     platform_x_start = -0.0365
     progress_stations = np.linspace(0.0, 1.0, 9)
     span_stations = np.linspace(-1.0, 1.0, 15)
@@ -315,10 +311,10 @@ def build_platform_surface_grids() -> tuple[list[list[np.ndarray]], list[list[np
             )
         top_grid.append(top_row)
         bottom_grid.append(bottom_row)
-    return top_grid, bottom_grid
+    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=False)
 
 
-def build_arc_ramp_surface_grids() -> tuple[list[list[np.ndarray]], list[list[np.ndarray]]]:
+def build_arc_ramp_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     progress_stations = np.linspace(0.0, 1.0, 27)
     span_stations = np.linspace(-1.0, 1.0, 17)
     top_grid: list[list[np.ndarray]] = []
@@ -339,89 +335,7 @@ def build_arc_ramp_surface_grids() -> tuple[list[list[np.ndarray]], list[list[np
             )
         top_grid.append(top_row)
         bottom_grid.append(bottom_row)
-    return top_grid, bottom_grid
-
-
-def build_split_boundary_wall_triangles_product(
-    platform_top_row: list[np.ndarray],
-    platform_bottom_row: list[np.ndarray],
-    ramp_top_row: list[np.ndarray],
-    ramp_bottom_row: list[np.ndarray],
-) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-    column_count = len(platform_top_row)
-
-    for column_index in range(column_count - 1):
-        triangles.extend(
-            oriented_quad_triangles(
-                platform_top_row[column_index],
-                platform_top_row[column_index + 1],
-                ramp_top_row[column_index + 1],
-                ramp_top_row[column_index],
-                np.array([1.0, 0.0, 0.0], dtype=float),
-            )
-        )
-        triangles.extend(
-            oriented_quad_triangles(
-                ramp_bottom_row[column_index],
-                ramp_bottom_row[column_index + 1],
-                platform_bottom_row[column_index + 1],
-                platform_bottom_row[column_index],
-                np.array([-1.0, 0.0, 0.0], dtype=float),
-            )
-        )
-
-    triangles.extend(
-        oriented_quad_triangles(
-            platform_bottom_row[0],
-            platform_top_row[0],
-            ramp_top_row[0],
-            ramp_bottom_row[0],
-            np.array([0.0, 0.0, -1.0], dtype=float),
-        )
-    )
-    triangles.extend(
-        oriented_quad_triangles(
-            ramp_bottom_row[-1],
-            ramp_top_row[-1],
-            platform_top_row[-1],
-            platform_bottom_row[-1],
-            np.array([0.0, 0.0, 1.0], dtype=float),
-        )
-    )
-    return triangles
-
-
-def build_platform_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    platform_top_grid, platform_bottom_grid = build_platform_surface_grids()
-    ramp_top_grid, ramp_bottom_grid = build_arc_ramp_surface_grids()
-    triangles = build_thin_surface_triangles(
-        platform_top_grid,
-        platform_bottom_grid,
-        cap_z_edges=False,
-        cap_x_start=True,
-        cap_x_end=False,
-    )
-    triangles.extend(
-        build_split_boundary_wall_triangles_product(
-            platform_top_grid[-1],
-            platform_bottom_grid[-1],
-            ramp_top_grid[0],
-            ramp_bottom_grid[0],
-        )
-    )
-    return triangles
-
-
-def build_arc_ramp_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    top_grid, bottom_grid = build_arc_ramp_surface_grids()
-    return build_thin_surface_triangles(
-        top_grid,
-        bottom_grid,
-        cap_z_edges=False,
-        cap_x_start=False,
-        cap_x_end=True,
-    )
+    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=False)
 
 
 def append_sculpted_tray_mesh(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:

@@ -4,8 +4,35 @@ import { buildClientCookieAttributes } from "@/lib/security";
 
 const WORKSPACE_COOKIE_NAME = "mingrun_workspace_id";
 const LEGACY_WORKSPACE_COOKIE_NAME = "qihang_workspace_id";
+export const AUTH_SESSION_EXPIRED_EVENT = "mingrun:auth-session-expired";
 
 let cachedCsrfToken: string | null = null;
+let authSessionRedirectScheduled = false;
+
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    options: {
+      status: number;
+      code?: string;
+      details?: Record<string, unknown>;
+    },
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = options.status;
+    this.code = options.code;
+    this.details = options.details;
+  }
+}
+
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
 
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") {
@@ -38,6 +65,13 @@ function clearCachedSecurityState(): void {
   cachedCsrfToken = null;
 }
 
+function dispatchAuthSessionExpired(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT));
+}
+
 function isPublicMutation(path: string): boolean {
   return [
     "/api/v1/auth/login",
@@ -59,14 +93,73 @@ async function ensureCsrfToken(): Promise<string> {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    clearCachedSecurityState();
-    clearAuthState();
+    handleUnauthorizedSession();
   }
   if (!res.ok || !data?.csrf_token) {
     throw new Error(data?.error?.message || "无法获取安全令牌");
   }
   cachedCsrfToken = data.csrf_token as string;
   return cachedCsrfToken;
+}
+
+function getCurrentNextPath(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const { pathname, search, hash } = window.location;
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname === "/en/login" ||
+    pathname.startsWith("/en/login/") ||
+    pathname === "/register" ||
+    pathname.startsWith("/register/") ||
+    pathname === "/en/register" ||
+    pathname.startsWith("/en/register/")
+  ) {
+    return null;
+  }
+  return `${pathname}${search}${hash}`;
+}
+
+function getLocaleAwareLoginPath(nextPath?: string | null): string {
+  if (typeof window === "undefined") {
+    return "/login";
+  }
+  const basePath =
+    window.location.pathname === "/en" || window.location.pathname.startsWith("/en/")
+      ? "/en/login"
+      : "/login";
+  if (!nextPath) {
+    return basePath;
+  }
+  const params = new URLSearchParams();
+  params.set("next", nextPath);
+  return `${basePath}?${params.toString()}`;
+}
+
+function handleUnauthorizedSession(): void {
+  clearCachedSecurityState();
+  if (typeof window === "undefined") {
+    clearAuthState();
+    clearWorkspaceId();
+    return;
+  }
+
+  dispatchAuthSessionExpired();
+  if (authSessionRedirectScheduled) {
+    return;
+  }
+
+  authSessionRedirectScheduled = true;
+  const loginPath = getLocaleAwareLoginPath(getCurrentNextPath());
+
+  window.setTimeout(() => {
+    clearAuthState();
+    clearWorkspaceId();
+    authSessionRedirectScheduled = false;
+    window.location.href = loginPath;
+  }, 1200);
 }
 
 function buildHeaders(
@@ -94,13 +187,16 @@ async function parseResponse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      clearCachedSecurityState();
-      clearAuthState();
+      handleUnauthorizedSession();
     } else if (res.status === 403) {
       clearCachedSecurityState();
     }
     const errorMessage = data?.error?.message || `Request failed with status ${res.status}`;
-    throw new Error(errorMessage);
+    throw new ApiRequestError(errorMessage, {
+      status: res.status,
+      code: data?.error?.code,
+      details: data?.error?.details,
+    });
   }
   return data as T;
 }
@@ -223,15 +319,6 @@ export function persistWorkspaceId(workspaceId: string, authStateMaxAgeSeconds?:
 export function clearWorkspaceId(): void {
   clearCookie(WORKSPACE_COOKIE_NAME);
   clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
-}
-
-function getLocaleAwareLoginPath(): string {
-  if (typeof window === "undefined") {
-    return "/login";
-  }
-  return window.location.pathname === "/en" || window.location.pathname.startsWith("/en/")
-    ? "/en/login"
-    : "/login";
 }
 
 export async function logout(): Promise<void> {

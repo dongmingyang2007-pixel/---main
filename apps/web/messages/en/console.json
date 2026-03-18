@@ -29,6 +29,7 @@
   "statusbar.noProject": "No project selected",
   "statusbar.apiConnected": "API Connected",
   "cmd.placeholder": "Type a command or search\u2026",
+  "cmd.title": "Command palette",
   "cmd.empty": "No results found",
   "cmd.navigate": "Navigate",
   "cmd.actions": "Actions",

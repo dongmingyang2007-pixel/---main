@@ -11,6 +11,14 @@ import { useTranslations } from "next-intl";
 import * as d3 from "d3";
 import type { MemoryNode, MemoryEdge } from "@/hooks/useGraphData";
 import { apiPost } from "@/lib/api";
+import { useModal } from "@/components/ui/modal-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import GraphContextMenu from "./GraphContextMenu";
 import NodeDetail from "./NodeDetail";
 import GraphControls from "./GraphControls";
@@ -187,11 +195,49 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   });
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [semanticMatchIds, setSemanticMatchIds] = useState<Set<string> | null>(null);
+  const [createMemoryOpen, setCreateMemoryOpen] = useState(false);
+  const [createMemoryContent, setCreateMemoryContent] = useState("");
+  const [createMemoryCategory, setCreateMemoryCategory] = useState("");
+  const [creatingMemory, setCreatingMemory] = useState(false);
+
+  const modal = useModal();
 
   const searchQuery = externalSearchQuery ?? localSearch;
+  const addMemoryTitle = t("graph.addMemory");
   const centerNodeShortLabel = t("graph.centerNodeShort");
   const addMemoryPrompt = t("graph.addMemoryPrompt");
   const confirmDeleteMessage = t("graph.confirmDelete");
+
+  const openCreateMemoryDialog = useCallback(() => {
+    setCreateMemoryContent("");
+    setCreateMemoryCategory("");
+    setCreateMemoryOpen(true);
+  }, []);
+
+  const closeCreateMemoryDialog = useCallback(() => {
+    if (creatingMemory) {
+      return;
+    }
+    setCreateMemoryOpen(false);
+    setCreateMemoryContent("");
+    setCreateMemoryCategory("");
+  }, [creatingMemory]);
+
+  const handleCreateMemorySubmit = useCallback(async () => {
+    const content = createMemoryContent.trim();
+    if (!content || creatingMemory) {
+      return;
+    }
+    setCreatingMemory(true);
+    try {
+      await onCreateMemory(content, createMemoryCategory.trim() || undefined);
+      setCreateMemoryOpen(false);
+      setCreateMemoryContent("");
+      setCreateMemoryCategory("");
+    } finally {
+      setCreatingMemory(false);
+    }
+  }, [createMemoryCategory, createMemoryContent, creatingMemory, onCreateMemory]);
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
@@ -620,6 +666,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
     const sel = d3.select(canvas);
     sel.call(zoomBehavior);
+    // Disable D3's built-in dblclick zoom so our onDblClick handler fires instead
+    sel.on("dblclick.zoom", null);
 
     /* ── Initial transform: center in canvas ── */
     const rect = canvas.getBoundingClientRect();
@@ -817,10 +865,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
       if (!node) {
-        const content = window.prompt(addMemoryPrompt);
-        if (content) {
-          onCreateMemory(content);
-        }
+        openCreateMemoryDialog();
       }
     };
 
@@ -859,7 +904,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     // We intentionally exclude draw from deps to avoid re-creating the simulation
     // on every render. The draw function is captured by the tick callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addMemoryPrompt, centerNodeId, onCenterNodeClick, onCreateEdge, onCreateMemory, onNodeSelect, onUpdateMemory, simLinks, simNodes]);
+  }, [centerNodeId, onCenterNodeClick, onCreateEdge, onNodeSelect, onUpdateMemory, openCreateMemoryDialog, simLinks, simNodes]);
 
   /* ── Redraw when filters/search change ─────── */
 
@@ -961,10 +1006,25 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   /* ── Stats ──────────────────────────────────── */
 
   const fileCount = useMemo(
-    () => nodes.filter(isFileNode).length,
-    [nodes]
+    () =>
+      nodes.filter(
+        (node) =>
+          visibleNodeIds.has(node.id) &&
+          (!searchMatchIds || searchMatchIds.has(node.id)) &&
+          isFileNode(node),
+      ).length,
+    [nodes, searchMatchIds, visibleNodeIds],
   );
-  const memoryCount = nodes.length - fileCount;
+  const memoryCount = useMemo(
+    () =>
+      nodes.filter(
+        (node) =>
+          visibleNodeIds.has(node.id) &&
+          (!searchMatchIds || searchMatchIds.has(node.id)) &&
+          !isFileNode(node),
+      ).length,
+    [nodes, searchMatchIds, visibleNodeIds],
+  );
 
   /* ── Context menu actions ───────────────────── */
 
@@ -982,18 +1042,15 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         onPromoteMemory(id);
       },
       onDelete: (id: string) => {
-        if (window.confirm(confirmDeleteMessage)) {
-          onDeleteMemory(id);
-        }
+        void modal.confirm(confirmDeleteMessage).then((ok) => {
+          if (ok) onDeleteMemory(id);
+        });
       },
       onAddMemory: () => {
-        const content = window.prompt(addMemoryPrompt);
-        if (content) {
-          onCreateMemory(content);
-        }
+        openCreateMemoryDialog();
       },
     }),
-    [addMemoryPrompt, confirmDeleteMessage, onCreateMemory, onDeleteMemory, onNodeSelect, onPromoteMemory]
+    [confirmDeleteMessage, modal, onDeleteMemory, onNodeSelect, onPromoteMemory, openCreateMemoryDialog]
   );
 
   /* ── Render ─────────────────────────────────── */
@@ -1017,10 +1074,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         <GraphControls
           nodeCount={memoryCount}
           fileCount={fileCount}
-          onAdd={() => {
-            const content = window.prompt(addMemoryPrompt);
-            if (content) onCreateMemory(content);
-          }}
+          onAdd={openCreateMemoryDialog}
           searchQuery={searchQuery}
           onSearchChange={setLocalSearch}
           onZoomIn={handleZoomIn}
@@ -1055,6 +1109,77 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         onClose={() => setContextMenu((c) => ({ ...c, visible: false }))}
         actions={contextActions}
       />
+
+      <Dialog
+        open={createMemoryOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setCreateMemoryOpen(true);
+            return;
+          }
+          closeCreateMemoryDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>{addMemoryTitle}</DialogTitle>
+            <p className="text-sm text-muted-foreground">{addMemoryPrompt}</p>
+          </DialogHeader>
+
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCreateMemorySubmit();
+            }}
+          >
+            <div className="space-y-2">
+              <label className="graph-detail-label" htmlFor="memory-create-content">
+                {t("graph.contentLabel")}
+              </label>
+              <textarea
+                id="memory-create-content"
+                className="graph-detail-textarea"
+                value={createMemoryContent}
+                onChange={(event) => setCreateMemoryContent(event.target.value)}
+                rows={5}
+                autoFocus
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="graph-detail-label" htmlFor="memory-create-category">
+                {t("graph.category")}
+              </label>
+              <input
+                id="memory-create-category"
+                className="graph-detail-input"
+                value={createMemoryCategory}
+                onChange={(event) => setCreateMemoryCategory(event.target.value)}
+                type="text"
+              />
+            </div>
+
+            <DialogFooter>
+              <button
+                type="button"
+                className="graph-detail-btn"
+                onClick={closeCreateMemoryDialog}
+                disabled={creatingMemory}
+              >
+                {t("graph.cancel")}
+              </button>
+              <button
+                type="submit"
+                className="graph-detail-btn is-primary"
+                disabled={creatingMemory || createMemoryContent.trim().length === 0}
+              >
+                {creatingMemory ? "..." : t("graph.save")}
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

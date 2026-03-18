@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost } from "@/lib/api";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useProjectSelection } from "@/lib/useProjectSelection";
 
 type Dataset = { id: string; name: string; type: string; project_id: string; created_at: string };
@@ -34,6 +35,7 @@ export default function KnowledgePage() {
   };
 
   const { projectId, projects, selectProject } = useProjectSelection(loadDatasets);
+  const projectLabels = buildProjectDisplayMap(projects);
 
   const onCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -72,7 +74,7 @@ export default function KnowledgePage() {
                   >
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
-                        {project.name}
+                        {projectLabels.get(project.id) || project.name}
                       </option>
                     ))}
                   </select>

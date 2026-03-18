@@ -9,24 +9,29 @@ import { ConsoleShell } from "@/components/console/ConsoleShell";
 import { MobileTabBar } from "@/components/console/MobileTabBar";
 import { CommandPalette } from "@/components/console/CommandPalette";
 import { Toaster } from "@/components/ui/toaster";
+import { ModalProvider } from "@/components/ui/modal-dialog";
+import { AuthSessionGuard } from "@/components/AuthSessionGuard";
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProjectProvider>
       <DevModeProvider>
         <MobileMenuProvider>
-          <div data-theme="console">
-            <UnifiedHeader />
-            <div className="console-layout-shell">
-              <ConsoleShell>
-                {children}
-              </ConsoleShell>
+          <ModalProvider>
+            <div data-theme="console">
+              <UnifiedHeader />
+              <div className="console-layout-shell">
+                <ConsoleShell>
+                  {children}
+                </ConsoleShell>
+              </div>
+              <UnifiedMobileNav mode="console" />
+              <MobileTabBar />
+              <CommandPalette />
+              <AuthSessionGuard />
+              <Toaster />
             </div>
-            <UnifiedMobileNav mode="console" />
-            <MobileTabBar />
-            <CommandPalette />
-            <Toaster />
-          </div>
+          </ModalProvider>
         </MobileMenuProvider>
       </DevModeProvider>
     </ProjectProvider>

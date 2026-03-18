@@ -1,5 +1,5 @@
+from sqlalchemy import bindparam, text as sql_text
 from sqlalchemy.orm import Session
-from sqlalchemy import text as sql_text
 from uuid import uuid4
 
 from app.services.dashscope_client import create_embedding
@@ -90,3 +90,180 @@ def delete_embeddings_for_memory(db: Session, memory_id: str) -> None:
         {"memory_id": memory_id},
     )
     db.commit()
+
+
+def delete_embeddings_for_data_item(db: Session, data_item_id: str) -> None:
+    """Delete all embeddings associated with a data item."""
+    db.execute(
+        sql_text("DELETE FROM embeddings WHERE data_item_id = :data_item_id"),
+        {"data_item_id": data_item_id},
+    )
+    db.commit()
+
+
+def find_related_memories_for_data_item(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    data_item_id: str,
+    limit: int = 5,
+    min_score: float = 0.55,
+) -> list[dict]:
+    """Find permanent public memories that are semantically close to a data item."""
+    try:
+        rows = db.execute(
+            sql_text("""
+                SELECT related.memory_id, MAX(1 - (related.vector <=> target.vector)) AS score
+                FROM embeddings AS target
+                JOIN embeddings AS related
+                  ON related.workspace_id = target.workspace_id
+                 AND related.project_id = target.project_id
+                 AND related.memory_id IS NOT NULL
+                JOIN memories ON memories.id = related.memory_id
+                WHERE target.workspace_id = :workspace_id
+                  AND target.project_id = :project_id
+                  AND target.data_item_id = :data_item_id
+                  AND memories.workspace_id = :workspace_id
+                  AND memories.project_id = :project_id
+                  AND memories.type = 'permanent'
+                  AND COALESCE(memories.metadata_json ->> 'visibility', '') != 'private'
+                GROUP BY related.memory_id
+                HAVING MAX(1 - (related.vector <=> target.vector)) >= :min_score
+                ORDER BY score DESC
+                LIMIT :limit
+            """),
+            {
+                "workspace_id": workspace_id,
+                "project_id": project_id,
+                "data_item_id": data_item_id,
+                "min_score": min_score,
+                "limit": limit,
+            },
+        ).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+
+    return [
+        {
+            "memory_id": row[0],
+            "score": float(row[1]) if row[1] is not None else 0.0,
+        }
+        for row in rows
+        if row[0]
+    ]
+
+
+def find_related_data_items_for_memory(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    memory_id: str,
+    limit: int = 5,
+    min_score: float = 0.55,
+) -> list[dict]:
+    """Find completed data items that are semantically close to a memory."""
+    try:
+        rows = db.execute(
+            sql_text("""
+                SELECT related.data_item_id, MAX(1 - (source.vector <=> related.vector)) AS score
+                FROM embeddings AS source
+                JOIN embeddings AS related
+                  ON related.workspace_id = source.workspace_id
+                 AND related.project_id = source.project_id
+                 AND related.data_item_id IS NOT NULL
+                JOIN data_items ON data_items.id = related.data_item_id
+                JOIN datasets ON datasets.id = data_items.dataset_id
+                JOIN projects ON projects.id = datasets.project_id
+                WHERE source.workspace_id = :workspace_id
+                  AND source.project_id = :project_id
+                  AND source.memory_id = :memory_id
+                  AND data_items.deleted_at IS NULL
+                  AND datasets.deleted_at IS NULL
+                  AND projects.deleted_at IS NULL
+                  AND projects.workspace_id = :workspace_id
+                  AND COALESCE(data_items.meta_json ->> 'upload_status', 'completed') = 'completed'
+                GROUP BY related.data_item_id
+                HAVING MAX(1 - (source.vector <=> related.vector)) >= :min_score
+                ORDER BY score DESC
+                LIMIT :limit
+            """),
+            {
+                "workspace_id": workspace_id,
+                "project_id": project_id,
+                "memory_id": memory_id,
+                "min_score": min_score,
+                "limit": limit,
+            },
+        ).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+
+    return [
+        {
+            "data_item_id": row[0],
+            "score": float(row[1]) if row[1] is not None else 0.0,
+        }
+        for row in rows
+        if row[0]
+    ]
+
+
+async def search_data_item_chunks(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    query: str,
+    data_item_ids: list[str],
+    limit: int = 5,
+) -> list[dict]:
+    """Search only within the specified data items and return the best matching chunks."""
+    if not data_item_ids:
+        return []
+
+    query_vector = await create_embedding(query)
+    statement = sql_text("""
+        SELECT embeddings.id, embeddings.chunk_text, embeddings.data_item_id, data_items.filename,
+               1 - (embeddings.vector <=> :query_vector::vector) AS score
+        FROM embeddings
+        JOIN data_items ON data_items.id = embeddings.data_item_id
+        JOIN datasets ON datasets.id = data_items.dataset_id
+        JOIN projects ON projects.id = datasets.project_id
+        WHERE embeddings.workspace_id = :workspace_id
+          AND embeddings.project_id = :project_id
+          AND embeddings.data_item_id IN :data_item_ids
+          AND data_items.deleted_at IS NULL
+          AND datasets.deleted_at IS NULL
+          AND projects.deleted_at IS NULL
+          AND projects.workspace_id = :workspace_id
+          AND COALESCE(data_items.meta_json ->> 'upload_status', 'completed') = 'completed'
+        ORDER BY embeddings.vector <=> :query_vector::vector
+        LIMIT :limit
+    """).bindparams(bindparam("data_item_ids", expanding=True))
+
+    try:
+        rows = db.execute(
+            statement,
+            {
+                "workspace_id": workspace_id,
+                "project_id": project_id,
+                "query_vector": str(query_vector),
+                "data_item_ids": data_item_ids,
+                "limit": limit,
+            },
+        ).fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+
+    return [
+        {
+            "id": row[0],
+            "chunk_text": row[1],
+            "data_item_id": row[2],
+            "filename": row[3],
+            "score": float(row[4]) if row[4] is not None else 0.0,
+        }
+        for row in rows
+    ]

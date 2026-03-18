@@ -33,6 +33,7 @@ from app.schemas.memory import (
     MemoryUpdate,
 )
 from app.services.embedding import embed_and_store, search_similar
+from app.services.memory_file_context import sync_data_item_links_for_memory
 from app.services.memory_visibility import (
     build_private_memory_metadata,
     is_private_memory,
@@ -247,6 +248,8 @@ def _sync_memory_embedding(memory: Memory, db: Session) -> None:
                 chunk_text=memory.content,
             )
         )
+        if memory.type == "permanent" and not is_private_memory(memory):
+            sync_data_item_links_for_memory(db, memory=memory)
     except Exception:  # noqa: BLE001
         db.rollback()
 

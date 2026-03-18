@@ -68,7 +68,7 @@
     "noMetrics": "暂无指标数据。"
   },
   "graph": {
-    "tab": "记忆图谱",
+    "tab": "🕸 记忆图谱",
     "addMemory": "添加记忆",
     "search": "搜索记忆…",
     "stats": "共 {count} 个记忆",
@@ -138,7 +138,7 @@
     "disconnect": "断开"
   },
   "config": {
-    "tab": "配置"
+    "tab": "⚙️ 配置"
   },
   "canvas": {
     "model": "基座模型",
@@ -150,6 +150,10 @@
     "edit": "编辑",
     "save": "保存",
     "add": "添加",
+    "promptLabel": "系统提示词",
+    "personalityUnset": "暂未设定",
+    "knowledgeItems": "{count} 条资料",
+    "skillParameters": "技能参数（JSON）",
     "expandAdvanced": "展开高级选项",
     "collapseAdvanced": "收起高级选项",
     "tryChat": "试用对话",

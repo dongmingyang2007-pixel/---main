@@ -2,10 +2,12 @@
   "title": "Chat Debug",
   "description": "Test conversations with your AI assistants",
   "emptyHint": "Select an AI assistant to start testing",
+  "emptyConversationHint": "New conversation created. Send the first message to begin testing.",
   "inputPlaceholder": "Type a message…",
   "send": "Send",
   "mockNotice": "Responses are simulated. Real inference will be available after backend integration.",
   "newConversation": "New Conversation",
+  "creatingConversation": "Creating...",
   "deleteConversation": "Delete Conversation",
   "selectAssistant": "Select AI Assistant",
   "noConversations": "No conversations yet. Create one below.",
@@ -14,5 +16,11 @@
   "voiceRecording": "Recording... release to send",
   "voiceSending": "Transcribing...",
   "voicePlay": "Play audio",
-  "micPermissionDenied": "Microphone permission denied"
+  "micPermissionDenied": "Microphone permission denied",
+  "errors": {
+    "generic": "Sorry, something went wrong. Please try again.",
+    "inferenceTimeout": "The AI response timed out. Please try again shortly.",
+    "modelUnavailable": "The model service is temporarily unavailable. Please try again shortly.",
+    "voiceFailed": "Voice processing failed. Please try again."
+  }
 }

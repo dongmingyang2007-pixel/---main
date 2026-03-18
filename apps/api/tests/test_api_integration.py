@@ -37,7 +37,9 @@ importlib.reload(main_module)
 
 import app.routers.auth as auth_router
 import app.routers.chat as chat_router
+import app.routers.memory as memory_router
 import app.routers.uploads as uploads_router
+import app.services.memory_file_context as memory_file_context_service
 import app.services.orchestrator as orchestrator_service
 from app.core.config import settings
 from app.db.base import Base
@@ -617,6 +619,39 @@ def test_upload_complete_triggers_processing() -> None:
     assert item["preview_url"]
     assert item["download_url"]
     assert "thumbnail_object_key" not in item["meta_json"]
+
+
+def test_upload_complete_triggers_processing_and_indexing_followups(monkeypatch) -> None:
+    class FakeTask:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple]] = []
+
+        def __call__(self, *args):
+            self.calls.append(("call", args))
+
+        def delay(self, *args):
+            self.calls.append(("delay", args))
+
+    fake_process = FakeTask()
+    fake_index = FakeTask()
+    monkeypatch.setattr(uploads_router, "process_data_item", fake_process)
+    monkeypatch.setattr(uploads_router, "index_data_item", fake_index)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "followup@example.com", "Followup User")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Followup Project")
+    dataset = create_dataset(client, project["id"], "Followup Dataset")
+
+    data_item_id = upload_item(client, dataset["id"], "followup.pdf")
+
+    with SessionLocal() as db:
+        item = db.get(DataItem, data_item_id)
+        assert item is not None
+        assert fake_process.calls == [("call", (data_item_id,))]
+        assert fake_index.calls == [
+            ("call", (workspace_id, project["id"], data_item_id, item.object_key, item.filename))
+        ]
 
 
 def test_upload_is_hidden_until_complete() -> None:
@@ -1529,6 +1564,90 @@ def test_memory_file_attach_and_detach_refreshes_detail() -> None:
     assert refreshed.json()["files"] == []
 
 
+def test_sync_memory_links_for_data_item_creates_only_missing_links(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-link@example.com", "Memory Link")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Link Project")
+    dataset = create_dataset(client, project["id"], "Memory Link Dataset")
+    data_item_id = upload_item(client, dataset["id"], "memory-link.txt")
+
+    memory_a = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "心理学"},
+        headers=csrf_headers(client),
+    )
+    assert memory_a.status_code == 200
+    memory_b = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "医生"},
+        headers=csrf_headers(client),
+    )
+    assert memory_b.status_code == 200
+
+    with SessionLocal() as db:
+        db.add(MemoryFile(memory_id=memory_a.json()["id"], data_item_id=data_item_id))
+        db.commit()
+
+    monkeypatch.setattr(
+        memory_file_context_service,
+        "find_related_memories_for_data_item",
+        lambda *args, **kwargs: [
+            {"memory_id": memory_a.json()["id"], "score": 0.95},
+            {"memory_id": memory_b.json()["id"], "score": 0.91},
+        ],
+    )
+
+    with SessionLocal() as db:
+        created = memory_file_context_service.sync_memory_links_for_data_item(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            data_item_id=data_item_id,
+        )
+        assert created == [memory_b.json()["id"]]
+
+        links = {
+            (memory_id, item_id)
+            for memory_id, item_id in db.query(MemoryFile.memory_id, MemoryFile.data_item_id)
+            .filter(MemoryFile.data_item_id == data_item_id)
+            .all()
+        }
+        assert links == {
+            (memory_a.json()["id"], data_item_id),
+            (memory_b.json()["id"], data_item_id),
+        }
+
+
+def test_create_memory_triggers_auto_linking_for_existing_files(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-auto@example.com", "Memory Auto")
+    project = create_project(client, "Memory Auto Project")
+
+    calls: dict[str, str] = {}
+
+    async def fake_embed_and_store(*args, **kwargs) -> str:
+        calls["embedded_memory_id"] = kwargs["memory_id"]
+        return "embedding-1"
+
+    def fake_sync_data_item_links_for_memory(db, *, memory, **kwargs) -> list[str]:
+        calls["linked_memory_id"] = memory.id
+        return ["data-item-1"]
+
+    monkeypatch.setattr(memory_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(memory_router, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(memory_router, "sync_data_item_links_for_memory", fake_sync_data_item_links_for_memory)
+
+    created = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "与知识库自动关联"},
+        headers=csrf_headers(client),
+    )
+    assert created.status_code == 200
+    assert calls["embedded_memory_id"] == created.json()["id"]
+    assert calls["linked_memory_id"] == created.json()["id"]
+
+
 def test_memory_patch_does_not_allow_direct_type_mutation() -> None:
     client = TestClient(main_module.app)
     register_user(client, "memory-type@example.com", "Memory Type")
@@ -2186,3 +2305,78 @@ def test_orchestrator_filters_private_memory_embeddings_from_prompt(monkeypatch)
 
     assert result == "ok"
     assert "私有事实-不要进入别人的prompt" not in captured["system_prompt"]
+
+
+def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "linked-rag@example.com", "Linked Rag")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Linked Rag Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Linked Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    memory = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "心理学"},
+        headers=csrf_headers(client),
+    )
+    assert memory.status_code == 200
+
+    captured: dict[str, str] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return [
+            {
+                "id": "embedding-memory-1",
+                "chunk_text": "心理学",
+                "memory_id": memory.json()["id"],
+                "data_item_id": None,
+                "score": 0.98,
+            }
+        ]
+
+    async def fake_load_linked_file_chunks_for_memories(*args, **kwargs) -> list[dict]:
+        return [
+            {
+                "id": "chunk-1",
+                "chunk_text": "文件里提到：认知行为疗法适用于焦虑干预。",
+                "data_item_id": "data-item-1",
+                "filename": "心理学手册.pdf",
+                "score": 0.91,
+                "memory_ids": [memory.json()["id"]],
+            }
+        ]
+
+    async def fake_chat_completion(messages, model=None):
+        captured["system_prompt"] = messages[0]["content"]
+        return "ok"
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "load_linked_file_chunks_for_memories",
+        fake_load_linked_file_chunks_for_memories,
+    )
+    monkeypatch.setattr(orchestrator_service, "chat_completion", fake_chat_completion)
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="请结合心理学资料回答",
+                recent_messages=[],
+            )
+        )
+
+    assert result == "ok"
+    assert "与当前相关记忆直接关联的资料摘录" in captured["system_prompt"]
+    assert "心理学手册.pdf" in captured["system_prompt"]
+    assert "认知行为疗法适用于焦虑干预" in captured["system_prompt"]
