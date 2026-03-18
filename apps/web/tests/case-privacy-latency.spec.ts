@@ -1,8 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { ViewerWindow } from "./helpers/viewer-runtime";
+import {
+  demoViewerGetState,
+  demoViewerSetState,
+  expectDemoViewerVisible,
+  getDemoViewerFrame,
+  postToDemoViewer,
+  waitForDemoConnected,
+} from "./helpers/demo-viewer";
 
 const DEMO_PATH = "/demo";
-const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
+const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100";
 
 type ViewerState = {
   camera_power_hw?: boolean;
@@ -17,79 +25,20 @@ type ViewerState = {
   e2e_ms?: number;
 };
 
-async function getViewerFrame(page: Page) {
-  const iframe = await page.$(VIEWER_IFRAME);
-  if (!iframe) return null;
-  return iframe.contentFrame();
-}
-
-async function waitForConnected(page: Page, timeout = 8000) {
-  await expect
-    .poll(async () => {
-      return page.evaluate(() => {
-        const text = document.body.innerText;
-        const status = (text.match(/连接状态：(连接中|已连接|降级连接|连接超时)/) || [])[1] || "";
-        const commandCount = Number((text.match(/可用命令数：(\d+)/) || [])[1] || "0");
-        return status === "已连接" && commandCount > 0;
-      });
-    }, { timeout })
-    .toBeTruthy();
-}
-
 async function viewerGetState(page: Page): Promise<ViewerState> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
-    if (!frame) {
-      await page.waitForTimeout(80);
-      continue;
-    }
-    try {
-      return await frame.evaluate(() => {
-        const win = window as unknown as ViewerWindow;
-        return (win?.QIHANG_MODEL?.getState?.() || {}) as ViewerState;
-      });
-    } catch {
-      await page.waitForTimeout(80);
-    }
-  }
-  return {};
+  return (await demoViewerGetState(page)) as ViewerState;
 }
 
 async function viewerSetState(page: Page, patch: Record<string, unknown>): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
-    if (!frame) {
-      await page.waitForTimeout(80);
-      continue;
-    }
-    try {
-      await frame.evaluate((statePatch) => {
-        const win = window as unknown as ViewerWindow;
-        win?.QIHANG_MODEL?.setState?.(statePatch);
-      }, patch);
-      return;
-    } catch {
-      await page.waitForTimeout(80);
-    }
-  }
+  await demoViewerSetState(page, patch);
 }
 
 async function postCaptureEventFromHost(page: Page, payload: Record<string, unknown>): Promise<void> {
-  await page.evaluate((eventPayload) => {
-    const iframe = document.querySelector('iframe[title="MingRun Demo Model"]') as HTMLIFrameElement | null;
-    iframe?.contentWindow?.postMessage(
-      {
-        source: "qihang-web",
-        type: "qihang:model:capture-event",
-        payload: eventPayload,
-      },
-      window.location.origin,
-    );
-  }, payload);
+  await postToDemoViewer(page, "qihang:model:capture-event", payload);
 }
 
 async function setPocketPose(page: Page): Promise<void> {
-  const frame = await getViewerFrame(page);
+  const frame = await getDemoViewerFrame(page);
   expect(frame).not.toBeNull();
   await frame!.evaluate(() => {
     const dbg = (window as unknown as ViewerWindow).__QIHANG_DEBUG;
@@ -102,8 +51,8 @@ async function setPocketPose(page: Page): Promise<void> {
 
 test("privacy lock blocks camera power even when capture is requested", async ({ page }) => {
   await page.goto(DEMO_PATH);
-  await expect(page.locator(VIEWER_IFRAME)).toBeVisible();
-  await waitForConnected(page, 8000);
+  await expectDemoViewerVisible(page);
+  await waitForDemoConnected(page, 8000);
 
   await viewerSetState(page, {
     isOpen: true,
@@ -139,8 +88,8 @@ test("privacy lock blocks camera power even when capture is requested", async ({
 
 test("capture indicator remains on whenever camera power is on", async ({ page }) => {
   await page.goto(DEMO_PATH);
-  await expect(page.locator(VIEWER_IFRAME)).toBeVisible();
-  await waitForConnected(page, 8000);
+  await expectDemoViewerVisible(page);
+  await waitForDemoConnected(page, 8000);
 
   await viewerSetState(page, {
     isOpen: true,
@@ -179,8 +128,8 @@ test("capture indicator remains on whenever camera power is on", async ({ page }
 
 test("pocket guard state is raised and blocked reason is explicit", async ({ page }) => {
   await page.goto(DEMO_PATH);
-  await expect(page.locator(VIEWER_IFRAME)).toBeVisible();
-  await waitForConnected(page, 8000);
+  await expectDemoViewerVisible(page);
+  await waitForDemoConnected(page, 8000);
 
   await viewerSetState(page, {
     isOpen: true,
@@ -227,7 +176,7 @@ test("office-mode inference emits latency telemetry and meets e2e target", async
       body: JSON.stringify({
         request_id: "req-e2e-demo-upload",
         upload_id: "upload-e2e-demo-upload",
-        put_url: "http://localhost:3000/mock-upload",
+        put_url: `${APP_ORIGIN}/mock-upload`,
         headers: {},
       }),
     });
@@ -255,8 +204,8 @@ test("office-mode inference emits latency telemetry and meets e2e target", async
   });
 
   await page.goto(DEMO_PATH);
-  await expect(page.locator(VIEWER_IFRAME)).toBeVisible();
-  await waitForConnected(page, 8000);
+  await expectDemoViewerVisible(page);
+  await waitForDemoConnected(page, 8000);
 
   await viewerSetState(page, {
     case_mode: "office_mode",
@@ -271,13 +220,15 @@ test("office-mode inference emits latency telemetry and meets e2e target", async
     "base64",
   );
 
-  await page.setInputFiles('input[type="file"]', {
+  await page.getByLabel("上传图片").setInputFiles({
     name: "demo-input.png",
     mimeType: "image/png",
     buffer: tinyPng,
   });
 
-  await page.getByRole("button", { name: "运行推理" }).click();
+  await expect(page.getByText("已选择图片：demo-input.png")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: "开始推理" })).toBeEnabled();
+  await page.getByRole("button", { name: "开始推理" }).click();
 
   await expect(page.getByText(/request_id=req-e2e-privacy-latency/)).toBeVisible({ timeout: 8000 });
 

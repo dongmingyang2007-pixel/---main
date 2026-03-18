@@ -3,80 +3,36 @@ import type {
   ViewerObject3D,
   ViewerWindow,
 } from "./helpers/viewer-runtime";
+import {
+  demoViewerCommand,
+  demoViewerGetState,
+  demoViewerSetState,
+  expectDemoViewerVisible,
+  getDemoViewerFrame,
+} from "./helpers/demo-viewer";
 
-const VIEWER_IFRAME = 'iframe[title="MingRun Demo Model"]';
-const TARGET_REV = "20260307-tail-pivot-v37-glb-earbuds-symmetric-inspectfix";
+const TARGET_REV = "20260308-tail-pivot-v51-device-scale";
 
 test.use({ viewport: { width: 1536, height: 960 } });
 
 type ViewerState = Record<string, unknown>;
 
-async function getViewerFrame(page: Page) {
-  const iframe = await page.$(VIEWER_IFRAME);
-  if (!iframe) return null;
-  return iframe.contentFrame();
-}
-
 async function viewerGetState(page: Page): Promise<ViewerState | null> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
-    if (!frame) {
-      await page.waitForTimeout(80);
-      continue;
-    }
-    try {
-      return await frame.evaluate(() => {
-        const win = window as unknown as ViewerWindow;
-        return win?.QIHANG_MODEL?.getState?.() || null;
-      });
-    } catch {
-      await page.waitForTimeout(80);
-    }
-  }
-  return null;
+  const state = await demoViewerGetState(page);
+  return Object.keys(state).length ? state : null;
 }
 
 async function viewerSetState(page: Page, patch: Record<string, unknown>): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
-    if (!frame) {
-      await page.waitForTimeout(80);
-      continue;
-    }
-    try {
-      await frame.evaluate((statePatch) => {
-        const win = window as unknown as ViewerWindow;
-        win?.QIHANG_MODEL?.setState?.(statePatch);
-      }, patch);
-      return;
-    } catch {
-      await page.waitForTimeout(80);
-    }
-  }
+  await demoViewerSetState(page, patch);
 }
 
 async function viewerCommand(page: Page, name: string): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
-    if (!frame) {
-      await page.waitForTimeout(80);
-      continue;
-    }
-    try {
-      await frame.evaluate((commandName) => {
-        const win = window as unknown as ViewerWindow;
-        win?.QIHANG_MODEL?.command?.(commandName);
-      }, name);
-      return;
-    } catch {
-      await page.waitForTimeout(80);
-    }
-  }
+  await demoViewerCommand(page, name);
 }
 
 async function viewerProbeVisibleCount(page: Page): Promise<number> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
+    const frame = await getDemoViewerFrame(page);
     if (!frame) {
       await page.waitForTimeout(80);
       continue;
@@ -103,7 +59,7 @@ async function viewerProbeVisibleCount(page: Page): Promise<number> {
 
 async function viewerPivotHoleAxisDistanceMm(page: Page): Promise<number> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
+    const frame = await getDemoViewerFrame(page);
     if (!frame) {
       await page.waitForTimeout(80);
       continue;
@@ -132,7 +88,7 @@ async function viewerPivotHoleAxisDistanceMm(page: Page): Promise<number> {
 
 async function viewerCenterOffsetMm(page: Page): Promise<number> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const frame = await getViewerFrame(page);
+    const frame = await getDemoViewerFrame(page);
     if (!frame) {
       await page.waitForTimeout(80);
       continue;
@@ -167,7 +123,7 @@ async function waitForPivotState(page: Page, expected: "open" | "closed", timeou
 test("viewer v2 pivot dynamics and probe stability regression", async ({ page }) => {
   test.setTimeout(140_000);
   await page.goto("/demo");
-  await expect(page.locator(VIEWER_IFRAME)).toBeVisible();
+  await expectDemoViewerVisible(page);
 
   await expect
     .poll(async () => String((await viewerGetState(page))?.mech_revision || ""), { timeout: 45_000 })

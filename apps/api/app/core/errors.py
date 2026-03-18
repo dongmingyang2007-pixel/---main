@@ -23,16 +23,21 @@ def build_error_response(
     details: dict[str, Any] | None = None,
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "")
+    payload = {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details or {},
+            "request_id": request_id,
+        },
+        "detail": message,
+    }
+    retry_after = (details or {}).get("retry_after")
+    if retry_after is not None:
+        payload["retry_after"] = retry_after
     return JSONResponse(
         status_code=status_code,
-        content={
-            "error": {
-                "code": code,
-                "message": message,
-                "details": details or {},
-                "request_id": request_id,
-            }
-        },
+        content=payload,
     )
 
 

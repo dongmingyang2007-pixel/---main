@@ -1,14 +1,17 @@
 "use client";
 
 import { Link, useRouter } from "@/i18n/navigation";
-import { useRef, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useRef, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { gsap } from "@/lib/gsap-register";
 
 import { apiPost, persistWorkspaceId } from "@/lib/api";
+import { getSafeNavigationPath } from "@/lib/security";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -16,6 +19,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);
   const t = useTranslations("auth");
+  const nextPath = getSafeNavigationPath(searchParams.get("next"));
 
   useEffect(() => {
     const el = sectionRef.current;
@@ -56,7 +60,7 @@ export default function LoginPage() {
                 { email, password },
               );
               persistWorkspaceId(auth.workspace.id, auth.access_token_expires_in_seconds);
-              router.push("/app");
+              router.push(nextPath || "/app");
               router.refresh();
             } catch (err) {
               setError(err instanceof Error ? err.message : t("login.error"));
@@ -141,5 +145,13 @@ export default function LoginPage() {
         </div>
       </div>
     </section>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
   );
 }

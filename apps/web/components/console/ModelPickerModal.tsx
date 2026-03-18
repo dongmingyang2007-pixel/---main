@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useReducer } from "react";
+import { useEffect, useMemo, useReducer } from "react";
 import { useTranslations } from "next-intl";
-import { Link } from "@/i18n/navigation";
+import { Link, usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
 
 interface CatalogModel {
@@ -51,12 +51,26 @@ function getProviderGradient(provider: string): string {
   return "linear-gradient(135deg, #6b7280, #9ca3af)";
 }
 
+function formatPrice(price: number, t: (key: string) => string): string {
+  if (price <= 0) return t("free");
+  const formatted = price.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  return `¥${formatted}`;
+}
+
 const CATEGORY_LABEL_KEYS: Record<string, string> = {
   llm: "pipelineLlm",
   asr: "pipelineAsr",
   tts: "pipelineTts",
   vision: "pipelineVision",
 };
+const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
+
+interface PendingModelSelection {
+  from: string;
+  category: "llm" | "asr" | "tts" | "vision";
+  modelId: string;
+  displayName: string;
+}
 
 function pickerReducer(state: PickerState, action: PickerAction): PickerState {
   switch (action.type) {
@@ -79,10 +93,26 @@ export function ModelPickerModal({
   onSelect,
 }: ModelPickerModalProps) {
   const t = useTranslations("console-models-v2");
+  const pathname = usePathname();
   const [{ loading, models }, dispatch] = useReducer(pickerReducer, {
     loading: false,
     models: [],
   });
+
+  const marketplaceHref = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("picker", "1");
+    params.set("category", category);
+    if (currentModelId) {
+      params.set("current_model_id", currentModelId);
+    }
+    const from =
+      typeof window === "undefined"
+        ? pathname
+        : `${window.location.pathname}${window.location.search}`;
+    params.set("from", from || pathname);
+    return `/app/models?${params.toString()}`;
+  }, [category, currentModelId, pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +136,32 @@ export function ModelPickerModal({
       cancelled = true;
     };
   }, [open, category]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rawPending = window.sessionStorage.getItem(MODEL_PICKER_SELECTION_KEY);
+    if (!rawPending) return;
+
+    let pending: PendingModelSelection | null = null;
+    try {
+      pending = JSON.parse(rawPending) as PendingModelSelection;
+    } catch {
+      window.sessionStorage.removeItem(MODEL_PICKER_SELECTION_KEY);
+      return;
+    }
+    if (!pending) return;
+
+    const currentPath = window.location.pathname;
+    const expectedPath = (pending.from || "").split("?")[0];
+    if (!expectedPath || expectedPath !== currentPath) return;
+    if (pending.category !== category) return;
+
+    window.sessionStorage.removeItem(MODEL_PICKER_SELECTION_KEY);
+    onSelect(pending.modelId, pending.displayName);
+    if (open) {
+      onClose();
+    }
+  }, [category, onClose, onSelect, open]);
 
   if (!open) return null;
 
@@ -153,7 +209,7 @@ export function ModelPickerModal({
                     <div className="model-picker-item-footer">
                       <span className="marketplace-card-price">
                         {model.input_price > 0 || model.output_price > 0
-                          ? `¥${model.input_price.toFixed(2)} / ¥${model.output_price.toFixed(2)} ${t("priceUnit")}`
+                          ? `${formatPrice(model.input_price, t)} / ${formatPrice(model.output_price, t)} ${t("priceUnit")}`
                           : t("free")}
                       </span>
                       <button
@@ -171,7 +227,7 @@ export function ModelPickerModal({
         </div>
 
         <div className="model-picker-footer">
-          <Link href="/app/models" className="model-picker-link" onClick={onClose}>
+          <Link href={marketplaceHref} className="model-picker-link" onClick={onClose}>
             {t("pickerViewAll")}
           </Link>
         </div>

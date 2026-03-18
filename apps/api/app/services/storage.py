@@ -14,6 +14,9 @@ from botocore.exceptions import ClientError
 from app.core.config import settings
 
 
+POST_UPLOAD_BODY_OVERHEAD_BYTES = 64 * 1024
+
+
 @lru_cache(maxsize=1)
 def get_s3_client() -> BaseClient:
     return boto3.client(
@@ -97,6 +100,28 @@ def create_presigned_put(
         ExpiresIn=expires_seconds or settings.s3_presign_expire_seconds,
     )
     return put_url, {"Content-Type": media_type}
+
+
+def create_presigned_post(
+    *,
+    bucket_name: str,
+    object_key: str,
+    media_type: str,
+    max_bytes: int,
+    expires_seconds: int | None = None,
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    client = get_s3_presign_client()
+    post = client.generate_presigned_post(
+        Bucket=bucket_name,
+        Key=object_key,
+        Fields={"Content-Type": media_type},
+        Conditions=[
+            {"Content-Type": media_type},
+            ["content-length-range", 1, max_bytes + POST_UPLOAD_BODY_OVERHEAD_BYTES],
+        ],
+        ExpiresIn=expires_seconds or settings.s3_presign_expire_seconds,
+    )
+    return post["url"], dict(post["fields"]), {}
 
 
 def create_presigned_get(

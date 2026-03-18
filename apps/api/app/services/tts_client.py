@@ -4,6 +4,7 @@ import json
 import httpx
 import websockets
 from app.core.config import settings
+from app.services.dashscope_client import raise_upstream_error
 
 DASHSCOPE_NATIVE_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
@@ -28,41 +29,44 @@ async def synthesize_speech(
     """
     model = model or "qwen3-tts-flash"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            DASHSCOPE_NATIVE_URL,
-            headers={
-                "Authorization": f"Bearer {settings.dashscope_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "input": {
-                    "text": text,
-                    "voice": voice,
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                DASHSCOPE_NATIVE_URL,
+                headers={
+                    "Authorization": f"Bearer {settings.dashscope_api_key}",
+                    "Content-Type": "application/json",
                 },
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
+                json={
+                    "model": model,
+                    "input": {
+                        "text": text,
+                        "voice": voice,
+                    },
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
 
-        # Response contains audio URL or base64 data
-        output = data.get("output", {})
-        audio_info = output.get("audio", {})
+            # Response contains audio URL or base64 data
+            output = data.get("output", {})
+            audio_info = output.get("audio", {})
 
-        # If URL is returned, download the audio
-        audio_url = audio_info.get("url")
-        if audio_url:
-            audio_resp = await client.get(audio_url)
-            audio_resp.raise_for_status()
-            return audio_resp.content
+            # If URL is returned, download the audio
+            audio_url = audio_info.get("url")
+            if audio_url:
+                audio_resp = await client.get(audio_url)
+                audio_resp.raise_for_status()
+                return audio_resp.content
 
-        # If base64 data is returned directly
-        audio_data = audio_info.get("data")
-        if audio_data:
-            return base64.b64decode(audio_data)
+            # If base64 data is returned directly
+            audio_data = audio_info.get("data")
+            if audio_data:
+                return base64.b64decode(audio_data)
 
-        raise ValueError("No audio data in TTS response")
+            raise ValueError("No audio data in TTS response")
+    except Exception as exc:  # noqa: BLE001
+        raise_upstream_error(exc)
 
 
 async def synthesize_speech_realtime(
@@ -87,44 +91,47 @@ async def synthesize_speech_realtime(
 
     audio_chunks: list[bytes] = []
 
-    async with websockets.connect(ws_url, additional_headers=headers) as ws:
-        # 1. Configure session
-        await ws.send(json.dumps({
-            "type": "session.update",
-            "session": {
-                "voice": voice,
-                "response_format": "mp3",
-                "sample_rate": sample_rate,
-                "mode": "server_commit",
-            },
-        }))
-
-        # Wait for session.updated
-        await ws.recv()
-
-        # 2. Send text (can send in chunks for long text)
-        chunk_size = 500
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i : i + chunk_size]
+    try:
+        async with websockets.connect(ws_url, additional_headers=headers) as ws:
+            # 1. Configure session
             await ws.send(json.dumps({
-                "type": "input_text_buffer.append",
-                "text": chunk,
+                "type": "session.update",
+                "session": {
+                    "voice": voice,
+                    "response_format": "mp3",
+                    "sample_rate": sample_rate,
+                    "mode": "server_commit",
+                },
             }))
 
-        # 3. Signal finish
-        await ws.send(json.dumps({"type": "session.finish"}))
+            # Wait for session.updated
+            await ws.recv()
 
-        # 4. Collect audio
-        async for message in ws:
-            event = json.loads(message)
-            event_type = event.get("type", "")
+            # 2. Send text (can send in chunks for long text)
+            chunk_size = 500
+            for i in range(0, len(text), chunk_size):
+                chunk = text[i : i + chunk_size]
+                await ws.send(json.dumps({
+                    "type": "input_text_buffer.append",
+                    "text": chunk,
+                }))
 
-            if event_type == "response.audio.delta":
-                audio_data = base64.b64decode(event.get("delta", ""))
-                audio_chunks.append(audio_data)
-            elif event_type == "session.finished":
-                break
-            elif event_type == "error":
-                raise RuntimeError(f"TTS WebSocket error: {event}")
+            # 3. Signal finish
+            await ws.send(json.dumps({"type": "session.finish"}))
+
+            # 4. Collect audio
+            async for message in ws:
+                event = json.loads(message)
+                event_type = event.get("type", "")
+
+                if event_type == "response.audio.delta":
+                    audio_data = base64.b64decode(event.get("delta", ""))
+                    audio_chunks.append(audio_data)
+                elif event_type == "session.finished":
+                    break
+                elif event_type == "error":
+                    raise RuntimeError(f"TTS WebSocket error: {event}")
+    except Exception as exc:  # noqa: BLE001
+        raise_upstream_error(exc)
 
     return b"".join(audio_chunks)

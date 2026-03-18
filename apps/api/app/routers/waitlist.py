@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -27,6 +28,9 @@ def join_waitlist(
     )
     item = db.query(Waitlist).filter(Waitlist.email == payload.email).first()
     if not item:
-        db.add(Waitlist(email=payload.email, source=payload.source))
-        db.commit()
+        try:
+            db.add(Waitlist(email=payload.email, source=payload.source))
+            db.commit()
+        except IntegrityError:
+            db.rollback()
     return OkResponse(ok=True)

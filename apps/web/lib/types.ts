@@ -36,4 +36,6 @@ export type DemoPresignResponse = {
   upload_id: string;
   put_url: string;
   headers: Record<string, string>;
+  fields: Record<string, string>;
+  upload_method: "PUT" | "POST";
 };

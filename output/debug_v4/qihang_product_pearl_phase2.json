@@ -1,19 +1,19 @@
 {
   "modelGlbPath": "output/debug_v4/qihang_product_pearl_phase2.glb",
-  "modelGlbSha256": "6eb27c852ddcb20f98d18a1ae357f226915960f3c5bd655edc51170c5774f1d8",
+  "modelGlbSha256": "974ef417cde3f569b8845d49a2cd5bab14431db0310f7d150f5ef0251c6c74e6",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
   },
   "counts": {
     "scenes": 1,
-    "nodes": 84,
-    "meshes": 37,
+    "nodes": 83,
+    "meshes": 36,
     "materials": 21,
-    "bufferViews": 133,
-    "accessors": 133,
+    "bufferViews": 135,
+    "accessors": 135,
     "animations": 0,
-    "binBytes": 1579732
+    "binBytes": 2185108
   },
   "sceneRoots": [
     "QIHANG_Product"
@@ -54,8 +54,7 @@
         "DockWell_L",
         "DockWell_R",
         "Earbud_Left",
-        "Earbud_Right",
-        "Case_Base_Linear_Tray_V3"
+        "Earbud_Right"
       ],
       "mesh": null,
       "translation": [
@@ -172,15 +171,15 @@
       ],
       "mesh": null,
       "translation": [
-        0.00135,
-        -0.00105,
+        0.00115,
+        0.0039,
         -0.0105
       ],
       "rotation": [
-        -0.45451948,
-        0.54167522,
-        -0.54167522,
-        0.45451948
+        -0.70710678,
+        0.0,
+        -0.0,
+        0.70710678
       ],
       "scale": [
         2.33999991,
@@ -189,8 +188,8 @@
       ],
       "productLocalOriginMm": [
         -10.5,
-        -1.05,
-        -1.35
+        3.9,
+        -1.15
       ]
     },
     "Earbud_Right": {
@@ -202,15 +201,15 @@
       ],
       "mesh": null,
       "translation": [
-        -0.00035,
-        -0.00135,
+        -0.00045,
+        0.0034,
         0.0087
       ],
       "rotation": [
-        -0.54167522,
-        -0.45451948,
-        0.45451948,
-        0.54167522
+        -0.70710678,
+        -0.0,
+        0.0,
+        0.70710678
       ],
       "scale": [
         2.33999991,
@@ -219,8 +218,8 @@
       ],
       "productLocalOriginMm": [
         8.7,
-        -1.35,
-        0.35
+        3.4,
+        0.45
       ]
     },
     "Brooch_Camera": {
@@ -231,16 +230,11 @@
       ],
       "mesh": null,
       "translation": [
-        -0.00115,
-        0.00175,
+        -0.00095,
+        0.0024,
         0.0288
       ],
-      "rotation": [
-        0.0,
-        0.0,
-        -0.05233596,
-        0.99862953
-      ],
+      "rotation": [],
       "scale": [
         1.73999989,
         1.73999989,
@@ -248,8 +242,8 @@
       ],
       "productLocalOriginMm": [
         28.8,
-        1.75,
-        1.15
+        2.4,
+        0.95
       ]
     },
     "Pivot_Pin_Printable": {
@@ -294,16 +288,16 @@
       "children": [],
       "mesh": null,
       "translation": [
-        0.00135,
-        0.009545,
+        0.00115,
+        0.0078,
         -0.0105
       ],
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
         -10.5,
-        9.545,
-        -1.35
+        7.8,
+        -1.15
       ]
     },
     "DockWell_R": {
@@ -312,40 +306,40 @@
       "children": [],
       "mesh": null,
       "translation": [
-        -0.00035,
-        0.009545,
+        -0.00045,
+        0.0071,
         0.0087
       ],
       "rotation": [],
       "scale": [],
       "productLocalOriginMm": [
         8.7,
-        9.545,
-        0.35
+        7.1,
+        0.45
       ]
     }
   },
   "partBoundingBoxes": {
     "Case_Base_Shell": {
       "bboxMinMm": [
-        -42.944,
-        -11.4034,
-        -16.3144
+        -42.945,
+        -16.2,
+        -16.1999
       ],
       "bboxMaxMm": [
-        42.944,
-        11.4034,
-        16.511
+        42.945,
+        13.8216,
+        16.2
       ],
       "bboxSizeMm": [
-        85.888,
-        22.8068,
-        32.8254
+        85.89,
+        30.0216,
+        32.3999
       ],
       "bboxCenterMm": [
         0.0,
-        0.0,
-        0.0983
+        -1.1892,
+        0.0001
       ]
     },
     "Case_Lid_Shell": {
@@ -373,67 +367,67 @@
     "Earbud_Left": {
       "bboxMinMm": [
         -14.8369,
-        -5.9209,
-        -5.9653
+        -0.74,
+        -6.1079
       ],
       "bboxMaxMm": [
         -0.5042,
-        3.907,
-        3.2653
+        8.54,
+        4.006
       ],
       "bboxSizeMm": [
         14.3327,
-        9.8279,
-        9.2306
+        9.2799,
+        10.1139
       ],
       "bboxCenterMm": [
         -7.6706,
-        -1.007,
-        -1.35
+        3.9,
+        -1.0509
       ]
     },
     "Earbud_Right": {
       "bboxMinMm": [
         4.3631,
-        -6.308,
-        -4.3212
+        -1.24,
+        -4.706
       ],
       "bboxMaxMm": [
         18.6958,
-        3.928,
-        5.0212
+        8.04,
+        5.4079
       ],
       "bboxSizeMm": [
         14.3327,
-        10.236,
-        9.3423
+        9.2799,
+        10.1139
       ],
       "bboxCenterMm": [
         11.5294,
-        -1.19,
-        0.35
+        3.4,
+        0.3509
       ]
     },
     "Brooch_Camera": {
       "bboxMinMm": [
         25.5888,
-        -5.4421,
-        -1.4273
+        -4.8108,
+        -1.9082
       ],
       "bboxMaxMm": [
         31.865,
-        0.829,
-        4.5552
+        1.4467,
+        3.8082
       ],
       "bboxSizeMm": [
         6.2762,
-        6.2712,
-        5.9825
+        6.2575,
+        5.7165
       ],
       "bboxCenterMm": [
         28.7269,
-        -2.3066,
-        1.5639
+        -1.682,
+        0.95
       ]
     },
     "Pivot_Pin_Printable": {
@@ -457,28 +451,6 @@
         13.225,
         -0.0
       ]
-    },
-    "Case_Base_Linear_Tray_V3": {
-      "bboxMinMm": [
-        -36.5,
-        -6.75,
-        -8.85
-      ],
-      "bboxMaxMm": [
-        35.0,
-        2.75,
-        6.7058
-      ],
-      "bboxSizeMm": [
-        71.5,
-        9.5,
-        15.5558
-      ],
-      "bboxCenterMm": [
-        -0.75,
-        -2.0,
-        -1.0721
-      ]
     }
   },
   "hierarchyGuards": {
@@ -493,8 +465,7 @@
       "DockWell_L",
       "DockWell_R",
       "Earbud_Left",
-      "Earbud_Right",
-      "Case_Base_Linear_Tray_V3"
+      "Earbud_Right"
     ],
     "Case_Lid_Pivot_children": [
       "Case_Lid"
@@ -511,7 +482,7 @@
   },
   "sourceInputPath": "apps/web/public/qihang_product_pearl_V2.glb",
   "sourceInputSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0",
-  "outputSha256": "6eb27c852ddcb20f98d18a1ae357f226915960f3c5bd655edc51170c5774f1d8",
+  "outputSha256": "974ef417cde3f569b8845d49a2cd5bab14431db0310f7d150f5ef0251c6c74e6",
   "phase": 2,
   "phaseName": "base_shell_split",
   "phaseLogs": [
@@ -579,14 +550,14 @@
             0.0012488
           ],
           "translationAfter": [
-            0.00135,
-            -0.00105,
+            0.00115,
+            0.0039,
             -0.0105
           ],
           "targetProductOriginMm": [
             -10.5,
-            -1.05,
-            -1.35
+            3.9,
+            -1.15
           ]
         },
         {
@@ -597,14 +568,14 @@
             0.0012488
           ],
           "translationAfter": [
-            0.00135,
-            0.009545,
+            0.00115,
+            0.0078,
             -0.0105
           ],
           "targetProductOriginMm": [
             -10.5,
-            9.545,
-            -1.35
+            7.8,
+            -1.15
           ]
         },
         {
@@ -615,14 +586,14 @@
             0.0012488
           ],
           "translationAfter": [
-            -0.00035,
-            -0.00135,
+            -0.00045,
+            0.0034,
             0.0087
           ],
           "targetProductOriginMm": [
             8.7,
-            -1.35,
-            0.35
+            3.4,
+            0.45
           ]
         },
         {
@@ -633,14 +604,14 @@
             0.0012488
           ],
           "translationAfter": [
-            -0.00035,
-            0.009545,
+            -0.00045,
+            0.0071,
             0.0087
           ],
           "targetProductOriginMm": [
             8.7,
-            9.545,
-            0.35
+            7.1,
+            0.45
           ]
         },
         {
@@ -651,14 +622,14 @@
             0.001
           ],
           "translationAfter": [
-            -0.00115,
-            0.00175,
+            -0.00095,
+            0.0024,
             0.0288
           ],
           "targetProductOriginMm": [
             28.8,
-            1.75,
-            1.15
+            2.4,
+            0.95
           ]
         },
         {
@@ -670,12 +641,12 @@
             0.5
           ],
           "rotationAfter": [
-            -0.45451948,
-            0.54167522,
-            -0.54167522,
-            0.45451948
+            -0.70710678,
+            0.0,
+            -0.0,
+            0.70710678
           ],
-          "tiltDegreesAboutProductZ": -10.0
+          "tiltDegreesAboutProductZ": 90.0
         },
         {
           "node": "Earbud_Right",
@@ -686,56 +657,43 @@
             0.5
           ],
           "rotationAfter": [
-            -0.54167522,
-            -0.45451948,
-            0.45451948,
-            0.54167522
+            -0.70710678,
+            -0.0,
+            0.0,
+            0.70710678
           ],
-          "tiltDegreesAboutProductZ": -10.0
-        },
-        {
-          "node": "Brooch_Camera",
-          "rotationBefore": [
-            0.0,
-            0.0,
-            0.0,
-            1.0
-          ],
-          "rotationAfter": [
-            0.0,
-            0.0,
-            -0.05233596,
-            0.99862953
-          ],
-          "tiltDegreesAboutProductZ": -6.0
+          "tiltDegreesAboutProductZ": -90.0
         }
       ],
       "trayChangeLog": {
-        "node": "Case_Base_Linear_Tray_V3",
-        "meshIndex": 36,
-        "nodeIndex": 83,
-        "triangleCount": 132,
+        "node": "Case_Base_Shell",
+        "integrationMode": "added_floor_primitive",
+        "primitiveIndex": 1,
+        "triangleCount": 1712,
         "bboxMinProductMm": [
           -36.5,
-          -6.75,
-          -8.85
+          -0.25,
+          -6.4675
         ],
         "bboxMaxProductMm": [
           35.0,
-          2.75,
-          6.7058
+          9.4794,
+          6.3
         ],
         "bboxSizeProductMm": [
           71.5,
-          9.5,
-          15.5558
+          9.7294,
+          12.7675
         ],
         "trayProfile": {
-          "platformTopMm": 2.75,
-          "midSlopeTopMm": -0.3239,
-          "cameraTopMm": -3.7168,
-          "leftBiasMm": -1.75,
-          "rightBiasMm": 1.5211
+          "platformTopMm": 9.25,
+          "earbudBackTopMm": 7.8314,
+          "earbudFrontTopMm": 5.6564,
+          "cameraBackTopMm": 5.2658,
+          "cameraFrontTopMm": 2.3788,
+          "leftBiasMm": 0.2,
+          "earbudBiasMm": -0.8293,
+          "cameraBiasMm": -0.3087
         }
       }
     },
@@ -743,14 +701,40 @@
       "phase": 2,
       "name": "base_shell_split",
       "shellChangeLog": {
-        "node": "Case_Base_Shell",
-        "movedRows": 336,
-        "maxDeltaYmm": 2.1189,
-        "maxDeltaZmm": 1.6933,
-        "dropAtEarbudMm": 1.1303,
-        "dropAtCameraMm": 3.3714,
-        "centerShiftLeftMm": -2.0314,
-        "centerShiftRightMm": 2.0314
+        "kind": "base",
+        "buildReport": {
+          "kind": "base",
+          "triangleCount": 6828,
+          "outerRadiusMm": 16.2,
+          "innerRadiusMm": 14.1,
+          "xStationCount": 61,
+          "arcSampleCount": 28,
+          "pivotCutTrianglesDropped": 0,
+          "platformOuterCenterMm": 0.0,
+          "platformOuterWidthMm": 23.6,
+          "slopeOuterCenterMm": -1.3050347222222223,
+          "slopeOuterWidthMm": 22.314390392835335
+        },
+        "replaceReport": {
+          "node": "Case_Base_Shell",
+          "primitiveCount": 2,
+          "triangleCount": 6828,
+          "bboxMinProductMm": [
+            -42.945,
+            -16.2,
+            -16.1999
+          ],
+          "bboxMaxProductMm": [
+            42.945,
+            13.8216,
+            16.2
+          ],
+          "bboxSizeProductMm": [
+            85.89,
+            30.0216,
+            32.3999
+          ]
+        }
       }
     }
   ]

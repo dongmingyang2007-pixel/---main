@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import random
+import secrets
 import smtplib
 import string
 from email.mime.multipart import MIMEMultipart
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def _generate_code() -> str:
     """Generate a numeric verification code."""
-    return "".join(random.choices(string.digits, k=settings.verification_code_length))
+    return "".join(secrets.choice(string.digits) for _ in range(settings.verification_code_length))
 
 
 def _code_key(email: str, purpose: str) -> str:
@@ -43,10 +43,18 @@ def store_verification_code(email: str, purpose: str) -> str:
 def verify_code(email: str, purpose: str, code: str) -> bool:
     """Validate and consume a verification code (single-use)."""
     key = _code_key(email, purpose)
-    entry = runtime_state.pop_json("verify_code", key)
+    entry = runtime_state.get_json("verify_code", key)
     if not entry:
         return False
-    return entry.get("code") == code and entry.get("email") == email.lower().strip()
+    normalized_email = email.lower().strip()
+    expected_code = str(entry.get("code") or "")
+    expected_email = str(entry.get("email") or "")
+    if not secrets.compare_digest(expected_email, normalized_email):
+        return False
+    if not secrets.compare_digest(expected_code, code.strip()):
+        return False
+    runtime_state.delete("verify_code", key)
+    return True
 
 
 def _build_code_html(code: str, purpose: str) -> str:
@@ -85,8 +93,10 @@ def _build_code_html(code: str, purpose: str) -> str:
 def send_verification_email(to_email: str, code: str, purpose: str) -> None:
     """Send a verification code email via SMTP."""
     if not settings.smtp_user or not settings.smtp_password:
-        logger.warning("SMTP not configured — code for %s: %s", to_email, code)
-        return
+        if settings.env in {"local", "test"}:
+            logger.warning("SMTP not configured — verification email skipped for %s", to_email)
+            return
+        raise RuntimeError("SMTP not configured")
 
     msg = MIMEMultipart("alternative")
     msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_address}>"

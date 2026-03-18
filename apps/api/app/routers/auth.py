@@ -5,16 +5,18 @@ from app.core.deps import (
     clear_auth_cookie,
     clear_csrf_cookie,
     enforce_rate_limit,
+    get_active_csrf_token,
     get_client_ip,
     get_current_user,
     get_db_session,
     issue_csrf_token,
+    revoke_user_tokens,
     require_allowed_origin,
     require_csrf_protection,
     set_auth_cookie,
 )
 from app.core.errors import ApiError
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, hash_password, verify_password_or_dummy
 from app.core.config import settings
 from app.models import Membership, User, Workspace
 from app.schemas.auth import (
@@ -145,9 +147,10 @@ def reset_password(
 
     user = db.query(User).filter(User.email == payload.email).first()
     if not user:
-        raise ApiError("user_not_found", "用户不存在", status_code=404)
+        return {"ok": True}
 
     user.password_hash = hash_password(payload.password)
+    revoke_user_tokens(user.id)
     db.commit()
     return {"ok": True}
 
@@ -176,7 +179,7 @@ def login(
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    if not verify_password_or_dummy(payload.password, user.password_hash if user else None):
         raise ApiError("invalid_credentials", "Invalid email or password", status_code=401)
 
     workspace = (
@@ -204,9 +207,11 @@ def login(
 def logout(
     request: Request,
     response: Response,
+    current_user: User = Depends(get_current_user),
     _: None = Depends(require_csrf_protection),
 ) -> dict[str, bool]:
     require_allowed_origin(request)
+    revoke_user_tokens(current_user.id)
     clear_auth_cookie(response)
     clear_csrf_cookie(response)
     return {"ok": True}
@@ -222,6 +227,13 @@ def refresh_csrf(
     access_token = getattr(request.state, "access_token", None)
     if not access_token:
         raise ApiError("unauthorized", "Authentication required", status_code=401)
+    existing_csrf = get_active_csrf_token(
+        access_token=access_token,
+        csrf_cookie=request.cookies.get(settings.csrf_cookie_name),
+        user_id=current_user.id,
+    )
+    if existing_csrf:
+        return {"csrf_token": existing_csrf}
     csrf_token = issue_csrf_token(response, access_token, current_user.id)
     return {"csrf_token": csrf_token}
 

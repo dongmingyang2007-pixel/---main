@@ -190,7 +190,7 @@ export function IconBar() {
             {IconComponent && <IconComponent />}
           </Link>
         </TooltipTrigger>
-        <TooltipContent side="right" sideOffset={8}>
+        <TooltipContent side="right" sideOffset={8} className="pointer-events-none">
           {t(item.key)}
         </TooltipContent>
       </Tooltip>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { Suspense, useState, useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { ChatInterface } from "@/components/console/ChatInterface";
@@ -34,8 +35,10 @@ function formatTime(dateStr: string): string {
   }
 }
 
-export default function ChatPage() {
+function ChatPageContent() {
   const t = useTranslations("console-chat");
+  const searchParams = useSearchParams();
+  const requestedProjectId = searchParams.get("project_id") || "";
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<
@@ -71,6 +74,16 @@ export default function ChatPage() {
     projects,
     selectProject,
   } = useProjectSelection(loadConversations);
+
+  useEffect(() => {
+    if (!requestedProjectId || requestedProjectId === selectedProjectId) {
+      return;
+    }
+    if (!projects.some((project) => project.id === requestedProjectId)) {
+      return;
+    }
+    void selectProject(requestedProjectId);
+  }, [projects, requestedProjectId, selectProject, selectedProjectId]);
 
   // Create new conversation
   const handleNewConversation = useCallback(async () => {
@@ -191,5 +204,23 @@ export default function ChatPage() {
         </div>
       </PageTransition>
     </PanelLayout>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense
+      fallback={
+        <PanelLayout>
+          <PageTransition>
+            <div className="p-6">
+              <div className="console-empty">...</div>
+            </div>
+          </PageTransition>
+        </PanelLayout>
+      }
+    >
+      <ChatPageContent />
+    </Suspense>
   );
 }

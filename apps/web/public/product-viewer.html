@@ -1382,13 +1382,7 @@ pruneChild:child=>{const n=normalizeNodeName(child&&child.name)
 ;const camVisual=mountGlbPart(sourceRoot,sourceCam,camGroup,"GLB_Camera")
 ;let earLVisual=earL;let earRVisual=earR;let usingGlbEarVisuals=false
 ;if(!USE_PROCEDURAL_EARBUD_VISUALS&&sourceEarL&&sourceEarR){
-const canonicalEarSource=sourceEarL||sourceEarR;const mountedEarL=mountGlbPart(sourceRoot,canonicalEarSource,earL,"GLB_Ear_Left",{lockToParentPosition:true,scaleMultiplier:GLB_EARBUD_SCALE_MULTIPLIER});let mountedEarR=null
-;if(!canonicalEarSource){
-console.warn("[viewer] earbud GLB node missing; fallback to procedural earbud.",{left:sourceEarL?sourceEarL.name:null,right:sourceEarR?sourceEarR.name:null})
-;if(mountedEarL&&mountedEarL.parent){mountedEarL.parent.remove(mountedEarL)}
-}else{
-mountedEarR=mountGlbPart(sourceRoot,canonicalEarSource,earR,"GLB_Ear_Right",{lockToParentPosition:true,mirrorX:true,scaleMultiplier:GLB_EARBUD_SCALE_MULTIPLIER})
-}
+const mountedEarL=mountGlbPart(sourceRoot,sourceEarL,earL,"GLB_Ear_Left",{lockToParentPosition:true,scaleMultiplier:GLB_EARBUD_SCALE_MULTIPLIER});const mountedEarR=mountGlbPart(sourceRoot,sourceEarR,earR,"GLB_Ear_Right",{lockToParentPosition:true,scaleMultiplier:GLB_EARBUD_SCALE_MULTIPLIER})
 ;if(mountedEarL&&mountedEarR){normalizeMountedEarVisualPose(mountedEarL,mountedEarR);earLVisual=mountedEarL;earRVisual=mountedEarR;usingGlbEarVisuals=true}}
 ;if(baseVisual&&lidVisual&&camVisual){if(usingGlbEarVisuals){enforceStrictEarVisualMirror(earLVisual,earRVisual)}
 ;const baseCollisionShell=findNodeByAliases(baseVisual,["Case_Base_Shell"])||findNodeByTokens(baseVisual,["base","shell"])||baseVisual

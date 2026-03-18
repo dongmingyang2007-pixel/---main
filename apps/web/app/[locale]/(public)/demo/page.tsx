@@ -5,8 +5,9 @@ import { useTranslations } from "next-intl";
 
 import { useDeferredIframeSrc } from "@/lib/useDeferredIframeSrc";
 import { gsap } from "@/lib/gsap-register";
-import { apiPost, uploadToPresignedUrl } from "@/lib/api";
+import { apiPost, buildPresignedUploadInit, uploadToPresignedUrl } from "@/lib/api";
 import { EARBUD_BUILD_TIER, EARBUD_SPEC } from "@/lib/qihang-earbud-spec";
+import { getTrustedPostMessageOrigin } from "@/lib/security";
 import { DemoInferResponse, DemoPresignResponse } from "@/lib/types";
 import {
   KNOWN_VIEWER_COMMANDS,
@@ -542,6 +543,11 @@ export default function DemoPage() {
     }
   }, []);
 
+  const viewerTargetOrigin = useMemo(
+    () => getTrustedPostMessageOrigin(deferredViewerSrc || viewerSrc),
+    [deferredViewerSrc, viewerSrc],
+  );
+
   const postToViewer = useCallback((type: string, payload?: unknown): boolean => {
     const targetWindow = iframeRef.current?.contentWindow;
     if (!targetWindow) {
@@ -553,10 +559,10 @@ export default function DemoPage() {
         type,
         payload,
       },
-      "*",
+      viewerTargetOrigin,
     );
     return true;
-  }, []);
+  }, [viewerTargetOrigin]);
 
   const postCaptureEvent = useCallback(
     (name: ViewerCaptureEventName, extra?: Record<string, unknown>) => {
@@ -675,11 +681,7 @@ export default function DemoPage() {
       setStatusMessage("正在上传图片...");
       const putRes = await uploadToPresignedUrl(
         presign.put_url,
-        {
-          method: "PUT",
-          headers: presign.headers,
-          body: file,
-        },
+        buildPresignedUploadInit(presign, file),
         { authenticated: false },
       );
       if (!putRes.ok) {
@@ -933,6 +935,7 @@ export default function DemoPage() {
         className="hidden"
         onChange={(e) => {
           const picked = e.target.files?.[0] || null;
+          e.target.value = "";
           setFile(picked);
           if (picked) {
             setStatusMessage(td("status.imageSelected", { name: picked.name }));

@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     demo_presign_rate_limit_max: int = 20
     demo_infer_rate_limit_window_seconds: int = 300
     demo_infer_rate_limit_max: int = 30
+    upload_presign_rate_limit_window_seconds: int = 300
+    upload_presign_rate_limit_max: int = 20
+    model_artifact_presign_rate_limit_window_seconds: int = 300
+    model_artifact_presign_rate_limit_max: int = 20
     sse_rate_limit_window_seconds: int = 60
     sse_rate_limit_max: int = 10
 

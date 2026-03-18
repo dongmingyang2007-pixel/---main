@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import type { MemoryNode } from "@/hooks/useGraphData";
 
 interface ContextMenuActions {
@@ -20,6 +21,10 @@ interface GraphContextMenuProps {
   actions: ContextMenuActions;
 }
 
+function isFileNode(node: MemoryNode): boolean {
+  return node.category === "file" || node.category === "文件" || node.metadata_json?.node_kind === "file";
+}
+
 export default function GraphContextMenu({
   x,
   y,
@@ -28,6 +33,7 @@ export default function GraphContextMenu({
   onClose,
   actions,
 }: GraphContextMenuProps) {
+  const t = useTranslations("console-assistants");
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -67,18 +73,20 @@ export default function GraphContextMenu({
               onClose();
             }}
           >
-            查看详情
+            {t("graph.viewDetail")}
           </button>
-          <button
-            className="graph-context-item"
-            onClick={() => {
-              actions.onEdit(node);
-              onClose();
-            }}
-          >
-            编辑
-          </button>
-          {node.type === "temporary" && (
+          {!isFileNode(node) && (
+            <button
+              className="graph-context-item"
+              onClick={() => {
+                actions.onEdit(node);
+                onClose();
+              }}
+            >
+              {t("graph.edit")}
+            </button>
+          )}
+          {!isFileNode(node) && node.type === "temporary" && (
             <button
               className="graph-context-item"
               onClick={() => {
@@ -86,18 +94,20 @@ export default function GraphContextMenu({
                 onClose();
               }}
             >
-              设为永久
+              {t("graph.promote")}
             </button>
           )}
-          <button
-            className="graph-context-item is-danger"
-            onClick={() => {
-              actions.onDelete(node.id);
-              onClose();
-            }}
-          >
-            删除
-          </button>
+          {!isFileNode(node) && (
+            <button
+              className="graph-context-item is-danger"
+              onClick={() => {
+                actions.onDelete(node.id);
+                onClose();
+              }}
+            >
+              {t("graph.delete")}
+            </button>
+          )}
         </>
       ) : (
         <button
@@ -107,7 +117,7 @@ export default function GraphContextMenu({
             onClose();
           }}
         >
-          添加记忆
+          {t("graph.addMemory")}
         </button>
       )}
     </div>

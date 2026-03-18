@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Any
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DatasetCreate(BaseModel):
@@ -31,6 +32,8 @@ class UploadPresignResponse(BaseModel):
     upload_id: str
     put_url: str
     headers: dict[str, str]
+    fields: dict[str, str] = Field(default_factory=dict)
+    upload_method: Literal["PUT", "POST"] = "PUT"
     data_item_id: str
 
 
@@ -64,7 +67,7 @@ class DataItemOut(BaseModel):
     preview_url: str | None = None
     download_url: str | None = None
     created_at: datetime
-    annotations: list[AnnotationOut] = []
+    annotations: list[AnnotationOut] = Field(default_factory=list)
 
 
 class DatasetCommitRequest(BaseModel):

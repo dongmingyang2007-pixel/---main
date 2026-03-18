@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { Suspense, useEffect, useMemo, useReducer, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 
@@ -51,7 +52,8 @@ function getProviderGradient(provider: string): string {
 
 function formatPrice(price: number, t: (key: string) => string): string {
   if (price <= 0) return t("free");
-  return `¥${price.toFixed(2)}`;
+  const formatted = price.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  return `¥${formatted}`;
 }
 
 function modelsReducer(state: ModelState, action: ModelAction): ModelState {
@@ -67,13 +69,21 @@ function modelsReducer(state: ModelState, action: ModelAction): ModelState {
   }
 }
 
-export default function ModelsPage() {
+function ModelsPageContent() {
   const t = useTranslations("console-models-v2");
+  const searchParams = useSearchParams();
+  const initialTabFromQuery = (() => {
+    const category = searchParams.get("category");
+    if (category && TABS.includes(category as Tab)) {
+      return category as Tab;
+    }
+    return "all" as Tab;
+  })();
   const [{ loading, models }, dispatch] = useReducer(modelsReducer, {
     loading: true,
     models: [],
   });
-  const [activeTab, setActiveTab] = useState<Tab>("all");
+  const [activeTab, setActiveTab] = useState<Tab>(initialTabFromQuery);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -109,6 +119,21 @@ export default function ModelsPage() {
     }
     return list;
   }, [models, activeTab, search]);
+
+  const pickerQuery = useMemo(() => {
+    if (searchParams.get("picker") !== "1") {
+      return "";
+    }
+    const params = new URLSearchParams();
+    params.set("picker", "1");
+    const from = searchParams.get("from");
+    const category = searchParams.get("category");
+    const currentModelId = searchParams.get("current_model_id");
+    if (from) params.set("from", from);
+    if (category) params.set("category", category);
+    if (currentModelId) params.set("current_model_id", currentModelId);
+    return params.toString();
+  }, [searchParams]);
 
   return (
     <PanelLayout>
@@ -180,7 +205,14 @@ export default function ModelsPage() {
                         <span> {t("priceUnit")}</span>
                       ) : null}
                     </div>
-                    <Link href={`/app/models/${model.model_id}`} className="marketplace-card-btn">
+                    <Link
+                      href={
+                        pickerQuery
+                          ? `/app/models/${model.model_id}?${pickerQuery}`
+                          : `/app/models/${model.model_id}`
+                      }
+                      className="marketplace-card-btn"
+                    >
                       {t("detail")}
                     </Link>
                   </div>
@@ -191,5 +223,23 @@ export default function ModelsPage() {
         </div>
       </PageTransition>
     </PanelLayout>
+  );
+}
+
+export default function ModelsPage() {
+  return (
+    <Suspense
+      fallback={
+        <PanelLayout>
+          <PageTransition>
+            <div className="p-6">
+              <div className="console-empty">...</div>
+            </div>
+          </PageTransition>
+        </PanelLayout>
+      }
+    >
+      <ModelsPageContent />
+    </Suspense>
   );
 }

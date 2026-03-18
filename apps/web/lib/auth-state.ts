@@ -1,3 +1,5 @@
+import { buildClientCookieAttributes } from "@/lib/security";
+
 const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_EVENT = "auth-state-change";
 
@@ -12,14 +14,12 @@ function readCookie(name: string): string | null {
 
 function writeCookie(name: string, value: string, maxAge?: number): void {
   if (typeof document === "undefined") return;
-  let cookie = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
-  if (maxAge !== undefined) cookie += `; Max-Age=${maxAge}`;
-  document.cookie = cookie;
+  document.cookie = `${name}=${encodeURIComponent(value)}; ${buildClientCookieAttributes(maxAge)}`;
 }
 
 function clearCookie(name: string): void {
   if (typeof document === "undefined") return;
-  document.cookie = `${name}=; Path=/; Max-Age=0`;
+  document.cookie = `${name}=; ${buildClientCookieAttributes(0)}`;
 }
 
 function emitAuthStateChange(): void {

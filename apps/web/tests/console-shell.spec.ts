@@ -59,6 +59,20 @@ test.describe("Console Shell", () => {
     await expect(page.locator("#knowledge-name")).toBeVisible();
   });
 
+  test("models icon remains clickable after hover on desktop", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/app/assistants");
+    const modelsIcon = page.locator(".icon-bar-item[aria-label='模型广场']");
+    await modelsIcon.hover();
+    const box = await modelsIcon.boundingBox();
+    if (!box) {
+      throw new Error("Expected models icon to have a bounding box");
+    }
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page).toHaveURL(/\/app\/models$/);
+    await expect(page.getByRole("heading", { name: "模型广场" })).toBeVisible();
+  });
+
   test("english console shell also renders correctly", async ({ page }) => {
     await page.goto("/en/app");
     await expect(page.locator("header.site-header-v2.is-console")).toContainText("Mingrun Tech");

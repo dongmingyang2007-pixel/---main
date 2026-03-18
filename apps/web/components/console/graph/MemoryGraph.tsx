@@ -7,8 +7,10 @@ import {
   useCallback,
   useMemo,
 } from "react";
+import { useTranslations } from "next-intl";
 import * as d3 from "d3";
 import type { MemoryNode, MemoryEdge } from "@/hooks/useGraphData";
+import { apiPost } from "@/lib/api";
 import GraphContextMenu from "./GraphContextMenu";
 import NodeDetail from "./NodeDetail";
 import GraphControls from "./GraphControls";
@@ -33,14 +35,17 @@ interface MemoryGraphProps {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
   onNodeSelect: (node: MemoryNode | null) => void;
+  onCenterNodeClick?: () => void;
   onCreateMemory: (content: string, category?: string) => Promise<void>;
   onUpdateMemory: (id: string, updates: Partial<MemoryNode>) => Promise<void>;
   onDeleteMemory: (id: string) => Promise<void>;
   onPromoteMemory: (id: string) => Promise<void>;
   onCreateEdge: (sourceId: string, targetId: string) => Promise<void>;
   onDeleteEdge: (id: string) => Promise<void>;
+  onAttachFile: (memoryId: string, dataItemId: string) => Promise<void>;
+  onDetachFile: (memoryFileId: string) => Promise<void>;
   searchQuery?: string;
-  filters?: { types: string[]; categories: string[] };
+  filters?: Partial<GraphFilterState>;
 }
 
 /* ── Constants ─────────────────────────────────── */
@@ -49,6 +54,7 @@ const CENTER_NODE_RADIUS = 36;
 const MEMORY_NODE_RADIUS = 20;
 const FILE_NODE_W = 16;
 const FILE_NODE_H = 20;
+const ASSISTANT_CENTER_ID = "__assistant_center__";
 const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
@@ -63,6 +69,20 @@ function isFileNode(node: MemoryNode): boolean {
   return node.category === "file" || node.category === "文件";
 }
 
+function getNodeSourceKinds(node: MemoryNode): string[] {
+  if (isFileNode(node)) {
+    return ["file_upload"];
+  }
+  const metadata = (node.metadata_json || {}) as Record<string, unknown>;
+  if (metadata.promoted_by) {
+    return ["promoted"];
+  }
+  if (node.source_conversation_id) {
+    return ["conversation"];
+  }
+  return ["manual"];
+}
+
 function nodeRadius(node: MemoryNode, isCenter: boolean): number {
   if (isCenter) return CENTER_NODE_RADIUS;
   if (isFileNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
@@ -70,23 +90,73 @@ function nodeRadius(node: MemoryNode, isCenter: boolean): number {
 }
 
 function getLabel(node: MemoryNode): string {
+  if (isFileNode(node)) {
+    const filename =
+      typeof node.metadata_json?.filename === "string"
+        ? node.metadata_json.filename
+        : node.content;
+    return filename.length > 16 ? `${filename.slice(0, 16)}...` : filename;
+  }
   if (node.category) return node.category;
   return node.content.length > 12
     ? node.content.slice(0, 12) + "..."
     : node.content;
 }
 
+function inferDroppedCategory(
+  node: SimNode,
+  allNodes: SimNode[],
+  centerNodeId: string,
+): string | null {
+  if (node.id === centerNodeId || isFileNode(node)) {
+    return null;
+  }
+
+  const nearbyCategories = allNodes
+    .filter(
+      (candidate) =>
+        candidate.id !== node.id &&
+        candidate.id !== centerNodeId &&
+        !isFileNode(candidate) &&
+        Boolean(candidate.category.trim()),
+    )
+    .map((candidate) => ({
+      category: candidate.category,
+      distance: Math.hypot(candidate.x - node.x, candidate.y - node.y),
+    }))
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, 4);
+
+  if (nearbyCategories.length === 0 || nearbyCategories[0].distance > 220) {
+    return null;
+  }
+
+  const scores = new Map<string, number>();
+  nearbyCategories.forEach((candidate) => {
+    const weight = 1 / Math.max(candidate.distance, 24);
+    scores.set(candidate.category, (scores.get(candidate.category) || 0) + weight);
+  });
+
+  return [...scores.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || null;
+}
+
 /* ── Component ─────────────────────────────────── */
 
 export default function MemoryGraph(props: MemoryGraphProps) {
+  const t = useTranslations("console-assistants");
   const {
     nodes,
     edges,
     onNodeSelect,
+    onCenterNodeClick,
     onCreateMemory,
     onUpdateMemory,
     onDeleteMemory,
     onPromoteMemory,
+    onCreateEdge,
+    onDeleteEdge,
+    onAttachFile,
+    onDetachFile,
     searchQuery: externalSearchQuery,
     filters: externalFilters,
   } = props;
@@ -96,6 +166,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const transformRef = useRef(d3.zoomIdentity);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
   const animFrameRef = useRef<number>(0);
+  const connectStartRef = useRef<SimNode | null>(null);
+  const connectPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
 
   /* state */
   const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
@@ -109,30 +182,114 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const [filterState, setFilterState] = useState<GraphFilterState>({
     types: [],
     categories: [],
+    sources: [],
     timeRange: "all",
   });
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [semanticMatchIds, setSemanticMatchIds] = useState<Set<string> | null>(null);
 
   const searchQuery = externalSearchQuery ?? localSearch;
+  const centerNodeShortLabel = t("graph.centerNodeShort");
+  const addMemoryPrompt = t("graph.addMemoryPrompt");
+  const confirmDeleteMessage = t("graph.confirmDelete");
+
+  useEffect(() => {
+    const trimmedQuery = searchQuery.trim();
+    const projectId = nodes.find((node) => !isFileNode(node))?.project_id;
+
+    if (!trimmedQuery || !projectId) {
+      setSemanticMatchIds(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void apiPost<Array<{ memory: { id: string } }>>("/api/v1/memory/search", {
+        project_id: projectId,
+        query: trimmedQuery,
+        top_k: 10,
+      })
+        .then((results) => {
+          if (cancelled) return;
+          const ids = new Set<string>();
+          (Array.isArray(results) ? results : []).forEach((result) => {
+            const memoryId = result?.memory?.id;
+            if (!memoryId) return;
+            ids.add(memoryId);
+            nodes.forEach((candidate) => {
+              if (candidate.parent_memory_id === memoryId && isFileNode(candidate)) {
+                ids.add(candidate.id);
+              }
+            });
+          });
+          setSemanticMatchIds(ids);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSemanticMatchIds(null);
+          }
+        });
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [nodes, searchQuery]);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      return;
+    }
+    const refreshed = nodes.find((candidate) => candidate.id === selectedNode.id);
+    if (!refreshed) {
+      setSelectedNode(null);
+      onNodeSelect(null);
+      return;
+    }
+    if (refreshed !== selectedNode) {
+      setSelectedNode(refreshed);
+    }
+  }, [nodes, onNodeSelect, selectedNode]);
 
   /* ── Derive sim data ────────────────────────── */
 
   const { simNodes, simLinks, centerNodeId } = useMemo(() => {
-    // Determine center node (first permanent, or first node)
-    const center =
-      nodes.find((n) => n.type === "permanent" && !n.parent_memory_id) ??
-      nodes[0] ??
-      null;
-    const cId = center?.id ?? null;
+    const seedNode = nodes.find((node) => !isFileNode(node)) ?? nodes[0] ?? null;
+    const now = new Date().toISOString();
+    const cId = ASSISTANT_CENTER_ID;
+    const assistantNode: SimNode = {
+      id: cId,
+      workspace_id: seedNode?.workspace_id ?? "",
+      project_id: seedNode?.project_id ?? "",
+      content: "AI Assistant",
+      category: "assistant",
+      type: "permanent",
+      source_conversation_id: null,
+      parent_memory_id: null,
+      position_x: 0,
+      position_y: 0,
+      metadata_json: { node_kind: "assistant-center" },
+      created_at: seedNode?.created_at ?? now,
+      updated_at: seedNode?.updated_at ?? now,
+      x: 0,
+      y: 0,
+      fx: 0,
+      fy: 0,
+    };
 
-    const sn: SimNode[] = nodes.map((n) => ({
-      ...n,
-      x: n.position_x ?? (n.id === cId ? 0 : (Math.random() - 0.5) * 400),
-      y: n.position_y ?? (n.id === cId ? 0 : (Math.random() - 0.5) * 400),
-      fx: n.id === cId ? 0 : (n.position_x != null ? null : null),
-      fy: n.id === cId ? 0 : (n.position_y != null ? null : null),
-    }));
+    const sn: SimNode[] = [
+      assistantNode,
+      ...nodes.map((n) => ({
+        ...n,
+        x: n.position_x ?? (Math.random() - 0.5) * 400,
+        y: n.position_y ?? (Math.random() - 0.5) * 400,
+        fx: null,
+        fy: null,
+      })),
+    ];
 
-    const nodeIdSet = new Set(nodes.map((n) => n.id));
+    const nodeIdSet = new Set(sn.map((n) => n.id));
     const sl: SimLink[] = edges
       .filter(
         (e) => nodeIdSet.has(e.source_memory_id) && nodeIdSet.has(e.target_memory_id)
@@ -145,6 +302,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         strength: e.strength,
       }));
 
+    nodes
+      .filter((node) => !isFileNode(node) && !node.parent_memory_id)
+      .forEach((node) => {
+        sl.unshift({
+          source: cId,
+          target: node.id,
+          id: `center:${node.id}`,
+          edge_type: "center",
+          strength: 0.35,
+        });
+      });
+
     return { simNodes: sn, simLinks: sl, centerNodeId: cId };
   }, [nodes, edges]);
 
@@ -152,10 +321,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
   const activeTypes = externalFilters?.types ?? filterState.types;
   const activeCategories = externalFilters?.categories ?? filterState.categories;
+  const activeSources = externalFilters?.sources ?? filterState.sources;
+  const activeTimeRange = externalFilters?.timeRange ?? filterState.timeRange;
 
   const visibleNodeIds = useMemo(() => {
     const ids = new Set<string>();
     simNodes.forEach((n) => {
+      if (n.id === centerNodeId) {
+        ids.add(n.id);
+        return;
+      }
       // Type filter
       if (activeTypes.length > 0) {
         const nodeType = isFileNode(n) ? "file" : n.type;
@@ -165,23 +340,31 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (activeCategories.length > 0 && !activeCategories.includes(n.category)) {
         return;
       }
+      // Source filter
+      if (activeSources.length > 0) {
+        const nodeSources = getNodeSourceKinds(n);
+        if (!nodeSources.some((source) => activeSources.includes(source))) {
+          return;
+        }
+      }
       // Time range filter
-      if (filterState.timeRange !== "all") {
+      if (activeTimeRange !== "all") {
         const created = new Date(n.created_at).getTime();
         const now = Date.now();
         const msMap = { "24h": 86400000, "7d": 604800000, "30d": 2592000000 };
-        if (now - created > msMap[filterState.timeRange]) return;
+        if (now - created > msMap[activeTimeRange]) return;
       }
       ids.add(n.id);
     });
     return ids;
-  }, [simNodes, activeTypes, activeCategories, filterState.timeRange]);
+  }, [activeCategories, activeSources, activeTimeRange, activeTypes, centerNodeId, simNodes]);
 
-  const searchMatchIds = useMemo(() => {
+  const localSearchMatchIds = useMemo(() => {
     if (!searchQuery) return null;
     const q = searchQuery.toLowerCase();
     const ids = new Set<string>();
     simNodes.forEach((n) => {
+      if (n.id === centerNodeId) return;
       if (
         n.content.toLowerCase().includes(q) ||
         n.category.toLowerCase().includes(q)
@@ -190,7 +373,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
     });
     return ids;
-  }, [simNodes, searchQuery]);
+  }, [centerNodeId, searchQuery, simNodes]);
+
+  const searchMatchIds = semanticMatchIds ?? localSearchMatchIds;
 
   /* ── Canvas draw ────────────────────────────── */
 
@@ -213,9 +398,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.scale(dpr, dpr);
 
-    const t = transformRef.current;
-    ctx.translate(t.x, t.y);
-    ctx.scale(t.k, t.k);
+    const transform = transformRef.current;
+    ctx.translate(transform.x, transform.y);
+    ctx.scale(transform.k, transform.k);
 
     const hasSearch = searchMatchIds !== null;
 
@@ -225,16 +410,26 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const tgt = link.target as SimNode;
       if (!visibleNodeIds.has(src.id) || !visibleNodeIds.has(tgt.id)) return;
 
+      const isFileEdge = link.edge_type === "file";
+      const isCenterEdge = link.edge_type === "center";
       const isPermanent =
-        (src.type === "permanent" && tgt.type === "permanent") ||
-        link.edge_type === "manual";
-      const lineWidth = 0.5 + link.strength * 1.5;
+        !isFileEdge &&
+        !isCenterEdge &&
+        ((src.type === "permanent" && tgt.type === "permanent") ||
+          link.edge_type === "manual");
+      const lineWidth = isFileEdge ? 1 : 0.5 + link.strength * 1.5;
 
       ctx.beginPath();
       ctx.moveTo(src.x, src.y);
       ctx.lineTo(tgt.x, tgt.y);
 
-      if (isPermanent) {
+      if (isFileEdge) {
+        ctx.setLineDash([]);
+        ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
+      } else if (isCenterEdge) {
+        ctx.setLineDash([3, 6]);
+        ctx.strokeStyle = "rgba(138, 122, 106, 0.25)";
+      } else if (isPermanent) {
         ctx.setLineDash([]);
         ctx.strokeStyle = `rgba(200, 115, 74, 0.4)`;
       } else {
@@ -256,13 +451,24 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       ctx.globalAlpha = 1;
     });
 
+    if (connectStartRef.current && connectPointerRef.current) {
+      ctx.beginPath();
+      ctx.moveTo(connectStartRef.current.x, connectStartRef.current.y);
+      ctx.lineTo(connectPointerRef.current.x, connectPointerRef.current.y);
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = "rgba(200, 115, 74, 0.75)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     /* ── Draw nodes ── */
     simNodes.forEach((node) => {
       if (!visibleNodeIds.has(node.id)) return;
 
       const isCenter = node.id === centerNodeId;
       const isSearched = hasSearch && searchMatchIds.has(node.id);
-      const isFaded = hasSearch && !isSearched;
+      const isFaded = hasSearch && !isSearched && !isCenter;
 
       if (isFaded) ctx.globalAlpha = 0.3;
 
@@ -303,7 +509,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.font = "bold 13px sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("AI", node.x, node.y);
+        ctx.fillText(centerNodeShortLabel, node.x, node.y);
       } else if (isFileNode(node)) {
         /* file node: rounded rect */
         const rx = node.x - FILE_NODE_W / 2;
@@ -372,7 +578,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     });
 
     ctx.restore();
-  }, [simNodes, simLinks, centerNodeId, visibleNodeIds, searchMatchIds]);
+  }, [centerNodeId, centerNodeShortLabel, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
 
   /* ── Simulation setup ───────────────────────── */
 
@@ -426,7 +632,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
     const dragStarted = (x: number, y: number) => {
       const node = hitTestDirect(x, y);
-      if (!node || node.id === centerNodeId) return;
+      if (!node || node.id === centerNodeId || isFileNode(node)) return;
       dragNode = node;
       sim.alphaTarget(0.3).restart();
       node.fx = node.x;
@@ -446,9 +652,13 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const node = dragNode;
       // Keep position fixed after drag
       if (node.fx != null && node.fy != null) {
+        const inferredCategory = inferDroppedCategory(node, simNodes, centerNodeId);
         onUpdateMemory(node.id, {
           position_x: node.fx,
           position_y: node.fy,
+          ...(inferredCategory && inferredCategory !== node.category
+            ? { category: inferredCategory }
+            : {}),
         }).catch(() => {});
       }
       node.fx = null;
@@ -481,7 +691,20 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
-      if (node && node.id !== centerNodeId) {
+      if (e.shiftKey && node && node.id !== centerNodeId && !isFileNode(node)) {
+        const t = transformRef.current;
+        connectStartRef.current = node;
+        connectPointerRef.current = {
+          x: (mx - t.x) / t.k,
+          y: (my - t.y) / t.k,
+        };
+        suppressClickRef.current = true;
+        draw();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (node && node.id !== centerNodeId && !isFileNode(node)) {
         isDragging = true;
         dragStartPos = { x: e.clientX, y: e.clientY };
         dragStarted(mx, my);
@@ -493,6 +716,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onMouseMove = (e: MouseEvent) => {
+      if (connectStartRef.current) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const t = transformRef.current;
+        connectPointerRef.current = {
+          x: (mx - t.x) / t.k,
+          y: (my - t.y) / t.k,
+        };
+        draw();
+        return;
+      }
       if (!isDragging) return;
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -501,6 +736,25 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onMouseUp = (e: MouseEvent) => {
+      if (connectStartRef.current) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const sourceNode = connectStartRef.current;
+        const targetNode = hitTestDirect(mx, my);
+        connectStartRef.current = null;
+        connectPointerRef.current = null;
+        if (
+          targetNode &&
+          sourceNode.id !== targetNode.id &&
+          targetNode.id !== centerNodeId &&
+          !isFileNode(targetNode)
+        ) {
+          onCreateEdge(sourceNode.id, targetNode.id).catch(() => {});
+        }
+        draw();
+        return;
+      }
       if (!isDragging) {
         return;
       }
@@ -522,6 +776,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         const my = e.clientY - rect.top;
         const node = hitTestDirect(mx, my);
         if (node) {
+          if (node.id === centerNodeId) {
+            setSelectedNode(null);
+            onNodeSelect(null);
+            onCenterNodeClick?.();
+            return;
+          }
           setSelectedNode(node);
           onNodeSelect(node);
         }
@@ -529,6 +789,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onClick = (e: MouseEvent) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
       // Only handle clicks on blank canvas (not on nodes which are handled via drag flow)
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -537,6 +801,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (!node) {
         setSelectedNode(null);
         onNodeSelect(null);
+      } else if (node.id === centerNodeId) {
+        setSelectedNode(null);
+        onNodeSelect(null);
+        onCenterNodeClick?.();
       } else {
         setSelectedNode(node);
         onNodeSelect(node);
@@ -549,7 +817,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
       if (!node) {
-        const content = window.prompt("输入新记忆内容:");
+        const content = window.prompt(addMemoryPrompt);
         if (content) {
           onCreateMemory(content);
         }
@@ -565,7 +833,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
-        node,
+        node: node?.id === centerNodeId ? null : node,
         visible: true,
       });
     };
@@ -591,7 +859,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     // We intentionally exclude draw from deps to avoid re-creating the simulation
     // on every render. The draw function is captured by the tick callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simNodes, simLinks, centerNodeId, onNodeSelect, onCreateMemory, onUpdateMemory]);
+  }, [addMemoryPrompt, centerNodeId, onCenterNodeClick, onCreateEdge, onCreateMemory, onNodeSelect, onUpdateMemory, simLinks, simNodes]);
 
   /* ── Redraw when filters/search change ─────── */
 
@@ -652,6 +920,44 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     sel.transition().duration(500).call(zb.transform, t);
   }, [simNodes, centerNodeId, visibleNodeIds]);
 
+  useEffect(() => {
+    if (!searchMatchIds || searchMatchIds.size === 0) {
+      return;
+    }
+    const canvas = canvasRef.current;
+    const zb = zoomBehaviorRef.current;
+    if (!canvas || !zb) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const matchedNodes = simNodes.filter(
+      (node) => visibleNodeIds.has(node.id) && searchMatchIds.has(node.id),
+    );
+    if (matchedNodes.length === 0) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    matchedNodes.forEach((node) => {
+      const r = nodeRadius(node, node.id === centerNodeId) + 24;
+      minX = Math.min(minX, node.x - r);
+      minY = Math.min(minY, node.y - r);
+      maxX = Math.max(maxX, node.x + r);
+      maxY = Math.max(maxY, node.y + r);
+    });
+
+    const bw = maxX - minX || 1;
+    const bh = maxY - minY || 1;
+    const scale = Math.min(rect.width / bw, rect.height / bh, 2.2) * 0.9;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const t = d3.zoomIdentity
+      .translate(rect.width / 2 - cx * scale, rect.height / 2 - cy * scale)
+      .scale(scale);
+
+    d3.select(canvas).transition().duration(360).call(zb.transform, t);
+  }, [centerNodeId, searchMatchIds, simNodes, visibleNodeIds]);
+
   /* ── Stats ──────────────────────────────────── */
 
   const fileCount = useMemo(
@@ -676,18 +982,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         onPromoteMemory(id);
       },
       onDelete: (id: string) => {
-        if (window.confirm("确定要删除这条记忆吗？")) {
+        if (window.confirm(confirmDeleteMessage)) {
           onDeleteMemory(id);
         }
       },
       onAddMemory: () => {
-        const content = window.prompt("输入新记忆内容:");
+        const content = window.prompt(addMemoryPrompt);
         if (content) {
           onCreateMemory(content);
         }
       },
     }),
-    [onNodeSelect, onPromoteMemory, onDeleteMemory, onCreateMemory]
+    [addMemoryPrompt, confirmDeleteMessage, onCreateMemory, onDeleteMemory, onNodeSelect, onPromoteMemory]
   );
 
   /* ── Render ─────────────────────────────────── */
@@ -698,6 +1004,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         nodes={nodes}
         activeFilters={filterState}
         onFilterChange={setFilterState}
+        collapsed={filtersCollapsed}
+        onToggleCollapsed={() => setFiltersCollapsed((value) => !value)}
       />
 
       <div className="graph-main">
@@ -710,7 +1018,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           nodeCount={memoryCount}
           fileCount={fileCount}
           onAdd={() => {
-            const content = window.prompt("输入新记忆内容:");
+            const content = window.prompt(addMemoryPrompt);
             if (content) onCreateMemory(content);
           }}
           searchQuery={searchQuery}
@@ -725,6 +1033,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         <NodeDetail
           key={selectedNode.id}
           node={selectedNode}
+          allNodes={nodes}
           onClose={() => {
             setSelectedNode(null);
             onNodeSelect(null);
@@ -732,6 +1041,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           onUpdate={onUpdateMemory}
           onDelete={onDeleteMemory}
           onPromote={onPromoteMemory}
+          onDeleteEdge={onDeleteEdge}
+          onAttachFile={onAttachFile}
+          onDetachFile={onDetachFile}
         />
       )}
 

@@ -18,39 +18,51 @@ test.describe("Foundation design system", () => {
     expect(["#fff", "#ffffff"]).toContain(bgBase.toLowerCase());
   });
 
-  test("console applies dark theme when the session is authenticated", async ({ page }) => {
+  test("console applies the console theme when the session is authenticated", async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
     await page.goto("/app");
-    await page.waitForSelector("html[data-theme='console']");
-
-    const html = page.locator("html");
-    await expect(html).toHaveAttribute("data-theme", "console");
-    await expect(html).toHaveClass(/dark/);
-    await expect(page.getByRole("heading", { name: "仪表盘" })).toBeVisible();
+    const consoleShell = page.locator("[data-theme='console']").first();
+    await expect(consoleShell).toBeVisible();
+    await expect(page.locator("header.site-header-v2.is-console")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "我的 AI" })).toBeVisible();
 
     const bgBase = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--bg-base").trim(),
+      getComputedStyle(document.querySelector("[data-theme='console']") as Element).getPropertyValue("--bg-base").trim(),
     );
-    expect(bgBase).toBe("#020617");
+    expect(bgBase).toBe("#f5f0eb");
   });
 
   test("unauthenticated console routes redirect with locale preserved", async ({ page }) => {
     await page.goto("/app");
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?next=/);
 
     await page.goto("/en/app");
-    await expect(page).toHaveURL(/\/en\/login$/);
+    await expect(page).toHaveURL(/\/en\/login\?next=/);
+  });
+
+  test("deep-linked console login returns to the requested route", async ({ page }) => {
+    await installWorkbenchApiMock(page);
+
+    await page.goto("/en/app/knowledge");
+    await expect(page).toHaveURL(/\/en\/login\?next=/);
+
+    await page.locator("#login-email").fill("deep-link@example.com");
+    await page.locator("#login-password").fill("password-1234");
+    await page.locator("button[type='submit']").click();
+
+    await expect(page).toHaveURL(/\/en\/app\/knowledge$/);
+    await expect(page.locator("[data-theme='console']").first()).toBeVisible();
   });
 
   test("redirects work for removed routes", async ({ page }) => {
-    const response = await page.goto("/how-it-works");
-    expect(response?.url()).toContain("/product");
+    await page.goto("/how-it-works", { waitUntil: "commit" });
+    await expect(page).toHaveURL(/\/product/);
 
-    const response2 = await page.goto("/docs");
-    expect(response2?.url()).toContain("/support");
+    await page.goto("/docs", { waitUntil: "commit" });
+    await expect(page).toHaveURL(/\/support/);
 
-    const response3 = await page.goto("/contact");
-    expect(response3?.url()).toContain("/support");
+    await page.goto("/contact", { waitUntil: "commit" });
+    await expect(page).toHaveURL(/\/support/);
   });
 });
 

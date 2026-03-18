@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "@/lib/env";
 import { clearAuthState, setAuthState } from "@/lib/auth-state";
+import { buildClientCookieAttributes } from "@/lib/security";
 
 const WORKSPACE_COOKIE_NAME = "mingrun_workspace_id";
 const LEGACY_WORKSPACE_COOKIE_NAME = "qihang_workspace_id";
@@ -19,14 +20,14 @@ function writeCookie(name: string, value: string): void {
   if (typeof document === "undefined") {
     return;
   }
-  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+  document.cookie = `${name}=${encodeURIComponent(value)}; ${buildClientCookieAttributes()}`;
 }
 
 function clearCookie(name: string): void {
   if (typeof document === "undefined") {
     return;
   }
-  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+  document.cookie = `${name}=; ${buildClientCookieAttributes(0)}`;
 }
 
 function readWorkspaceId(): string | null {
@@ -186,6 +187,33 @@ export async function uploadToPresignedUrl(
   });
 }
 
+export function buildPresignedUploadInit(
+  presign: {
+    upload_method?: "PUT" | "POST";
+    headers: Record<string, string>;
+    fields?: Record<string, string>;
+  },
+  file: Blob,
+): RequestInit {
+  if (presign.upload_method === "POST") {
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(presign.fields || {})) {
+      formData.append(key, value);
+    }
+    formData.append("file", file);
+    return {
+      method: "POST",
+      body: formData,
+    };
+  }
+
+  return {
+    method: "PUT",
+    headers: presign.headers,
+    body: file,
+  };
+}
+
 export function persistWorkspaceId(workspaceId: string, authStateMaxAgeSeconds?: number): void {
   writeCookie(WORKSPACE_COOKIE_NAME, workspaceId);
   clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
@@ -197,6 +225,15 @@ export function clearWorkspaceId(): void {
   clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
 }
 
+function getLocaleAwareLoginPath(): string {
+  if (typeof window === "undefined") {
+    return "/login";
+  }
+  return window.location.pathname === "/en" || window.location.pathname.startsWith("/en/")
+    ? "/en/login"
+    : "/login";
+}
+
 export async function logout(): Promise<void> {
   try {
     await apiPost("/api/v1/auth/logout", {});
@@ -206,7 +243,7 @@ export async function logout(): Promise<void> {
   clearAuthState();
   clearWorkspaceId();
   clearCachedSecurityState();
-  window.location.href = "/login";
+  window.location.href = getLocaleAwareLoginPath();
 }
 
 export async function apiPostFormData<T>(path: string, formData: FormData, init?: RequestInit): Promise<T> {

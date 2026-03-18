@@ -2,14 +2,25 @@ import base64
 import random
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
+from app.core.deps import (
+    can_access_workspace_conversation,
+    enforce_rate_limit,
+    get_current_user,
+    get_current_workspace_id,
+    get_current_workspace_role,
+    get_db_session,
+    is_workspace_privileged_role,
+    require_workspace_write_access,
+    require_csrf_protection,
+)
 from app.core.errors import ApiError
 from app.models import Conversation, Memory, Message, Project, User
 from app.schemas.conversation import ConversationCreate, ConversationOut, MessageCreate, MessageOut
+from app.services.dashscope_client import InferenceTimeoutError, UpstreamServiceError
 from app.services.orchestrator import orchestrate_inference, orchestrate_voice_inference
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -21,6 +32,44 @@ _MOCK_AI_RESPONSES = [
     "感谢您的提问。根据项目的上下文信息，我认为最佳方案如下。",
     "明白了。让我结合已有的记忆节点来为您提供更精准的回答。",
 ]
+
+_ALLOWED_AUDIO_MEDIA_TYPES = {
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/m4a",
+}
+
+
+async def _read_validated_upload(upload: UploadFile, *, kind: str) -> bytes:
+    content_type = (upload.content_type or "").lower()
+    if kind == "image":
+        if content_type not in settings.demo_allowed_media_types:
+            raise ApiError("unsupported_media_type", "Unsupported image upload type", status_code=415)
+    elif kind == "audio":
+        if content_type not in _ALLOWED_AUDIO_MEDIA_TYPES:
+            raise ApiError("unsupported_media_type", "Unsupported audio upload type", status_code=415)
+    else:
+        raise ApiError("bad_request", "Unsupported upload kind", status_code=400)
+
+    payload = await upload.read()
+    if not payload:
+        raise ApiError("empty_upload", f"{kind.capitalize()} upload is empty", status_code=400)
+
+    max_bytes = settings.upload_max_mb * 1024 * 1024
+    if len(payload) > max_bytes:
+        raise ApiError(
+            "payload_too_large",
+            f"{kind.capitalize()} exceeds {settings.upload_max_mb}MB limit",
+            status_code=413,
+        )
+    return payload
 
 
 def _verify_project_ownership(db: Session, project_id: str, workspace_id: str) -> Project:
@@ -34,22 +83,37 @@ def _verify_project_ownership(db: Session, project_id: str, workspace_id: str) -
     return project
 
 
+def _raise_inference_api_error(exc: Exception) -> None:
+    if isinstance(exc, InferenceTimeoutError):
+        raise ApiError("inference_timeout", "Inference timeout", status_code=503) from exc
+    if isinstance(exc, UpstreamServiceError):
+        raise ApiError(
+            "model_api_unavailable",
+            "Model API unavailable",
+            status_code=502,
+            details={"retry_after": 5},
+        ) from exc
+    raise exc
+
+
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
     project_id: str = Query(...),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[ConversationOut]:
-    _ = current_user
     _verify_project_ownership(db, project_id, workspace_id)
 
-    conversations = (
-        db.query(Conversation)
-        .filter(Conversation.project_id == project_id, Conversation.workspace_id == workspace_id)
-        .order_by(Conversation.updated_at.desc())
-        .all()
+    conversations_query = db.query(Conversation).filter(
+        Conversation.project_id == project_id,
+        Conversation.workspace_id == workspace_id,
     )
+    if not is_workspace_privileged_role(workspace_role):
+        conversations_query = conversations_query.filter(Conversation.created_by == current_user.id)
+
+    conversations = conversations_query.order_by(Conversation.updated_at.desc()).all()
     return [ConversationOut.model_validate(c, from_attributes=True) for c in conversations]
 
 
@@ -59,7 +123,8 @@ def create_conversation(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
-    _: None = Depends(require_csrf_protection),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
 ) -> ConversationOut:
     _verify_project_ownership(db, payload.project_id, workspace_id)
 
@@ -79,27 +144,25 @@ def create_conversation(
 def delete_conversation(
     conversation_id: str,
     db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
-    _: None = Depends(require_csrf_protection),
-) -> dict:
-    conversation = (
-        db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.workspace_id == workspace_id)
-        .first()
-    )
-    if not conversation:
-        raise ApiError("not_found", "Conversation not found", status_code=404)
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
+) -> Response:
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
     # Delete temporary memories linked to this conversation
     db.query(Memory).filter(
         Memory.source_conversation_id == conversation_id,
         Memory.type == "temporary",
+        Memory.workspace_id == workspace_id,
     ).delete()
 
     # Delete the conversation (CASCADE handles messages)
     db.delete(conversation)
     db.commit()
-    return {"ok": True}
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
@@ -107,16 +170,10 @@ def list_messages(
     conversation_id: str,
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[MessageOut]:
-    _ = current_user
-    conversation = (
-        db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.workspace_id == workspace_id)
-        .first()
-    )
-    if not conversation:
-        raise ApiError("not_found", "Conversation not found", status_code=404)
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
     messages = (
         db.query(Message)
@@ -131,17 +188,22 @@ def list_messages(
 async def send_message(
     conversation_id: str,
     payload: MessageCreate,
+    request: Request,
     db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
-    _: None = Depends(require_csrf_protection),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
 ) -> MessageOut:
-    conversation = (
-        db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.workspace_id == workspace_id)
-        .first()
+    enforce_rate_limit(
+        request,
+        scope="chat-send",
+        identifier=current_user.id,
+        limit=10,
+        window_seconds=60,
     )
-    if not conversation:
-        raise ApiError("not_found", "Conversation not found", status_code=404)
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
     # Save user message
     user_message = Message(
@@ -171,14 +233,18 @@ async def send_message(
         recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
 
         # Real inference
-        ai_response_text = await orchestrate_inference(
-            db,
-            workspace_id=workspace_id,
-            project_id=conversation.project_id,
-            conversation_id=conversation_id,
-            user_message=payload.content,
-            recent_messages=recent_msgs,
-        )
+        try:
+            ai_response_text = await orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=conversation.project_id,
+                conversation_id=conversation_id,
+                user_message=payload.content,
+                recent_messages=recent_msgs,
+            )
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            _raise_inference_api_error(exc)
 
     # Save AI response
     ai_message = Message(
@@ -217,14 +283,30 @@ async def send_message(
 # ---------------------------------------------------------------------------
 
 
-def _get_conversation_or_404(db: Session, conversation_id: str, workspace_id: str) -> Conversation:
+def _get_conversation_or_404(
+    db: Session,
+    conversation_id: str,
+    workspace_id: str,
+    current_user_id: str,
+    workspace_role: str,
+) -> Conversation:
     """Shared lookup used by voice / image endpoints."""
     conversation = (
         db.query(Conversation)
-        .filter(Conversation.id == conversation_id, Conversation.workspace_id == workspace_id)
+        .join(Project, Project.id == Conversation.project_id)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.workspace_id == workspace_id,
+            Project.workspace_id == workspace_id,
+            Project.deleted_at.is_(None),
+        )
         .first()
     )
-    if not conversation:
+    if not conversation or not can_access_workspace_conversation(
+        current_user_id=current_user_id,
+        workspace_role=workspace_role,
+        conversation_created_by=conversation.created_by,
+    ):
         raise ApiError("not_found", "Conversation not found", status_code=404)
     return conversation
 
@@ -288,27 +370,40 @@ def _build_pipeline_response(ai_msg: Message, result: dict) -> dict:
 @router.post("/conversations/{conversation_id}/voice")
 async def send_voice_message(
     conversation_id: str,
+    request: Request,
     audio: UploadFile = File(...),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
-    _: None = Depends(require_csrf_protection),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
 ) -> dict:
     """Accept an audio file, run ASR → LLM (with memory/RAG) → TTS, return
     the AI text response plus optional base64-encoded audio."""
-    _ = current_user  # noqa: F841 — auth guard only
-    conversation = _get_conversation_or_404(db, conversation_id, workspace_id)
+    enforce_rate_limit(
+        request,
+        scope="chat-send",
+        identifier=current_user.id,
+        limit=10,
+        window_seconds=60,
+    )
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
-    audio_bytes = await audio.read()
+    audio_bytes = await _read_validated_upload(audio, kind="audio")
 
     # Run full voice pipeline
-    result = await orchestrate_voice_inference(
-        db,
-        workspace_id=workspace_id,
-        project_id=conversation.project_id,
-        conversation_id=conversation_id,
-        audio_bytes=audio_bytes,
-    )
+    try:
+        result = await orchestrate_voice_inference(
+            db,
+            workspace_id=workspace_id,
+            project_id=conversation.project_id,
+            conversation_id=conversation_id,
+            audio_bytes=audio_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        _raise_inference_api_error(exc)
 
     # Persist messages
     ai_msg = _save_pipeline_messages(db, conversation, result)
@@ -325,31 +420,44 @@ async def send_voice_message(
 @router.post("/conversations/{conversation_id}/image")
 async def send_image_message(
     conversation_id: str,
+    request: Request,
     image: UploadFile = File(...),
     audio: UploadFile | None = File(None),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
-    _: None = Depends(require_csrf_protection),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
 ) -> dict:
     """Accept an image (+ optional audio), run the multimodal pipeline:
     (optional ASR) + Vision/LLM → TTS, return text + optional audio."""
-    _ = current_user  # noqa: F841 — auth guard only
-    conversation = _get_conversation_or_404(db, conversation_id, workspace_id)
+    enforce_rate_limit(
+        request,
+        scope="chat-send",
+        identifier=current_user.id,
+        limit=10,
+        window_seconds=60,
+    )
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
-    image_bytes = await image.read()
-    audio_bytes = (await audio.read()) if audio else None
+    image_bytes = await _read_validated_upload(image, kind="image")
+    audio_bytes = await _read_validated_upload(audio, kind="audio") if audio else None
 
     # Run full pipeline with image (and optional voice input)
-    result = await orchestrate_voice_inference(
-        db,
-        workspace_id=workspace_id,
-        project_id=conversation.project_id,
-        conversation_id=conversation_id,
-        audio_bytes=audio_bytes,
-        image_bytes=image_bytes,
-        text_input="请描述这张图片" if not audio_bytes else None,
-    )
+    try:
+        result = await orchestrate_voice_inference(
+            db,
+            workspace_id=workspace_id,
+            project_id=conversation.project_id,
+            conversation_id=conversation_id,
+            audio_bytes=audio_bytes,
+            image_bytes=image_bytes,
+            text_input="请描述这张图片" if not audio_bytes else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        _raise_inference_api_error(exc)
 
     # Persist messages
     ai_msg = _save_pipeline_messages(db, conversation, result)

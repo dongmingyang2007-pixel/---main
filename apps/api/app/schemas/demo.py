@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class DemoInferRequest(BaseModel):
@@ -34,3 +34,5 @@ class DemoUploadPresignResponse(BaseModel):
     upload_id: str
     put_url: str
     headers: dict[str, str]
+    fields: dict[str, str] = Field(default_factory=dict)
+    upload_method: Literal["PUT", "POST"] = "PUT"

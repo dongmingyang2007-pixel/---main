@@ -5,14 +5,108 @@ import re
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.entities import Memory, ModelCatalog, PipelineConfig, Project
+from app.models.entities import Conversation, DataItem, Dataset, Memory, ModelCatalog, PipelineConfig, Project
 from app.services.dashscope_client import chat_completion, omni_completion
 from app.services.embedding import search_similar
+from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 
 
 # ---------------------------------------------------------------------------
 # Shared helper: build system prompt + call LLM
 # ---------------------------------------------------------------------------
+
+
+def _load_active_conversation_context(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+) -> tuple[Project, Conversation]:
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.workspace_id == workspace_id,
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not project:
+        raise RuntimeError("project_not_found")
+
+    conversation = (
+        db.query(Conversation)
+        .join(Project, Project.id == Conversation.project_id)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.workspace_id == workspace_id,
+            Conversation.project_id == project_id,
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not conversation:
+        raise RuntimeError("conversation_not_found")
+    return project, conversation
+
+
+def _filter_knowledge_chunks_for_prompt(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    results: list[dict],
+) -> list[dict]:
+    data_item_ids = [result["data_item_id"] for result in results if result.get("data_item_id")]
+    if not data_item_ids:
+        return [result for result in results if not result.get("memory_id")]
+
+    visible_data_item_ids = {
+        data_item_id
+        for data_item_id, in db.query(DataItem.id)
+        .join(Dataset, Dataset.id == DataItem.dataset_id)
+        .join(Project, Project.id == Dataset.project_id)
+        .filter(
+            DataItem.id.in_(data_item_ids),
+            DataItem.deleted_at.is_(None),
+            Dataset.deleted_at.is_(None),
+            Project.id == project_id,
+            Project.workspace_id == workspace_id,
+            Project.deleted_at.is_(None),
+        )
+        .all()
+    }
+    return [
+        result
+        for result in results
+        if result.get("memory_id") is None and result.get("data_item_id") in visible_data_item_ids
+    ]
+
+
+def _load_visible_permanent_memories(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_created_by: str | None,
+) -> list[Memory]:
+    permanent_memories = (
+        db.query(Memory)
+        .filter(
+            Memory.workspace_id == workspace_id,
+            Memory.project_id == project_id,
+            Memory.type == "permanent",
+        )
+        .order_by(Memory.updated_at.desc())
+        .limit(20)
+        .all()
+    )
+    return [
+        memory
+        for memory in permanent_memories
+        if not is_private_memory(memory) or get_memory_owner_user_id(memory) == conversation_created_by
+    ]
 
 
 async def _build_and_call_llm(
@@ -44,24 +138,33 @@ async def _build_and_call_llm(
             query=user_message,
             limit=5,
         )
+        knowledge_chunks = _filter_knowledge_chunks_for_prompt(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            results=knowledge_chunks,
+        )
     except Exception:  # noqa: BLE001
         pass  # RAG failure is non-fatal, continue without knowledge
 
     # 2. Load memories
-    permanent_memories = (
-        db.query(Memory)
-        .filter(
-            Memory.project_id == project_id,
-            Memory.type == "permanent",
-        )
-        .order_by(Memory.updated_at.desc())
-        .limit(20)
-        .all()
+    project, conversation_record = _load_active_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    permanent_memories = _load_visible_permanent_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_created_by=conversation_record.created_by,
     )
 
     temporary_memories = (
         db.query(Memory)
         .filter(
+            Memory.workspace_id == workspace_id,
             Memory.project_id == project_id,
             Memory.type == "temporary",
             Memory.source_conversation_id == conversation_id,
@@ -70,7 +173,6 @@ async def _build_and_call_llm(
     )
 
     # 3. Load project personality
-    project = db.query(Project).filter(Project.id == project_id).first()
     personality = ""
     if project and project.description:
         desc = project.description
@@ -105,17 +207,12 @@ async def _build_and_call_llm(
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})
 
-    try:
-        if image_bytes:
-            # Multimodal call – pass image directly to a vision-capable LLM
-            from app.services.vision_client import chat_with_image
+    if image_bytes:
+        # Multimodal call – pass image directly to a vision-capable LLM
+        from app.services.vision_client import chat_with_image
 
-            response = await chat_with_image(image_bytes, messages, model=llm_model_id)
-        else:
-            response = await chat_completion(messages, model=llm_model_id)
-        return response
-    except Exception as e:  # noqa: BLE001
-        return f"抱歉，AI 暂时无法响应。错误信息：{e!s}"
+        return await chat_with_image(image_bytes, messages, model=llm_model_id)
+    return await chat_completion(messages, model=llm_model_id)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +304,12 @@ async def orchestrate_voice_inference(
     is_omni = "audio_input" in capabilities and "audio_output" in capabilities
 
     if is_omni and (audio_bytes or image_bytes):
+        project, conversation = _load_active_conversation_context(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
         # Omni mode: skip ASR (model understands audio directly)
         # Build context from recent messages
         recent = (
@@ -232,26 +335,31 @@ async def orchestrate_voice_inference(
                 query=user_text if text_input else "voice conversation",
                 limit=5,
             )
+            knowledge_chunks = _filter_knowledge_chunks_for_prompt(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                results=knowledge_chunks,
+            )
         except Exception:  # noqa: BLE001
             pass
 
-        permanent_memories = (
-            db.query(Memory)
-            .filter(Memory.project_id == project_id, Memory.type == "permanent")
-            .order_by(Memory.updated_at.desc())
-            .limit(20)
-            .all()
+        permanent_memories = _load_visible_permanent_memories(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_created_by=conversation.created_by,
         )
         temporary_memories = (
             db.query(Memory)
             .filter(
+                Memory.workspace_id == workspace_id,
                 Memory.project_id == project_id,
                 Memory.type == "temporary",
                 Memory.source_conversation_id == conversation_id,
             )
             .all()
         )
-        project = db.query(Project).filter(Project.id == project_id).first()
         personality = ""
         if project and project.description:
             desc = project.description
@@ -275,16 +383,13 @@ async def orchestrate_voice_inference(
         messages.extend(recent_msgs[-20:])
         messages.append({"role": "user", "content": user_text})
 
-        try:
-            omni_result = await omni_completion(
-                messages,
-                audio_bytes=audio_bytes,
-                image_bytes=image_bytes,
-                model=llm_model_id,
-            )
-            text_response = omni_result["text"]
-        except Exception as e:  # noqa: BLE001
-            text_response = f"抱歉，AI 暂时无法响应。错误信息：{e!s}"
+        omni_result = await omni_completion(
+            messages,
+            audio_bytes=audio_bytes,
+            image_bytes=image_bytes,
+            model=llm_model_id,
+        )
+        text_response = omni_result["text"]
 
         # TTS: still separate for now (omni audio output requires WebSocket streaming)
         audio_response: bytes | None = None

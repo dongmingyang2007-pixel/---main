@@ -5,7 +5,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
+from app.core.deps import (
+    enforce_rate_limit,
+    get_current_user,
+    get_current_workspace_id,
+    get_db_session,
+    require_csrf_protection,
+    require_workspace_write_access,
+)
 from app.core.errors import ApiError
 from app.models import Artifact, Model, ModelAlias, ModelVersion, User
 from app.routers.utils import (
@@ -30,12 +37,13 @@ from app.services.storage import (
     build_download_name_from_object_key,
     build_manual_model_artifact_object_key,
     build_upload_id,
+    create_presigned_post,
     create_presigned_get,
-    create_presigned_put,
     object_exists,
     put_object_bytes,
 )
 from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
+from app.tasks.worker_tasks import cleanup_pending_model_artifact_upload
 
 
 router = APIRouter(prefix="/api/v1/models", tags=["models"])
@@ -43,6 +51,15 @@ router = APIRouter(prefix="/api/v1/models", tags=["models"])
 
 def _artifact_upload_scope(artifact_upload_id: str) -> str:
     return f"model-artifact:{artifact_upload_id}"
+
+
+def _artifact_upload_ttl_seconds(session: dict) -> int:
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, (int, float)):
+        remaining = int(float(expires_at) - datetime.now(timezone.utc).timestamp())
+        return max(1, remaining)
+    return settings.upload_session_ttl_seconds
+
 
 def _model_version_to_dict(db: Session, model_version: ModelVersion, workspace_id: str) -> dict:
     payload = ModelVersionOut.model_validate(model_version, from_attributes=True).model_dump(mode="json")
@@ -97,6 +114,7 @@ def create_model(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)
@@ -165,8 +183,16 @@ def presign_model_artifact_upload(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> ArtifactUploadPresignResponse:
+    enforce_rate_limit(
+        request,
+        scope="model-artifact-presign",
+        identifier=current_user.id,
+        limit=settings.model_artifact_presign_rate_limit_max,
+        window_seconds=settings.model_artifact_presign_rate_limit_window_seconds,
+    )
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
     if not model:
         raise ApiError("not_found", "Model not found", status_code=404)
@@ -186,16 +212,22 @@ def presign_model_artifact_upload(
         artifact_upload_id=artifact_upload_id,
         filename=payload.filename,
     )
-    headers = {"Content-Type": payload.media_type}
+    headers: dict[str, str] = {}
+    fields: dict[str, str] = {}
+    upload_method = "PUT"
     if settings.should_use_proxy_uploads():
         put_url = f"{str(request.base_url).rstrip('/')}/api/v1/models/{model_id}/artifact-uploads/proxy/{artifact_upload_id}"
+        headers = {"Content-Type": payload.media_type}
     else:
-        put_url, headers = create_presigned_put(
+        put_url, fields, headers = create_presigned_post(
             bucket_name=settings.s3_private_bucket,
             object_key=object_key,
             media_type=payload.media_type,
+            max_bytes=payload.size_bytes,
         )
+        upload_method = "POST"
 
+    now = datetime.now(timezone.utc)
     runtime_state.set_json(
         _artifact_upload_scope(artifact_upload_id),
         "session",
@@ -210,13 +242,23 @@ def presign_model_artifact_upload(
             "media_type": payload.media_type,
             "size_bytes": payload.size_bytes,
             "uploaded": False,
+            "expires_at": now.timestamp() + settings.upload_session_ttl_seconds,
         },
         ttl_seconds=settings.upload_session_ttl_seconds,
     )
+    try:
+        cleanup_pending_model_artifact_upload.apply_async(
+            args=[artifact_upload_id, object_key],
+            countdown=settings.upload_session_ttl_seconds,
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return ArtifactUploadPresignResponse(
         artifact_upload_id=artifact_upload_id,
         put_url=put_url,
         headers=headers,
+        fields=fields,
+        upload_method=upload_method,
     )
 
 
@@ -228,6 +270,7 @@ async def proxy_model_artifact_upload(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict[str, bool]:
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
@@ -263,7 +306,7 @@ async def proxy_model_artifact_upload(
         _artifact_upload_scope(artifact_upload_id),
         "session",
         session,
-        ttl_seconds=settings.upload_session_ttl_seconds,
+        ttl_seconds=_artifact_upload_ttl_seconds(session),
     )
     return {"ok": True}
 
@@ -275,6 +318,7 @@ def create_model_version(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
@@ -361,6 +405,7 @@ def update_alias(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
@@ -418,6 +463,7 @@ def rollback_alias(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)

@@ -3,7 +3,13 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
+from app.core.deps import (
+    get_current_user,
+    get_current_workspace_id,
+    get_db_session,
+    require_csrf_protection,
+    require_workspace_write_access,
+)
 from app.core.errors import ApiError
 from app.models import PipelineConfig, Project, User
 from app.schemas.project import PaginatedProjects, ProjectCreate, ProjectOut, ProjectUpdate
@@ -35,6 +41,7 @@ def create_project(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> ProjectOut:
     project = Project(workspace_id=workspace_id, name=payload.name, description=payload.description)
@@ -59,6 +66,12 @@ def create_project(
                 project_id=project.id,
                 model_type="tts",
                 model_id="cosyvoice-v1",
+                config_json={},
+            ),
+            PipelineConfig(
+                project_id=project.id,
+                model_type="vision",
+                model_id="qwen-vl-plus",
                 config_json={},
             ),
         ]
@@ -99,6 +112,7 @@ def update_project(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> ProjectOut:
     project = (
@@ -134,6 +148,7 @@ def delete_project(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     project = (

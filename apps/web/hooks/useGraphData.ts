@@ -37,6 +37,15 @@ export interface MemoryEdge {
   target?: string | MemoryNode;
 }
 
+export interface MemoryFileAttachment {
+  id: string;
+  memory_id: string;
+  data_item_id: string;
+  filename?: string | null;
+  media_type?: string | null;
+  created_at: string;
+}
+
 interface GraphData {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
@@ -86,6 +95,12 @@ export function useGraphData(projectId: string, conversationId?: string) {
   const [loading, setLoading] = useState(true);
 
   const fetchGraph = useCallback(async () => {
+    if (!projectId) {
+      setData({ nodes: [], edges: [] });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     try {
       const params = new URLSearchParams({ project_id: projectId });
       if (conversationId) params.set("conversation_id", conversationId);
@@ -93,6 +108,7 @@ export function useGraphData(projectId: string, conversationId?: string) {
       setData(result);
     } catch {
       // show empty graph on error
+      setData({ nodes: [], edges: [] });
     } finally {
       setLoading(false);
     }
@@ -109,10 +125,10 @@ export function useGraphData(projectId: string, conversationId?: string) {
 
     function connect() {
       const apiBase = getApiBaseUrl();
-      eventSource = new EventSource(
-        `${apiBase}/api/v1/memory/${projectId}/stream`,
-        { withCredentials: true }
-      );
+      const streamPath = conversationId
+        ? `/api/v1/chat/conversations/${conversationId}/memory-stream`
+        : `/api/v1/memory/${projectId}/stream`;
+      eventSource = new EventSource(`${apiBase}${streamPath}`, { withCredentials: true });
 
       eventSource.addEventListener("new_memory", (event) => {
         try {
@@ -215,9 +231,23 @@ export function useGraphData(projectId: string, conversationId?: string) {
     }));
   };
 
+  const attachFileToMemory = async (memoryId: string, dataItemId: string) => {
+    const file = await apiPost<MemoryFileAttachment>(`/api/v1/memory/${memoryId}/files`, {
+      data_item_id: dataItemId,
+    });
+    await fetchGraph();
+    return file;
+  };
+
+  const detachFileFromMemory = async (memoryFileId: string) => {
+    await apiDelete(`/api/v1/memory/files/${memoryFileId}`);
+    await fetchGraph();
+  };
+
   return {
     data, loading, refetch: fetchGraph,
     createMemory, updateMemory, deleteMemory, promoteMemory,
     createEdge, deleteEdge,
+    attachFileToMemory, detachFileFromMemory,
   };
 }

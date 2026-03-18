@@ -1,5 +1,6 @@
 import json
 from random import randint
+import time
 from uuid import uuid4
 
 import httpx
@@ -20,10 +21,11 @@ from app.services.runtime_state import runtime_state
 from app.services.storage import (
     build_demo_object_key,
     build_upload_id,
-    create_presigned_put,
+    create_presigned_post,
     put_object_bytes,
 )
 from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
+from app.tasks.worker_tasks import cleanup_pending_demo_request
 
 
 router = APIRouter(prefix="/api/v1/demo", tags=["demo"])
@@ -35,6 +37,14 @@ def _demo_request_scope(request_id: str) -> str:
 
 def _demo_upload_scope(upload_id: str) -> str:
     return f"demo:upload:{upload_id}"
+
+
+def _demo_session_ttl_seconds(session: dict) -> int:
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, (int, float)):
+        remaining = int(float(expires_at) - time.time())
+        return max(1, remaining)
+    return settings.demo_request_ttl_seconds
 
 
 def _release_demo_slot(client_ip: str, session: dict | None = None) -> None:
@@ -76,16 +86,22 @@ def demo_presign_upload(payload: DemoUploadPresignRequest, request: Request) -> 
     request_id = str(uuid4())
     upload_id = build_upload_id()
     object_key = build_demo_object_key(request_id=request_id, filename=payload.filename)
-    headers = {"Content-Type": payload.media_type}
+    headers: dict[str, str] = {}
+    fields: dict[str, str] = {}
+    upload_method = "PUT"
     if settings.should_use_proxy_uploads():
         put_url = f"{str(request.base_url).rstrip('/')}/api/v1/demo/upload/{upload_id}"
+        headers = {"Content-Type": payload.media_type}
     else:
-        put_url, headers = create_presigned_put(
+        put_url, fields, headers = create_presigned_post(
             bucket_name=settings.s3_demo_bucket,
             object_key=object_key,
             media_type=payload.media_type,
+            max_bytes=payload.size_bytes,
         )
+        upload_method = "POST"
 
+    expires_at = time.time() + settings.demo_request_ttl_seconds
     runtime_state.set_json(
         _demo_request_scope(request_id),
         "session",
@@ -99,6 +115,7 @@ def demo_presign_upload(payload: DemoUploadPresignRequest, request: Request) -> 
             "uploaded": False,
             "infer_count": 0,
             "slot_released": False,
+            "expires_at": expires_at,
         },
         ttl_seconds=settings.demo_request_ttl_seconds,
     )
@@ -111,15 +128,25 @@ def demo_presign_upload(payload: DemoUploadPresignRequest, request: Request) -> 
             "media_type": payload.media_type,
             "size_bytes": payload.size_bytes,
             "client_ip": client_ip,
+            "expires_at": expires_at,
         },
         ttl_seconds=settings.demo_request_ttl_seconds,
     )
+    try:
+        cleanup_pending_demo_request.apply_async(
+            args=[request_id, object_key, upload_id, client_ip],
+            countdown=settings.demo_request_ttl_seconds,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     return DemoUploadPresignResponse(
         request_id=request_id,
         upload_id=upload_id,
         put_url=put_url,
         headers=headers,
+        fields=fields,
+        upload_method=upload_method,
     )
 
 
@@ -156,7 +183,7 @@ async def demo_upload(upload_id: str, request: Request) -> dict[str, bool]:
             _demo_request_scope(upload["request_id"]),
             "session",
             request_session,
-            ttl_seconds=settings.demo_request_ttl_seconds,
+            ttl_seconds=_demo_session_ttl_seconds(request_session),
         )
     runtime_state.delete(_demo_upload_scope(upload_id), "session")
     return {"ok": True}
@@ -198,7 +225,7 @@ async def demo_infer(
             _demo_request_scope(payload.request_id),
             "session",
             session,
-            ttl_seconds=settings.demo_request_ttl_seconds,
+            ttl_seconds=_demo_session_ttl_seconds(session),
         )
     if session.get("infer_count", 0) >= settings.demo_max_infer_count:
         raise ApiError("rate_limited", "Demo request inference limit reached", status_code=429)
@@ -220,13 +247,12 @@ async def demo_infer(
             tts_text = "我看到了文字，QIHANG DEMO。"
 
         session["infer_count"] = session.get("infer_count", 0) + 1
-        if session["infer_count"] >= settings.demo_max_infer_count:
-            _release_demo_slot(client_ip, session)
+        _release_demo_slot(client_ip, session)
         runtime_state.set_json(
             _demo_request_scope(payload.request_id),
             "session",
             session,
-            ttl_seconds=settings.demo_request_ttl_seconds,
+            ttl_seconds=_demo_session_ttl_seconds(session),
         )
         return DemoInferResponse(
             request_id=request_id,
@@ -275,6 +301,13 @@ async def demo_infer(
             meta_json={"reason": "upstream_error", "error_type": type(exc).__name__},
         )
         db.commit()
+        _release_demo_slot(client_ip, session)
+        runtime_state.set_json(
+            _demo_request_scope(payload.request_id),
+            "session",
+            session,
+            ttl_seconds=_demo_session_ttl_seconds(session),
+        )
         raise ApiError("inference_failed", "Inference request failed", status_code=502) from exc
     if len(body) > 1024 * 1024:
         write_audit_log(
@@ -287,16 +320,22 @@ async def demo_infer(
             meta_json={"reason": "response_too_large"},
         )
         db.commit()
+        _release_demo_slot(client_ip, session)
+        runtime_state.set_json(
+            _demo_request_scope(payload.request_id),
+            "session",
+            session,
+            ttl_seconds=_demo_session_ttl_seconds(session),
+        )
         raise ApiError("response_too_large", "Inference response exceeded size limit", status_code=502)
     data = json.loads(body.decode("utf-8"))
     session["infer_count"] = session.get("infer_count", 0) + 1
-    if session["infer_count"] >= settings.demo_max_infer_count:
-        _release_demo_slot(client_ip, session)
+    _release_demo_slot(client_ip, session)
     runtime_state.set_json(
         _demo_request_scope(payload.request_id),
         "session",
         session,
-        ttl_seconds=settings.demo_request_ttl_seconds,
+        ttl_seconds=_demo_session_ttl_seconds(session),
     )
     write_audit_log(
         db,

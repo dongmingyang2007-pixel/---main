@@ -16,6 +16,7 @@ from app.core.deps import (
     get_current_workspace_id,
     get_db_session,
     require_csrf_protection,
+    require_workspace_write_access,
 )
 from app.core.errors import ApiError
 from app.core.sanitize import strip_object_key_fields
@@ -96,6 +97,7 @@ def create_job(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)

@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 from collections.abc import Generator
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import Cookie, Depends, Request, Response
@@ -12,6 +13,10 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.models import Membership, User
 from app.services.runtime_state import runtime_state
+
+_AUTH_TOKEN_STATE_SCOPE = "auth_token_state"
+_WORKSPACE_WRITE_ROLES = {"owner", "admin", "editor"}
+_WORKSPACE_PRIVILEGED_ROLES = {"owner", "admin"}
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -30,6 +35,10 @@ def get_current_user(
     except ValueError as exc:
         raise ApiError("unauthorized", "Invalid token", status_code=401) from exc
     user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        raise ApiError("unauthorized", "Invalid token", status_code=401)
+    if is_token_revoked_for_user(user_id, payload):
+        raise ApiError("unauthorized", "Invalid token", status_code=401)
     user = db.get(User, user_id)
     if not user:
         raise ApiError("unauthorized", "User not found", status_code=401)
@@ -38,23 +47,68 @@ def get_current_user(
     return user
 
 
-def get_current_workspace_id(
+def get_current_workspace_membership(
     request: Request,
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
-) -> str:
+) -> Membership:
     workspace_id = request.headers.get("x-workspace-id")
-    membership_query = db.query(Membership).filter(Membership.user_id == current_user.id)
+    memberships = (
+        db.query(Membership)
+        .filter(Membership.user_id == current_user.id)
+        .order_by(Membership.workspace_id.asc())
+        .all()
+    )
     if workspace_id:
-        membership = membership_query.filter(Membership.workspace_id == workspace_id).first()
+        membership = next((item for item in memberships if item.workspace_id == workspace_id), None)
         if not membership:
             raise ApiError("forbidden", "Workspace access denied", status_code=403)
-        return workspace_id
+    else:
+        if not memberships:
+            raise ApiError("forbidden", "No workspace membership", status_code=403)
+        if len(memberships) > 1:
+            raise ApiError("workspace_required", "Workspace selection is required", status_code=409)
+        membership = memberships[0]
 
-    first_membership = membership_query.first()
-    if not first_membership:
-        raise ApiError("forbidden", "No workspace membership", status_code=403)
-    return first_membership.workspace_id
+    request.state.workspace_role = membership.role
+    return membership
+
+
+def get_current_workspace_id(
+    membership: Membership = Depends(get_current_workspace_membership),
+) -> str:
+    return membership.workspace_id
+
+
+def get_current_workspace_role(
+    membership: Membership = Depends(get_current_workspace_membership),
+) -> str:
+    return membership.role or "owner"
+
+
+def is_workspace_write_role(role: str) -> bool:
+    return role in _WORKSPACE_WRITE_ROLES
+
+
+def is_workspace_privileged_role(role: str) -> bool:
+    return role in _WORKSPACE_PRIVILEGED_ROLES
+
+
+def can_access_workspace_conversation(
+    *,
+    current_user_id: str,
+    workspace_role: str,
+    conversation_created_by: str | None,
+) -> bool:
+    return is_workspace_privileged_role(workspace_role) or conversation_created_by == current_user_id
+
+
+def require_workspace_write_access(
+    workspace_role: str = Depends(get_current_workspace_role),
+) -> None:
+    if is_workspace_write_role(workspace_role):
+        return
+    raise ApiError("forbidden", "Workspace role does not permit this action", status_code=403)
 
 
 def get_client_ip(request: Request) -> str:
@@ -81,6 +135,36 @@ def require_allowed_origin(request: Request) -> None:
 
 def _build_access_token_hash(access_token: str) -> str:
     return hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+
+
+def _coerce_timestamp(value: object) -> float | None:
+    if isinstance(value, datetime):
+        return value.timestamp()
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def is_token_revoked_for_user(user_id: str, payload: dict[str, object]) -> bool:
+    auth_state = runtime_state.get_json(_AUTH_TOKEN_STATE_SCOPE, user_id)
+    if not auth_state:
+        return False
+    not_before = _coerce_timestamp(auth_state.get("not_before"))
+    if not_before is None:
+        return False
+    issued_at = _coerce_timestamp(payload.get("iat"))
+    if issued_at is None:
+        return True
+    return issued_at < not_before
+
+
+def revoke_user_tokens(user_id: str) -> None:
+    runtime_state.set_json(
+        _AUTH_TOKEN_STATE_SCOPE,
+        user_id,
+        {"not_before": datetime.now(timezone.utc).timestamp()},
+        ttl_seconds=max(settings.jwt_expire_minutes * 60, settings.csrf_ttl_seconds),
+    )
 
 
 def set_auth_cookie(response: Response, token: str) -> None:
@@ -153,6 +237,24 @@ def issue_csrf_token(response: Response, access_token: str, user_id: str) -> str
     return csrf_token
 
 
+def get_active_csrf_token(
+    *,
+    access_token: str | None,
+    csrf_cookie: str | None,
+    user_id: str,
+) -> str | None:
+    if not access_token or not csrf_cookie:
+        return None
+    csrf_state = runtime_state.get_json("csrf", _build_access_token_hash(access_token))
+    if not csrf_state:
+        return None
+    if csrf_state.get("token") != csrf_cookie:
+        return None
+    if csrf_state.get("user_id") != user_id:
+        return None
+    return csrf_cookie
+
+
 def require_csrf_protection(
     request: Request,
     current_user: User = Depends(get_current_user),
@@ -166,8 +268,12 @@ def require_csrf_protection(
         raise ApiError("csrf_required", "CSRF token is required", status_code=403)
     if header_token != csrf_cookie:
         raise ApiError("csrf_mismatch", "CSRF token mismatch", status_code=403)
-    csrf_state = runtime_state.get_json("csrf", _build_access_token_hash(access_token))
-    if not csrf_state or csrf_state.get("token") != header_token:
+    active_token = get_active_csrf_token(
+        access_token=access_token,
+        csrf_cookie=csrf_cookie,
+        user_id=current_user.id,
+    )
+    if active_token != header_token:
         raise ApiError("csrf_invalid", "CSRF token is invalid or expired", status_code=403)
 
 

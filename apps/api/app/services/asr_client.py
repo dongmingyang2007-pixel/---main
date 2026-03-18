@@ -4,6 +4,7 @@ import json
 import httpx
 import websockets
 from app.core.config import settings
+from app.services.dashscope_client import raise_upstream_error
 
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
@@ -37,31 +38,34 @@ async def transcribe_audio(
     mime = mime_map.get(ext, "audio/wav")
     data_url = f"data:{mime};base64,{audio_b64}"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{DASHSCOPE_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.dashscope_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_audio",
-                                "input_audio": {"data": data_url},
-                            }
-                        ],
-                    }
-                ],
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{DASHSCOPE_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.dashscope_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {"data": data_url},
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        raise_upstream_error(exc)
 
 
 async def transcribe_audio_realtime(
@@ -85,50 +89,53 @@ async def transcribe_audio_realtime(
 
     transcript_parts: list[str] = []
 
-    async with websockets.connect(ws_url, additional_headers=headers) as ws:
-        # 1. Configure session
-        await ws.send(json.dumps({
-            "type": "session.update",
-            "session": {
-                "modalities": ["text"],
-                "input_audio_format": "pcm",
-                "sample_rate": sample_rate,
-                "input_audio_transcription": {"language": "zh"},
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.0,
-                    "silence_duration_ms": 400,
-                },
-            },
-        }))
-
-        # Wait for session.updated confirmation
-        await ws.recv()
-
-        # 2. Send audio in chunks (16 KB each, base64-encoded)
-        chunk_size = 16384
-        audio_b64 = base64.b64encode(audio_bytes).decode()
-        for i in range(0, len(audio_b64), chunk_size):
-            chunk = audio_b64[i : i + chunk_size]
+    try:
+        async with websockets.connect(ws_url, additional_headers=headers) as ws:
+            # 1. Configure session
             await ws.send(json.dumps({
-                "type": "input_audio_buffer.append",
-                "audio": chunk,
+                "type": "session.update",
+                "session": {
+                    "modalities": ["text"],
+                    "input_audio_format": "pcm",
+                    "sample_rate": sample_rate,
+                    "input_audio_transcription": {"language": "zh"},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.0,
+                        "silence_duration_ms": 400,
+                    },
+                },
             }))
 
-        # 3. Signal end
-        await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-        await ws.send(json.dumps({"type": "session.finish"}))
+            # Wait for session.updated confirmation
+            await ws.recv()
 
-        # 4. Collect transcription results
-        async for message in ws:
-            event = json.loads(message)
-            event_type = event.get("type", "")
+            # 2. Send audio in chunks (16 KB each, base64-encoded)
+            chunk_size = 16384
+            audio_b64 = base64.b64encode(audio_bytes).decode()
+            for i in range(0, len(audio_b64), chunk_size):
+                chunk = audio_b64[i : i + chunk_size]
+                await ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": chunk,
+                }))
 
-            if event_type == "conversation.item.input_audio_transcription.completed":
-                transcript_parts.append(event.get("transcript", ""))
-            elif event_type == "session.finished":
-                break
-            elif event_type == "error":
-                raise RuntimeError(f"ASR WebSocket error: {event}")
+            # 3. Signal end
+            await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+            await ws.send(json.dumps({"type": "session.finish"}))
+
+            # 4. Collect transcription results
+            async for message in ws:
+                event = json.loads(message)
+                event_type = event.get("type", "")
+
+                if event_type == "conversation.item.input_audio_transcription.completed":
+                    transcript_parts.append(event.get("transcript", ""))
+                elif event_type == "session.finished":
+                    break
+                elif event_type == "error":
+                    raise RuntimeError(f"ASR WebSocket error: {event}")
+    except Exception as exc:  # noqa: BLE001
+        raise_upstream_error(exc)
 
     return "".join(transcript_parts)

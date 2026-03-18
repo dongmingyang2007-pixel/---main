@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { apiPost, uploadToPresignedUrl } from "@/lib/api";
+import { apiPost, buildPresignedUploadInit, uploadToPresignedUrl } from "@/lib/api";
 
 export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -19,6 +19,8 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
         upload_id: string;
         put_url: string;
         headers: Record<string, string>;
+        fields: Record<string, string>;
+        upload_method: "PUT" | "POST";
         data_item_id: string;
       }>("/api/v1/uploads/presign", {
         dataset_id: datasetId,
@@ -29,11 +31,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
 
       const putRes = await uploadToPresignedUrl(
         presign.put_url,
-        {
-          method: "PUT",
-          headers: presign.headers,
-          body: file,
-        },
+        buildPresignedUploadInit(presign, file),
         { authenticated: true },
       );
       if (!putRes.ok) {
@@ -89,6 +87,7 @@ export function Uploader({ datasetId, onDone }: { datasetId: string; onDone?: ()
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
+                e.target.value = "";
                 if (f) void onUpload(f);
               }}
             />

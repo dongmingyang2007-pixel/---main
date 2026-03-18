@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ModelCreate(BaseModel):
@@ -22,7 +22,7 @@ class ModelOut(BaseModel):
 class ModelVersionCreate(BaseModel):
     run_id: str | None = None
     artifact_upload_id: str | None = None
-    metrics_json: dict[str, Any] = {}
+    metrics_json: dict[str, Any] = Field(default_factory=dict)
     notes: str | None = None
 
 
@@ -58,3 +58,5 @@ class ArtifactUploadPresignResponse(BaseModel):
     artifact_upload_id: str
     put_url: str
     headers: dict[str, str]
+    fields: dict[str, str] = Field(default_factory=dict)
+    upload_method: Literal["PUT", "POST"] = "PUT"

@@ -43,10 +43,13 @@ test("capture custom GLB viewer screenshots", async ({ page }) => {
   await page.goto(VIEWER_URL);
 
   await expect
-    .poll(async () => await page.evaluate(() => (window as unknown as ViewerWindow).__QIHANG_RENDER_MODE || null), {
+    .poll(async () => {
+      const mode = await page.evaluate(() => (window as unknown as ViewerWindow).__QIHANG_RENDER_MODE || null);
+      return mode === "webgl" || mode === "headless";
+    }, {
       timeout: 45_000,
     })
-    .toBe("webgl");
+    .toBeTruthy();
 
   await expect
     .poll(async () => String((await viewerGetState(page))?.glb_visual_url || ""), {

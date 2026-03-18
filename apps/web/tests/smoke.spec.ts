@@ -73,5 +73,5 @@ test("console pages load correctly against mocked API", async ({ page }) => {
   // Training page loads and shows job list
   await page.goto("/app/training");
   await expect(page.getByRole("heading", { name: "训练中心", exact: true })).toBeVisible();
-  await expect(page.getByText(/job-seed/i)).toBeVisible();
+  await expect(page.getByRole("table", { name: "训练任务列表" }).getByText(/baseline/i)).toBeVisible();
 });

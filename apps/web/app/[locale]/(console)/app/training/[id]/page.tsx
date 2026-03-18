@@ -11,6 +11,7 @@ import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet } from "@/lib/api";
 import { getApiBaseUrl } from "@/lib/env";
+import { getSafeExternalUrl } from "@/lib/security";
 
 type MetricPoint = { key: string; value: number; step: number };
 type ArtifactItem = { id: string; name: string; download_url: string };
@@ -215,14 +216,19 @@ export default function TrainingDetailPage() {
                       <div className="console-empty">{t("detail.noArtifacts")}</div>
                     ) : (
                       <div className="space-y-3">
-                        {job.summary_json.artifacts.map((artifact) => (
-                          <div key={artifact.id} className="console-key-item">
-                            <div className="console-key-label">{artifact.name}</div>
-                            <a className="console-link mt-2 inline-flex" href={artifact.download_url} target="_blank" rel="noreferrer">
-                              {t("detail.openArtifact")}
-                            </a>
-                          </div>
-                        ))}
+                        {job.summary_json.artifacts.map((artifact) => {
+                          const downloadUrl = getSafeExternalUrl(artifact.download_url);
+                          return (
+                            <div key={artifact.id} className="console-key-item">
+                              <div className="console-key-label">{artifact.name}</div>
+                              {downloadUrl ? (
+                                <a className="console-link mt-2 inline-flex" href={downloadUrl} target="_blank" rel="noreferrer noopener">
+                                  {t("detail.openArtifact")}
+                                </a>
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

@@ -1,15 +1,18 @@
 "use client";
 
 import { Link, useRouter } from "@/i18n/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { gsap } from "@/lib/gsap-register";
 
 import { MagneticButton } from "@/components/MagneticButton";
 import { apiPost, persistWorkspaceId } from "@/lib/api";
+import { getSafeNavigationPath } from "@/lib/security";
 
-export default function RegisterPage() {
+function RegisterPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,6 +29,7 @@ export default function RegisterPage() {
   const sectionRef = useRef<HTMLElement>(null);
 
   const t = useTranslations("auth");
+  const nextPath = getSafeNavigationPath(searchParams.get("next"));
 
   useEffect(() => {
     const el = sectionRef.current;
@@ -92,7 +96,7 @@ export default function RegisterPage() {
         },
       );
       persistWorkspaceId(auth.workspace.id, auth.access_token_expires_in_seconds);
-      router.push("/app");
+      router.push(nextPath || "/app");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("register.error"));
@@ -287,5 +291,13 @@ export default function RegisterPage() {
         )}
       </div>
     </section>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterPageContent />
+    </Suspense>
   );
 }

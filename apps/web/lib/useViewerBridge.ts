@@ -10,6 +10,7 @@ import {
   VIEWER_MESSAGE_SET_STATE,
   VIEWER_MESSAGE_STATE,
 } from "@/lib/qihang-viewer-contract";
+import { getTrustedPostMessageOrigin } from "@/lib/security";
 
 export type ViewerBridgeOptions = {
   enabled: boolean;
@@ -58,16 +59,17 @@ export function useViewerBridge({ enabled, deferredSrc }: ViewerBridgeOptions): 
   const postToViewer = useCallback((type: string, payload?: unknown): boolean => {
     const targetWindow = iframeRef.current?.contentWindow;
     if (!targetWindow) return false;
+    const targetOrigin = getTrustedPostMessageOrigin(deferredSrc);
     targetWindow.postMessage(
       {
         source: QIHANG_WEB_SOURCE,
         type,
         payload,
       },
-      "*",
+      targetOrigin,
     );
     return true;
-  }, []);
+  }, [deferredSrc]);
 
   const startHandshake = useCallback(
     (reason: string) => {
@@ -169,6 +171,7 @@ export function useViewerBridge({ enabled, deferredSrc }: ViewerBridgeOptions): 
 
       const targetWindow = iframeRef.current?.contentWindow;
       if (!targetWindow || !viewerReadyRef.current) return;
+      const targetOrigin = getTrustedPostMessageOrigin(deferredSrc);
 
       targetWindow.postMessage(
         {
@@ -176,10 +179,10 @@ export function useViewerBridge({ enabled, deferredSrc }: ViewerBridgeOptions): 
           type: VIEWER_MESSAGE_SET_STATE,
           payload: patch,
         },
-        "*",
+        targetOrigin,
       );
     },
-    [enabled],
+    [deferredSrc, enabled],
   );
 
   return {

@@ -5640,6 +5640,10 @@ button {
   background: var(--bg-base);
 }
 
+.icon-bar-item svg {
+  pointer-events: none;
+}
+
 .icon-bar-item.is-active {
   color: var(--accent);
   background: var(--accent-soft);
@@ -7451,11 +7455,65 @@ button {
   flex-shrink: 0;
 }
 
+.graph-filters.is-collapsed {
+  width: 52px;
+  min-width: 52px;
+  padding: 12px 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.graph-filters-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .graph-filters-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 12px;
+}
+
+.graph-filters-toggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button, 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.graph-filters-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft, rgba(200, 115, 74, 0.1));
+}
+
+.graph-filters-toggle-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.graph-filters-toggle-count {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.graph-filters.is-collapsed .graph-filters-toggle {
+  width: 36px;
+  height: 64px;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .graph-filters-section {
@@ -7637,6 +7695,19 @@ button {
   color: var(--text-primary);
 }
 
+.graph-detail-related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-light, var(--border));
+}
+
+.graph-detail-related-item:last-child {
+  border-bottom: none;
+}
+
 .graph-detail-textarea {
   width: 100%;
   min-height: 100px;
@@ -7672,6 +7743,30 @@ button {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft, rgba(200, 115, 74, 0.15));
+}
+
+.graph-detail-select {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input, 10px);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.graph-detail-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft, rgba(200, 115, 74, 0.15));
+}
+
+.graph-detail-inline-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .graph-detail-actions {
@@ -8159,9 +8254,15 @@ button {
 .model-detail-section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
 .model-detail-caps { display: flex; gap: 8px; flex-wrap: wrap; }
 .model-detail-cap { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); background: var(--bg-base); padding: 4px 10px; border-radius: 6px; }
+.model-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.model-detail-stat { border: 1px solid var(--border-light, var(--border)); border-radius: 12px; padding: 12px; background: var(--bg-surface); }
+.model-detail-stat-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
 .model-detail-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .model-detail-table th { text-align: left; padding: 8px 12px; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
 .model-detail-table td { padding: 8px 12px; font-size: 13px; color: var(--text-primary); border-bottom: 1px solid var(--border-light); }
+.model-detail-note { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+.model-detail-support { display: inline-flex; align-items: center; justify-content: center; min-width: 72px; padding: 4px 10px; border-radius: 999px; background: rgba(196, 74, 74, 0.08); color: var(--error); font-size: 11px; font-weight: 600; }
+.model-detail-support.is-on { background: rgba(74, 138, 200, 0.12); color: #4a8ac8; }
 
 /* ── Model Picker Modal ─────────────────────── */
 

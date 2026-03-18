@@ -27,6 +27,8 @@ class PartSpec:
 PART_SPECS = (
     PartSpec("Base Shell", "Case_Base_Shell", "#4b5563", include_subtree=False),
     PartSpec("Base Tray", "Case_Base_Linear_Tray_V3", "#c2410c", include_subtree=False),
+    PartSpec("Base Platform", "Case_Base_Platform_V4", "#c2410c", include_subtree=False),
+    PartSpec("Base Ramp", "Case_Base_Arc_Ramp_V4", "#f59e0b", include_subtree=False),
     PartSpec("Lid Shell", "Case_Lid_Shell", "#9ca3af", include_subtree=False),
     PartSpec("Earbud L", "Earbud_Left", "#2563eb"),
     PartSpec("Earbud R", "Earbud_Right", "#0f766e"),
@@ -228,8 +230,12 @@ def draw_layout_panel(
     base_geometry = part_geometries["Case_Base_Shell"]
     base_segments = segments_from_triangles(base_geometry["triangles"], dims)
     ax.add_collection(mc.LineCollection(base_segments, linewidths=0.15, colors=base_geometry["color"], alpha=0.35))
-    tray_geometry = part_geometries.get("Case_Base_Linear_Tray_V3")
-    if tray_geometry:
+    tray_geometries = [
+        part_geometries[name]
+        for name in ("Case_Base_Linear_Tray_V3", "Case_Base_Platform_V4", "Case_Base_Arc_Ramp_V4")
+        if name in part_geometries
+    ]
+    for tray_geometry in tray_geometries:
         tray_segments = segments_from_triangles(tray_geometry["triangles"], dims)
         ax.add_collection(mc.LineCollection(tray_segments, linewidths=0.35, colors=tray_geometry["color"], alpha=0.7))
 
@@ -258,8 +264,7 @@ def draw_layout_panel(
     x_values = []
     y_values = []
     geometry_sequence = [part_geometries["Case_Base_Shell"], part_geometries["Earbud_Left"], part_geometries["Earbud_Right"], part_geometries["Brooch_Camera"]]
-    if tray_geometry:
-        geometry_sequence.append(tray_geometry)
+    geometry_sequence.extend(tray_geometries)
     for geometry in geometry_sequence:
         mins, maxs = geometry["bbox"]
         x_values.extend((mins[dims[0]] * 1000.0, maxs[dims[0]] * 1000.0))
@@ -354,6 +359,8 @@ def main() -> None:
 
     part_geometries: dict[str, dict[str, object]] = {}
     for spec in PART_SPECS:
+        if spec.node_name not in node_lookup:
+            continue
         root_index = node_lookup[spec.node_name]
         node_indices = collect_subtree_node_indices(gltf, root_index) if spec.include_subtree else [root_index]
 

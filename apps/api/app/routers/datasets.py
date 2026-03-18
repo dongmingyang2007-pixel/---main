@@ -6,7 +6,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import get_current_user, get_current_workspace_id, get_db_session, require_csrf_protection
+from app.core.deps import (
+    get_current_user,
+    get_current_workspace_id,
+    get_db_session,
+    require_csrf_protection,
+    require_workspace_write_access,
+)
 from app.core.errors import ApiError
 from app.core.sanitize import strip_object_key_fields
 from app.models import Annotation, DataItem, Dataset, DatasetVersion, User
@@ -32,6 +38,11 @@ def _sanitize_item_meta(meta_json: dict | None) -> dict:
     return strip_object_key_fields(meta_json or {})
 
 
+def _is_completed_data_item(item: DataItem) -> bool:
+    status = (item.meta_json or {}).get("upload_status")
+    return status in {None, "completed"}
+
+
 def _build_annotation_out(annotation: Annotation) -> AnnotationOut:
     return AnnotationOut(
         id=annotation.id,
@@ -41,19 +52,31 @@ def _build_annotation_out(annotation: Annotation) -> AnnotationOut:
     )
 
 
-def _get_tagged_item_ids(db: Session, *, dataset_id: str, tag: str) -> set[str]:
-    return {
-        ann.data_item_id
-        for ann in db.query(Annotation)
+def _get_tagged_item_ids(
+    db: Session,
+    *,
+    dataset_id: str,
+    tag: str,
+    item_ids: set[str] | None = None,
+) -> set[str]:
+    if item_ids is not None and not item_ids:
+        return set()
+    query = (
+        db.query(Annotation)
         .join(DataItem, DataItem.id == Annotation.data_item_id)
         .filter(
             Annotation.type == "tag",
             DataItem.dataset_id == dataset_id,
             DataItem.deleted_at.is_(None),
         )
-        .all()
-        if tag in (ann.payload_json.get("tags") or [])
-    }
+    )
+    if item_ids is not None:
+        query = query.filter(DataItem.id.in_(sorted(item_ids)))
+    tagged_item_ids: set[str] = set()
+    for ann in query.all():
+        if tag in (ann.payload_json.get("tags") or []):
+            tagged_item_ids.add(ann.data_item_id)
+    return tagged_item_ids
 
 
 def _build_data_item_out(item: DataItem) -> DataItemOut:
@@ -106,6 +129,7 @@ def create_dataset(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> DatasetOut:
     project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)
@@ -145,6 +169,7 @@ def delete_dataset(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     dataset = get_dataset_in_workspace(db, dataset_id=dataset_id, workspace_id=workspace_id)
@@ -183,12 +208,11 @@ def list_items(
         raise ApiError("not_found", "Dataset not found", status_code=404)
 
     query = db.query(DataItem).filter(DataItem.dataset_id == dataset_id, DataItem.deleted_at.is_(None))
+    items = [item for item in query.order_by(DataItem.created_at.desc()).all() if _is_completed_data_item(item)]
     if tag:
-        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset_id, tag=tag)
-        if not tagged_item_ids:
-            return []
-        query = query.filter(DataItem.id.in_(sorted(tagged_item_ids)))
-    items = query.offset(offset).limit(limit).all()
+        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset_id, tag=tag, item_ids={item.id for item in items})
+        items = [item for item in items if item.id in tagged_item_ids]
+    items = items[offset : offset + limit]
 
     item_ids = [item.id for item in items]
     annotations_by_item_id: dict[str, list[Annotation]] = {item_id: [] for item_id in item_ids}
@@ -235,10 +259,13 @@ def create_annotation(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     item = get_data_item_in_workspace(db, data_item_id=data_item_id, workspace_id=workspace_id)
     if not item:
+        raise ApiError("not_found", "Data item not found", status_code=404)
+    if not _is_completed_data_item(item):
         raise ApiError("not_found", "Data item not found", status_code=404)
 
     annotation = Annotation(
@@ -263,6 +290,8 @@ def get_data_item(
     item = get_data_item_in_workspace(db, data_item_id=data_item_id, workspace_id=workspace_id)
     if not item:
         raise ApiError("not_found", "Data item not found", status_code=404)
+    if not _is_completed_data_item(item):
+        raise ApiError("not_found", "Data item not found", status_code=404)
 
     annotations = db.query(Annotation).filter(Annotation.data_item_id == item.id).all()
     item_out = _build_data_item_out(item)
@@ -277,6 +306,7 @@ def commit_dataset(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
     dataset = get_dataset_in_workspace(db, dataset_id=dataset_id, workspace_id=workspace_id)
@@ -284,12 +314,13 @@ def commit_dataset(
         raise ApiError("not_found", "Dataset not found", status_code=404)
 
     query = db.query(DataItem).filter(DataItem.dataset_id == dataset.id, DataItem.deleted_at.is_(None))
+    completed_items = [item for item in query.order_by(DataItem.created_at.desc()).all() if _is_completed_data_item(item)]
     if payload.freeze_filter and payload.freeze_filter.get("tag"):
         tag = payload.freeze_filter["tag"]
-        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset.id, tag=tag)
-        query = query.filter(DataItem.id.in_(list(tagged_item_ids)))
+        tagged_item_ids = _get_tagged_item_ids(db, dataset_id=dataset.id, tag=tag, item_ids={item.id for item in completed_items})
+        completed_items = [item for item in completed_items if item.id in tagged_item_ids]
 
-    item_ids = [item.id for item in query.all()]
+    item_ids = [item.id for item in completed_items]
     max_version = (
         db.query(func.max(DatasetVersion.version)).filter(DatasetVersion.dataset_id == dataset.id).scalar() or 0
     )

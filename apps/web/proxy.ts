@@ -4,6 +4,7 @@ const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
 const CSP_LOOPBACK_HOSTS = ["localhost", "127.0.0.1"] as const;
+const DEFAULT_LOCAL_API_PORT = "8000";
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
 function isPageRoute(pathname: string): boolean {
@@ -57,6 +58,17 @@ function isSameOriginEmbeddablePath(pathname: string): boolean {
   return pathname === "/product-viewer.html";
 }
 
+function defaultLocalApiOrigins(request: NextRequest): string[] {
+  const { protocol, hostname } = request.nextUrl;
+  if (!isLoopbackHost(hostname)) {
+    return [];
+  }
+  return expandLoopbackOrigins(
+    `${protocol}//${hostname}:${DEFAULT_LOCAL_API_PORT}`,
+    CSP_LOOPBACK_HOSTS,
+  );
+}
+
 function isProtectedConsolePath(pathname: string): boolean {
   return pathname === "/app" || pathname.startsWith("/app/");
 }
@@ -70,11 +82,17 @@ function getLocalePrefix(request: NextRequest): string {
   return isEnglishPath(rawPathname) ? "/en" : "";
 }
 
-function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
-  const apiOrigins = expandLoopbackOrigins(
+function buildCsp(
+  request: NextRequest,
+  allowSameOriginFrame: boolean,
+  scriptSrc: string,
+): string {
+  const configuredApiOrigins = expandLoopbackOrigins(
     normalizeOrigin(process.env.NEXT_PUBLIC_API_BASE_URL),
     CSP_LOOPBACK_HOSTS,
   );
+  const apiOrigins =
+    configuredApiOrigins.length > 0 ? configuredApiOrigins : defaultLocalApiOrigins(request);
   const assetOrigins = expandLoopbackOrigins(
     normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN),
     CSP_LOOPBACK_HOSTS,
@@ -102,6 +120,7 @@ function buildCsp(allowSameOriginFrame: boolean, scriptSrc: string): string {
 export function proxy(request: NextRequest) {
   const rawPathname = new URL(request.url).pathname;
   const allowSameOriginFrame = isSameOriginEmbeddablePath(rawPathname);
+  const isStaticViewerPath = rawPathname === "/product-viewer.html";
   const hasAccessToken = Boolean(request.cookies.get("access_token")?.value);
   const hasAuthState = request.cookies.get(AUTH_STATE_COOKIE)?.value === AUTH_STATE_COOKIE_VALUE;
 
@@ -133,6 +152,7 @@ export function proxy(request: NextRequest) {
   // Auth check
   if (isProtectedConsolePath(strippedPath) && !hasAccessToken) {
     const loginUrl = new URL(`${localePrefix}/login`, request.url);
+    loginUrl.searchParams.set("next", `${strippedPath}${request.nextUrl.search}`);
     const redirect = NextResponse.redirect(loginUrl);
     if (hasAuthState) {
       redirect.cookies.delete(AUTH_STATE_COOKIE);
@@ -167,12 +187,14 @@ export function proxy(request: NextRequest) {
   );
 
   if (process.env.NODE_ENV === "production") {
-    const scriptSrc = nonce
-      ? `'self' 'nonce-${nonce}' 'strict-dynamic'`
-      : "'self' 'unsafe-inline'";
+    const scriptSrc = isStaticViewerPath
+      ? "'self' 'unsafe-inline'"
+      : nonce
+        ? `'self' 'nonce-${nonce}' 'strict-dynamic'`
+        : "'self' 'unsafe-inline'";
     response.headers.set(
       "Content-Security-Policy",
-      buildCsp(allowSameOriginFrame, scriptSrc),
+      buildCsp(request, allowSameOriginFrame, scriptSrc),
     );
   }
 

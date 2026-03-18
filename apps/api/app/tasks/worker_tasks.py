@@ -8,9 +8,27 @@ from sqlalchemy import func, text as sql_text
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models import Artifact, DataItem, Dataset, Model, ModelVersion, Project, TrainingJob, TrainingRun
+from app.models import (
+    Artifact,
+    Conversation,
+    DataItem,
+    Dataset,
+    Embedding,
+    Memory,
+    MemoryEdge,
+    MemoryFile,
+    Message,
+    Model,
+    ModelVersion,
+    PipelineConfig,
+    Project,
+    TrainingJob,
+    TrainingRun,
+)
 from app.services.audit import write_audit_log
-from app.services.storage import build_run_artifact_object_key, put_json_object
+from app.services.memory_visibility import build_private_memory_metadata
+from app.services.runtime_state import runtime_state
+from app.services.storage import build_run_artifact_object_key, delete_object, put_json_object
 from app.services.train import append_job_log, append_metric, generate_mock_loss
 from app.tasks.celery_app import celery_app
 
@@ -185,6 +203,167 @@ def run_training_job(job_id: str) -> None:
         db.close()
 
 
+def _delete_object_keys(object_keys: set[str]) -> bool:
+    success = True
+    for object_key in sorted(object_keys):
+        if not object_key:
+            continue
+        try:
+            delete_object(bucket_name=settings.s3_private_bucket, object_key=object_key)
+        except Exception:  # noqa: BLE001
+            success = False
+    return success
+
+
+def _delete_object_if_present(*, bucket_name: str, object_key: str | None) -> bool:
+    if not object_key:
+        return True
+    try:
+        delete_object(bucket_name=bucket_name, object_key=object_key)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+@celery_app.task(name="app.tasks.worker_tasks.cleanup_pending_upload_session")
+def cleanup_pending_upload_session(
+    upload_id: str,
+    object_key: str | None = None,
+    data_item_id: str | None = None,
+) -> None:
+    session = runtime_state.get_json(f"upload:{upload_id}", "session")
+    clear_session = True
+    db = SessionLocal()
+    try:
+        resolved_data_item_id = data_item_id
+        resolved_object_key = object_key
+        if session:
+            session_data_item_id = session.get("data_item_id")
+            if isinstance(session_data_item_id, str) and session_data_item_id:
+                resolved_data_item_id = session_data_item_id
+            session_object_key = session.get("object_key")
+            if isinstance(session_object_key, str) and session_object_key:
+                resolved_object_key = session_object_key
+
+        item = None
+        if isinstance(resolved_data_item_id, str) and resolved_data_item_id:
+            item = db.get(DataItem, resolved_data_item_id)
+            if item and (item.meta_json or {}).get("upload_status") != "completed":
+                if item.deleted_at is None:
+                    item.deleted_at = datetime.now(timezone.utc)
+                item.meta_json = {
+                    **(item.meta_json or {}),
+                    "cleanup_marked": True,
+                    "upload_status": "abandoned",
+                }
+                db.commit()
+        if item and (item.meta_json or {}).get("upload_status") == "completed" and item.deleted_at is None:
+            return
+        deleted = _delete_object_if_present(bucket_name=settings.s3_private_bucket, object_key=resolved_object_key)
+        if not deleted and resolved_object_key:
+            clear_session = False
+            try:
+                cleanup_pending_upload_session.apply_async(
+                    args=[upload_id, resolved_object_key, resolved_data_item_id],
+                    countdown=60,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        db.close()
+        if clear_session:
+            runtime_state.delete(f"upload:{upload_id}", "session")
+
+
+@celery_app.task(name="app.tasks.worker_tasks.cleanup_pending_model_artifact_upload")
+def cleanup_pending_model_artifact_upload(
+    artifact_upload_id: str,
+    object_key: str | None = None,
+) -> None:
+    session = runtime_state.get_json(f"model-artifact:{artifact_upload_id}", "session")
+    resolved_object_key = object_key
+    clear_session = True
+    if session:
+        session_object_key = session.get("object_key")
+        if isinstance(session_object_key, str) and session_object_key:
+            resolved_object_key = session_object_key
+
+    if resolved_object_key:
+        db = SessionLocal()
+        try:
+            live_reference = (
+                db.query(ModelVersion.id)
+                .filter(
+                    ModelVersion.artifact_object_key == resolved_object_key,
+                    ModelVersion.deleted_at.is_(None),
+                )
+                .first()
+            )
+            if not live_reference:
+                deleted = _delete_object_if_present(
+                    bucket_name=settings.s3_private_bucket,
+                    object_key=resolved_object_key,
+                )
+                if not deleted:
+                    clear_session = False
+                    try:
+                        cleanup_pending_model_artifact_upload.apply_async(
+                            args=[artifact_upload_id, resolved_object_key],
+                            countdown=60,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            db.close()
+    if clear_session:
+        runtime_state.delete(f"model-artifact:{artifact_upload_id}", "session")
+
+
+@celery_app.task(name="app.tasks.worker_tasks.cleanup_pending_demo_request")
+def cleanup_pending_demo_request(
+    request_id: str,
+    object_key: str | None = None,
+    upload_id: str | None = None,
+    client_ip: str | None = None,
+) -> None:
+    session = runtime_state.get_json(f"demo:request:{request_id}", "session")
+    resolved_object_key = object_key
+    resolved_upload_id = upload_id
+    resolved_client_ip = client_ip
+    clear_session = True
+    if session:
+        session_object_key = session.get("object_key")
+        if isinstance(session_object_key, str) and session_object_key:
+            resolved_object_key = session_object_key
+        session_upload_id = session.get("upload_id")
+        if isinstance(session_upload_id, str) and session_upload_id:
+            resolved_upload_id = session_upload_id
+        session_client_ip = session.get("client_ip")
+        if isinstance(session_client_ip, str) and session_client_ip:
+            resolved_client_ip = session_client_ip
+
+    deleted = _delete_object_if_present(
+        bucket_name=settings.s3_demo_bucket,
+        object_key=resolved_object_key,
+    )
+    if not deleted and resolved_object_key:
+        clear_session = False
+        try:
+            cleanup_pending_demo_request.apply_async(
+                args=[request_id, resolved_object_key, resolved_upload_id, resolved_client_ip],
+                countdown=60,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    if isinstance(resolved_client_ip, str) and resolved_client_ip and session and not session.get("slot_released"):
+        runtime_state.decr("demo:active", resolved_client_ip)
+    if isinstance(resolved_upload_id, str) and resolved_upload_id:
+        runtime_state.delete(f"demo:upload:{resolved_upload_id}", "session")
+    if clear_session:
+        runtime_state.delete(f"demo:request:{request_id}", "session")
+
+
 @celery_app.task(name="app.tasks.worker_tasks.cleanup_deleted_dataset")
 def cleanup_deleted_dataset(dataset_id: str) -> None:
     db = SessionLocal()
@@ -196,12 +375,13 @@ def cleanup_deleted_dataset(dataset_id: str) -> None:
         db.flush()
 
         items = db.query(DataItem).filter(DataItem.dataset_id == dataset_id).all()
+        object_keys = {item.object_key for item in items}
         for item in items:
             if item.deleted_at is None:
                 item.deleted_at = datetime.now(timezone.utc)
             item.meta_json = {**(item.meta_json or {}), "cleanup_marked": True}
 
-        dataset.cleanup_status = "done"
+        dataset.cleanup_status = "done" if _delete_object_keys(object_keys) else "failed"
         db.commit()
     finally:
         db.close()
@@ -217,6 +397,7 @@ def cleanup_deleted_project(project_id: str) -> None:
         project.cleanup_status = "running"
         db.flush()
 
+        object_keys: set[str] = set()
         datasets = db.query(Dataset).filter(Dataset.project_id == project_id).all()
         for dataset in datasets:
             if dataset.deleted_at is None:
@@ -224,10 +405,56 @@ def cleanup_deleted_project(project_id: str) -> None:
             dataset.cleanup_status = "pending"
             items = db.query(DataItem).filter(DataItem.dataset_id == dataset.id).all()
             for item in items:
+                object_keys.add(item.object_key)
                 if item.deleted_at is None:
                     item.deleted_at = datetime.now(timezone.utc)
                 item.meta_json = {**(item.meta_json or {}), "cleanup_marked": True}
-        project.cleanup_status = "done"
+
+        models = db.query(Model).filter(Model.project_id == project_id).all()
+        for model in models:
+            versions = db.query(ModelVersion).filter(ModelVersion.model_id == model.id).all()
+            for version in versions:
+                object_keys.add(version.artifact_object_key)
+
+        artifacts = (
+            db.query(Artifact)
+            .join(TrainingRun, TrainingRun.id == Artifact.run_id)
+            .join(TrainingJob, TrainingJob.id == TrainingRun.training_job_id)
+            .filter(TrainingJob.project_id == project_id)
+            .all()
+        )
+        for artifact in artifacts:
+            object_keys.add(artifact.object_key)
+        runs = (
+            db.query(TrainingRun)
+            .join(TrainingJob, TrainingJob.id == TrainingRun.training_job_id)
+            .filter(TrainingJob.project_id == project_id)
+            .all()
+        )
+        for run in runs:
+            if run.logs_object_key:
+                object_keys.add(run.logs_object_key)
+
+        conversation_ids = [
+            conversation_id
+            for conversation_id, in db.query(Conversation.id).filter(Conversation.project_id == project_id).all()
+        ]
+        memory_ids = [
+            memory_id for memory_id, in db.query(Memory.id).filter(Memory.project_id == project_id).all()
+        ]
+        if memory_ids:
+            db.query(MemoryEdge).filter(
+                (MemoryEdge.source_memory_id.in_(memory_ids)) | (MemoryEdge.target_memory_id.in_(memory_ids))
+            ).delete(synchronize_session=False)
+            db.query(MemoryFile).filter(MemoryFile.memory_id.in_(memory_ids)).delete(synchronize_session=False)
+        db.query(Embedding).filter(Embedding.project_id == project_id).delete(synchronize_session=False)
+        db.query(Memory).filter(Memory.project_id == project_id).delete(synchronize_session=False)
+        if conversation_ids:
+            db.query(Message).filter(Message.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.project_id == project_id).delete(synchronize_session=False)
+        db.query(PipelineConfig).filter(PipelineConfig.project_id == project_id).delete(synchronize_session=False)
+
+        project.cleanup_status = "done" if _delete_object_keys(object_keys) else "failed"
         db.commit()
     finally:
         db.close()
@@ -314,6 +541,29 @@ AI：{ai_response}
 
     db = SessionLocal()
     try:
+        project = (
+            db.query(Project)
+            .filter(
+                Project.id == project_id,
+                Project.workspace_id == workspace_id,
+                Project.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if not project:
+            return
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.id == conversation_id,
+                Conversation.project_id == project_id,
+                Conversation.workspace_id == workspace_id,
+            )
+            .first()
+        )
+        if not conversation:
+            return
+
         prompt = EXTRACTION_PROMPT.format(
             user_message=user_message,
             ai_response=ai_response,
@@ -343,7 +593,10 @@ AI：{ai_response}
             if importance < 0.7:
                 continue
 
-            memory_type = "permanent" if importance >= 0.9 else "temporary"
+            memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
+            metadata = {"importance": importance, "source": "auto_extraction"}
+            if memory_type == "permanent":
+                metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
 
             memory = Memory(
                 workspace_id=workspace_id,
@@ -352,7 +605,7 @@ AI：{ai_response}
                 category=fact.get("category", ""),
                 type=memory_type,
                 source_conversation_id=conversation_id if memory_type == "temporary" else None,
-                metadata_json={"importance": importance, "source": "auto_extraction"},
+                metadata_json=metadata,
             )
             db.add(memory)
             db.flush()
@@ -406,9 +659,26 @@ AI：{ai_response}
             ).scalar()
 
             if similar and similar >= 1:  # Found in at least 1 other conversation
+                owner_user_id = None
+                if mem.source_conversation_id:
+                    source_conversation = (
+                        db.query(Conversation.created_by)
+                        .filter(
+                            Conversation.id == mem.source_conversation_id,
+                            Conversation.project_id == project_id,
+                            Conversation.workspace_id == workspace_id,
+                        )
+                        .first()
+                    )
+                    owner_user_id = source_conversation[0] if source_conversation else None
+                if not owner_user_id:
+                    continue
                 mem.type = "permanent"
                 mem.source_conversation_id = None  # Detach from conversation
-                mem.metadata_json = {**mem.metadata_json, "promoted_by": "auto_repeat"}
+                mem.metadata_json = build_private_memory_metadata(
+                    {**(mem.metadata_json or {}), "promoted_by": "auto_repeat"},
+                    owner_user_id=owner_user_id,
+                )
 
         db.commit()
     except Exception:  # noqa: BLE001

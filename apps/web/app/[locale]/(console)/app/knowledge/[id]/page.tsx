@@ -9,6 +9,7 @@ import { Uploader } from "@/components/Uploader";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost } from "@/lib/api";
+import { getSafeExternalUrl } from "@/lib/security";
 
 type DataItem = {
   id: string;
@@ -173,63 +174,72 @@ export default function KnowledgeDetailPage() {
                 item.media_type,
                 `${item.width || "-"} x ${item.height || "-"}`,
                 item.annotations.filter((annotation) => annotation.type === "tag").map((annotation) => (annotation.payload_json.tags || []).join(",")).join(" | ") || "-",
-                <div key={`${item.id}-actions`} className="flex flex-wrap gap-2">
-                  <input
-                    className="console-input !min-h-[40px] !w-[170px] !rounded-[14px] px-3 text-xs"
-                    placeholder="tag1,tag2"
-                    value={tagInput[item.id] || ""}
-                    onChange={(e) =>
-                      setTagInput((prev) => ({
-                        ...prev,
-                        [item.id]: e.target.value,
-                      }))
-                    }
-                  />
-                  <button
-                    className="console-button-secondary !min-h-[40px]"
-                    onClick={async () => {
-                      const tags = (tagInput[item.id] || "").split(",").map((value) => value.trim()).filter(Boolean);
-                      await apiPost(`/api/v1/data-items/${item.id}/annotations`, {
-                        type: "tag",
-                        payload_json: { tags },
-                      });
-                      await load();
-                    }}
-                  >
-                    {t("itemTable.saveTag")}
-                  </button>
-                  {item.download_url ? (
-                    <a className="console-button-secondary !min-h-[40px]" href={item.download_url} target="_blank" rel="noreferrer">
-                      {t("itemTable.download")}
-                    </a>
-                  ) : null}
-                </div>,
+                (() => {
+                  const downloadUrl = getSafeExternalUrl(item.download_url);
+                  return (
+                    <div key={`${item.id}-actions`} className="flex flex-wrap gap-2">
+                      <input
+                        className="console-input !min-h-[40px] !w-[170px] !rounded-[14px] px-3 text-xs"
+                        placeholder="tag1,tag2"
+                        value={tagInput[item.id] || ""}
+                        onChange={(e) =>
+                          setTagInput((prev) => ({
+                            ...prev,
+                            [item.id]: e.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        className="console-button-secondary !min-h-[40px]"
+                        onClick={async () => {
+                          const tags = (tagInput[item.id] || "").split(",").map((value) => value.trim()).filter(Boolean);
+                          await apiPost(`/api/v1/data-items/${item.id}/annotations`, {
+                            type: "tag",
+                            payload_json: { tags },
+                          });
+                          await load();
+                        }}
+                      >
+                        {t("itemTable.saveTag")}
+                      </button>
+                      {downloadUrl ? (
+                        <a className="console-button-secondary !min-h-[40px]" href={downloadUrl} target="_blank" rel="noreferrer noopener">
+                          {t("itemTable.download")}
+                        </a>
+                      ) : null}
+                    </div>
+                  );
+                })(),
               ])}
             />
           ) : (
             <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {items.length ? (
-                items.map((item) => (
-                  <article key={item.id} className="console-panel overflow-hidden">
-                    <div className="console-panel-body">
-                      {item.preview_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.preview_url} alt={item.filename} className="h-48 w-full rounded-2xl bg-[#eef2f8] object-cover" />
-                      ) : (
-                        <div className="console-empty">{t("detail.noPreview")}</div>
-                      )}
-                      <div className="mt-4 font-semibold text-[var(--text-primary)]">{item.filename}</div>
-                      <div className="mt-2 text-sm text-[var(--text-secondary)]">
-                        {item.width || "-"} x {item.height || "-"} · {item.media_type}
+                items.map((item) => {
+                  const previewUrl = getSafeExternalUrl(item.preview_url, { allowData: true });
+                  const downloadUrl = getSafeExternalUrl(item.download_url);
+                  return (
+                    <article key={item.id} className="console-panel overflow-hidden">
+                      <div className="console-panel-body">
+                        {previewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={previewUrl} alt={item.filename} className="h-48 w-full rounded-2xl bg-[#eef2f8] object-cover" />
+                        ) : (
+                          <div className="console-empty">{t("detail.noPreview")}</div>
+                        )}
+                        <div className="mt-4 font-semibold text-[var(--text-primary)]">{item.filename}</div>
+                        <div className="mt-2 text-sm text-[var(--text-secondary)]">
+                          {item.width || "-"} x {item.height || "-"} · {item.media_type}
+                        </div>
+                        {downloadUrl ? (
+                          <a className="console-link mt-3 inline-flex" href={downloadUrl} target="_blank" rel="noreferrer noopener">
+                            {t("detail.openFile")}
+                          </a>
+                        ) : null}
                       </div>
-                      {item.download_url ? (
-                        <a className="console-link mt-3 inline-flex" href={item.download_url} target="_blank" rel="noreferrer">
-                          {t("detail.openFile")}
-                        </a>
-                      ) : null}
-                    </div>
-                  </article>
-                ))
+                    </article>
+                  );
+                })
               ) : (
                 <div className="console-panel sm:col-span-2 lg:col-span-3">
                   <div className="console-panel-body">

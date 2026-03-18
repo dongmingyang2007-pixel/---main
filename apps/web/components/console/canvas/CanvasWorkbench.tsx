@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslations } from "next-intl";
 
 import { useRouter } from "@/i18n/navigation";
@@ -111,6 +111,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   /* LLM catalog info for vision capability check */
   const [llmCatalogInfo, setLlmCatalogInfo] =
     useState<CatalogModelInfo | null>(null);
+  const [catalogByModelId, setCatalogByModelId] = useState<Record<string, CatalogModelInfo>>({});
 
   /* Fetch project data */
   useEffect(() => {
@@ -121,6 +122,18 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
     });
   }, [assistantId]);
 
+  useEffect(() => {
+    void apiGet<CatalogModelInfo[]>("/api/v1/models/catalog")
+      .then((items) => {
+        const next: Record<string, CatalogModelInfo> = {};
+        (Array.isArray(items) ? items : []).forEach((item) => {
+          next[item.model_id] = item;
+        });
+        setCatalogByModelId(next);
+      })
+      .catch(() => setCatalogByModelId({}));
+  }, []);
+
   /* Fetch LLM catalog info when pipeline LLM config changes */
   const llmConfig = getConfig("llm");
   useEffect(() => {
@@ -128,12 +141,16 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
       setLlmCatalogInfo(null);
       return;
     }
+    if (catalogByModelId[llmConfig.model_id]) {
+      setLlmCatalogInfo(catalogByModelId[llmConfig.model_id]);
+      return;
+    }
     void apiGet<CatalogModelInfo>(
       `/api/v1/models/catalog/${llmConfig.model_id}`,
     )
       .then((info) => setLlmCatalogInfo(info))
       .catch(() => setLlmCatalogInfo(null));
-  }, [llmConfig?.model_id]);
+  }, [catalogByModelId, llmConfig?.model_id]);
 
   const llmHasVision =
     llmCatalogInfo?.capabilities?.includes("vision") ?? false;
@@ -262,6 +279,14 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
   const asrConfig = getConfig("asr");
   const ttsConfig = getConfig("tts");
   const visionConfig = getConfig("vision");
+  const pipelineModelNames = useMemo(
+    () => ({
+      asr: asrConfig?.model_id ? catalogByModelId[asrConfig.model_id]?.display_name : undefined,
+      tts: ttsConfig?.model_id ? catalogByModelId[ttsConfig.model_id]?.display_name : undefined,
+      vision: visionConfig?.model_id ? catalogByModelId[visionConfig.model_id]?.display_name : undefined,
+    }),
+    [asrConfig?.model_id, catalogByModelId, ttsConfig?.model_id, visionConfig?.model_id],
+  );
 
   if (!project) {
     return (
@@ -304,7 +329,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
           <button
             type="button"
             className="canvas-btn-secondary"
-            onClick={() => router.push("/app/chat")}
+            onClick={() => router.push(`/app/chat?project_id=${assistantId}`)}
           >
             {t("canvas.tryChat")}
           </button>
@@ -347,12 +372,14 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
           label={tModels("pipelineAsr")}
           modelType="asr"
           currentModelId={asrConfig?.model_id}
+          currentModelName={pipelineModelNames.asr}
           onChangeClick={() => openPicker("asr")}
         />
         <PipelineCard
           label={tModels("pipelineTts")}
           modelType="tts"
           currentModelId={ttsConfig?.model_id}
+          currentModelName={pipelineModelNames.tts}
           onChangeClick={() => openPicker("tts")}
         />
         {!llmHasVision && (
@@ -360,6 +387,7 @@ export function CanvasWorkbench({ assistantId }: CanvasWorkbenchProps) {
             label={tModels("pipelineVision")}
             modelType="vision"
             currentModelId={visionConfig?.model_id}
+            currentModelName={pipelineModelNames.vision}
             onChangeClick={() => openPicker("vision")}
           />
         )}
