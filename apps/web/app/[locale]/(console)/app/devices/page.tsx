@@ -66,7 +66,7 @@ export default function DevicesPage() {
                   <div className="device-stat-value">23</div>
                   <div className="device-stat-label">{t("stat.conversations")}</div>
                   <div className="device-stat-bar">
-                    <div className="device-stat-fill" style={{ width: "38%", background: "var(--rust)" }} />
+                    <div className="device-stat-fill" style={{ width: "38%", background: "var(--accent)" }} />
                   </div>
                 </div>
               </div>

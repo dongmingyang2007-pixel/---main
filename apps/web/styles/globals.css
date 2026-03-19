@@ -8373,7 +8373,7 @@ button {
 
 .profile-btn {
   padding: 9px 18px; border-radius: 20px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); background: white; color: var(--text-secondary);
+  border: 1px solid var(--border); background: var(--bg-card, #fff); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s; text-decoration: none;
   display: flex; align-items: center; gap: 6px;
 }
@@ -8484,7 +8484,7 @@ button {
 .chat-search-input {
   width: 100%; padding: 7px 10px 7px 30px;
   border: 1px solid var(--border); border-radius: 8px;
-  font-size: 12px; background: white; outline: none; color: var(--text-primary);
+  font-size: 12px; background: var(--bg-card, #fff); outline: none; color: var(--text-primary);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a8a7a' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: 10px center;
 }
@@ -9167,7 +9167,7 @@ button {
 }
 
 .memory-view-btn.active {
-  background: white;
+  background: var(--bg-card, #fff);
   color: var(--accent);
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(42,32,24,0.08);
@@ -9187,7 +9187,7 @@ button {
   font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--border);
-  background: white;
+  background: var(--bg-card, #fff);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s;
@@ -9228,7 +9228,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 12px;
-  background: white;
+  background: var(--bg-card, #fff);
   outline: none;
   color: var(--text-primary);
 }
@@ -9475,7 +9475,7 @@ button {
 .device-actions { display: flex; gap: 8px; margin-top: auto; }
 .device-action-btn {
   padding: 8px 16px; border-radius: 10px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); background: white; color: var(--text-secondary);
+  border: 1px solid var(--border); background: var(--bg-card, #fff); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s;
   display: flex; align-items: center; gap: 6px;
 }
@@ -9502,7 +9502,7 @@ button {
 .device-setting-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 .device-setting-select {
   padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px;
-  font-size: 12px; color: var(--text-secondary); background: white; cursor: pointer; font-weight: 500;
+  font-size: 12px; color: var(--text-secondary); background: var(--bg-card, #fff); cursor: pointer; font-weight: 500;
 }
 
 .device-toggle {
@@ -9528,7 +9528,7 @@ button {
 .discover-topbar-title { font-size: 17px; font-weight: 700; color: var(--text-primary); }
 .discover-search {
   padding: 8px 14px 8px 34px; border: 1px solid var(--border); border-radius: 24px;
-  font-size: 12px; background: white; outline: none; width: 260px; color: var(--text-primary);
+  font-size: 12px; background: var(--bg-card, #fff); outline: none; width: 260px; color: var(--text-primary);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239a8a7a' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: 12px center;
 }
@@ -9545,7 +9545,7 @@ button {
 }
 .discover-tab.active {
   background: white; color: var(--accent); font-weight: 600;
-  box-shadow: 0 2px 8px rgba(42,32,24,0.06);
+  box-shadow: var(--shadow-card);
 }
 
 .discover-section-header {
@@ -9567,7 +9567,7 @@ button {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 14px;
   padding: 18px; cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden;
 }
-.pack-card:hover { border-color: var(--accent); box-shadow: 0 4px 16px rgba(42,32,24,0.06); transform: translateY(-2px); }
+.pack-card:hover { border-color: var(--accent); box-shadow: var(--shadow-card); transform: translateY(-2px); }
 
 .pack-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .pack-icon {
@@ -9587,7 +9587,7 @@ button {
 .pack-stat svg { width: 12px; height: 12px; }
 .pack-dl-btn {
   padding: 6px 14px; border-radius: 16px; font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); background: white; color: var(--text-secondary);
+  border: 1px solid var(--border); background: var(--bg-card, #fff); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s;
 }
 .pack-dl-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
@@ -9620,7 +9620,7 @@ button {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 14px;
   padding: 18px; cursor: pointer; transition: all 0.2s; text-decoration: none; color: inherit; display: block;
 }
-.model-card:hover { border-color: var(--accent); box-shadow: 0 4px 16px rgba(42,32,24,0.06); transform: translateY(-2px); }
+.model-card:hover { border-color: var(--accent); box-shadow: var(--shadow-card); transform: translateY(-2px); }
 
 .model-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .model-card-logo {
@@ -9642,10 +9642,69 @@ button {
 
 .model-card-btn {
   width: 100%; padding: 8px; border-radius: 10px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); background: white; color: var(--text-secondary);
+  border: 1px solid var(--border); background: var(--bg-card, #fff); color: var(--text-secondary);
   cursor: pointer; text-align: center; transition: all 0.15s; display: block;
 }
 .model-card-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* ── Console Responsive: Tablet + Mobile ────── */
+
+@media (max-width: 1023px) {
+  .discover-grid { grid-template-columns: repeat(2, 1fr); }
+  .profile-grid { grid-template-columns: 1fr; }
+  .device-settings-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 767px) {
+  /* Dashboard */
+  .dashboard-consumer { padding: 20px 16px; }
+  .dashboard-stats { grid-template-columns: 1fr; }
+  .dashboard-assistant-card { flex-direction: column; text-align: center; }
+  .dashboard-assistant-avatar { margin: 0 auto; }
+
+  /* Chat */
+  .chat-page-layout { flex-direction: column; height: auto; }
+  .chat-sidebar { width: 100%; max-width: none; border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
+
+  /* Discover */
+  .discover-page { padding: 16px; }
+  .discover-grid { grid-template-columns: 1fr; }
+  .discover-topbar { flex-direction: column; gap: 12px; align-items: stretch; }
+  .discover-search { width: 100%; }
+
+  /* Devices */
+  .devices-page { padding: 16px; }
+  .device-hero { flex-direction: column; gap: 20px; }
+  .device-visual { width: 100%; height: 140px; }
+  .device-stats { grid-template-columns: 1fr; }
+  .device-settings-grid { grid-template-columns: 1fr; }
+
+  /* Memory */
+  .memory-page { margin: 0 !important; }
+  .memory-topbar { flex-direction: column; gap: 12px; align-items: stretch; }
+  .memory-list-layout { flex-direction: column; }
+  .memory-list-panel { width: 100%; min-width: 0; max-height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
+
+  /* Model Detail */
+  .model-detail { padding: 20px 16px; }
+  .model-modality-grid { grid-template-columns: 1fr; }
+
+  /* Assistant Profile */
+  .assistant-profile { padding: 20px 16px; }
+  .assistant-profile-header { flex-direction: column; align-items: center; text-align: center; }
+  .assistant-profile-actions { align-self: center; }
+  .assistant-profile-meta { justify-content: center; flex-wrap: wrap; }
+  .profile-grid { grid-template-columns: 1fr; }
+  .profile-stat-row { flex-direction: column; }
+  .profile-stat-block + .profile-stat-block { border-left: none; border-top: 1px solid var(--border); }
+}
+
+/* Touch device: prevent sidebar hover expand */
+@media (hover: none) {
+  .sidebar-v2:hover { width: 56px; min-width: 56px; }
+  .sidebar-v2:hover .sidebar-v2-logo-text,
+  .sidebar-v2:hover .sidebar-v2-label { opacity: 0; transform: translateX(-8px); }
+}
 
 /* ── Reduced Motion ──────────────────────────── */
 
