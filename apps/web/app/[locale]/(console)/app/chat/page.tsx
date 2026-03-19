@@ -31,6 +31,18 @@ type ConversationSummary = {
   preview: string;
 };
 
+function getDateGroup(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const itemDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((today.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays <= 7) return "thisWeek";
+  return "earlier";
+}
+
 function formatTime(dateStr: string): string {
   try {
     const d = new Date(dateStr);
@@ -365,31 +377,55 @@ function ChatPageContent() {
                   </div>
                 )}
 
-                {conversations.map((conv) => (
-                  <div
-                    key={conv.id}
-                    className={`chat-sidebar-item${activeConversationId === conv.id ? " is-active" : ""}`}
-                    onClick={() => setActiveConversationId(conv.id)}
-                  >
-                    <div className="chat-sidebar-item-info">
-                      <div className="chat-sidebar-item-title">
-                        {getConversationTitle(conv)}
+                {(() => {
+                  const dateGroupKeys = ["today", "yesterday", "thisWeek", "earlier"] as const;
+                  const dateGroupLabels: Record<string, string> = {
+                    today: t("dateGroup.today"),
+                    yesterday: t("dateGroup.yesterday"),
+                    thisWeek: t("dateGroup.thisWeek"),
+                    earlier: t("dateGroup.earlier"),
+                  };
+                  const grouped = new Map<string, Conversation[]>();
+                  for (const key of dateGroupKeys) grouped.set(key, []);
+                  for (const conv of conversations) {
+                    const group = getDateGroup(conv.updated_at);
+                    grouped.get(group)!.push(conv);
+                  }
+                  return dateGroupKeys.map((groupKey) => {
+                    const items = grouped.get(groupKey)!;
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={groupKey}>
+                        <div className="chat-date-group">{dateGroupLabels[groupKey]}</div>
+                        {items.map((conv) => (
+                          <div
+                            key={conv.id}
+                            className={`chat-sidebar-item${activeConversationId === conv.id ? " is-active" : ""}`}
+                            onClick={() => setActiveConversationId(conv.id)}
+                          >
+                            <div className="chat-sidebar-item-info">
+                              <div className="chat-sidebar-item-title">
+                                {getConversationTitle(conv)}
+                              </div>
+                              <div className="chat-sidebar-item-time">
+                                {getConversationMeta(conv)}
+                              </div>
+                            </div>
+                            <button
+                              className="chat-sidebar-item-delete"
+                              onClick={(e) =>
+                                void handleDeleteConversation(conv.id, e)
+                              }
+                              title={t("deleteConversation")}
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                      <div className="chat-sidebar-item-time">
-                        {getConversationMeta(conv)}
-                      </div>
-                    </div>
-                    <button
-                      className="chat-sidebar-item-delete"
-                      onClick={(e) =>
-                        void handleDeleteConversation(conv.id, e)
-                      }
-                      title={t("deleteConversation")}
-                    >
-                      &times;
-                    </button>
-                  </div>
-                ))}
+                    );
+                  });
+                })()}
               </div>
 
               <div className="chat-sidebar-footer">

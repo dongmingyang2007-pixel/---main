@@ -60,6 +60,14 @@ export function ChatInterface({
   const [voiceStatus, setVoiceStatus] = useState<
     "idle" | "recording" | "sending"
   >("idle");
+  const [searchState, setSearchState] = useState<"auto" | "on" | "off">("auto");
+  const [thinkState, setThinkState] = useState<"auto" | "on" | "off">("auto");
+
+  function cycleState(current: "auto" | "on" | "off"): "auto" | "on" | "off" {
+    if (current === "auto") return "on";
+    if (current === "on") return "off";
+    return "auto";
+  }
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
 
@@ -276,6 +284,15 @@ export function ChatInterface({
                 </button>
               )}
             </div>
+            {msg.role === "assistant" && (msg as any).memories_extracted && (
+              <div className="chat-memory-indicator">
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                  <circle cx={12} cy={12} r={3} />
+                  <path d="M12 2v4m0 12v4" />
+                </svg>
+                {t("memory.remembered")}：{(msg as any).memories_extracted}
+              </div>
+            )}
           </div>
         ))}
 
@@ -339,6 +356,32 @@ export function ChatInterface({
           onKeyDown={handleKeyDown}
           disabled={isTyping || noConversation}
         />
+        <div className="chat-tool-chips">
+          <button
+            type="button"
+            className="chat-tool-chip"
+            data-state={searchState}
+            onClick={() => setSearchState(s => cycleState(s))}
+          >
+            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <circle cx={11} cy={11} r={8} />
+              <line x1={21} y1={21} x2={16.65} y2={16.65} />
+            </svg>
+            {t("tool.search")}
+          </button>
+          <button
+            type="button"
+            className="chat-tool-chip"
+            data-state={thinkState}
+            onClick={() => setThinkState(s => cycleState(s))}
+          >
+            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7.5V19h6v-2.5c2-2 4-4.5 4-7.5a7 7 0 0 0-7-7z" />
+              <line x1={9} y1={22} x2={15} y2={22} />
+            </svg>
+            {t("tool.think")}
+          </button>
+        </div>
         <button
           className="chat-send"
           onClick={() => void handleSend()}

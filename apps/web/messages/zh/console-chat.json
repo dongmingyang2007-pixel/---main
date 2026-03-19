@@ -17,6 +17,13 @@
   "voiceSending": "语音识别中…",
   "voicePlay": "播放语音",
   "micPermissionDenied": "麦克风权限被拒绝",
+  "dateGroup.today": "今天",
+  "dateGroup.yesterday": "昨天",
+  "dateGroup.thisWeek": "本周",
+  "dateGroup.earlier": "更早",
+  "tool.search": "搜索",
+  "tool.think": "深度思考",
+  "memory.remembered": "记住了",
   "errors": {
     "generic": "抱歉，刚才出错了，请重试。",
     "inferenceTimeout": "AI 回复超时，请稍后重试。",

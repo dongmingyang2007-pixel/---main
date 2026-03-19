@@ -8573,6 +8573,74 @@ button {
   flex-direction: column;
 }
 
+/* ── Chat Date Groups ────────────────────────── */
+
+.chat-date-group {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 12px 12px 4px;
+}
+
+/* ── Chat Memory Indicator ───────────────────── */
+
+.chat-memory-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 4px;
+  width: fit-content;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-memory-indicator:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* ── Chat Tool Chips ─────────────────────────── */
+
+.chat-tool-chips {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.chat-tool-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chat-tool-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.chat-tool-chip[data-state="on"] {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.chat-tool-chip[data-state="on"] svg { stroke: white; }
+
+.chat-tool-chip[data-state="off"] {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
 /* ── Model Marketplace ───────────────────────── */
 
 .marketplace-tabs { display: flex; gap: 4px; margin-bottom: 16px; }

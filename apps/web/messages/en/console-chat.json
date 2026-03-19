@@ -17,6 +17,13 @@
   "voiceSending": "Transcribing...",
   "voicePlay": "Play audio",
   "micPermissionDenied": "Microphone permission denied",
+  "dateGroup.today": "Today",
+  "dateGroup.yesterday": "Yesterday",
+  "dateGroup.thisWeek": "This Week",
+  "dateGroup.earlier": "Earlier",
+  "tool.search": "Search",
+  "tool.think": "Deep Think",
+  "memory.remembered": "Remembered",
   "errors": {
     "generic": "Sorry, something went wrong. Please try again.",
     "inferenceTimeout": "The AI response timed out. Please try again shortly.",
