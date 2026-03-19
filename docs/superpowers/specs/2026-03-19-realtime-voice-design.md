@@ -117,7 +117,7 @@ The bridge layer needs context-loading logic similar to `orchestrator.py`'s `orc
 
 **Approach**: Extract the core context-assembly logic into shared utility functions in a new `app/services/context_loader.py` module that both `orchestrator.py` and `realtime_bridge.py` can call. This avoids duplicating the personality/memory/RAG loading logic.
 
-- Reuses `worker_tasks.py`: `extract_memories_from_conversation` Celery task (no changes needed)
+- Reuses `worker_tasks.py`: `extract_memories` Celery task (no changes needed)
 - Reuses `embedding.py`: `search_similar()` for RAG search
 
 ## Frontend UI: Dynamic Island Floating Widget
@@ -220,7 +220,7 @@ All active states (Listening, AI Speaking) have two sub-states: **collapsed pill
 
 - `app/services/orchestrator.py` — context-loading logic to be refactored into shared `context_loader.py` (existing private helpers: `_load_active_conversation_context()`, `_load_visible_permanent_memories()`, `_filter_relevant_memory_ids_for_prompt()`, `_filter_knowledge_chunks_for_prompt()`)
 - `app/services/dashscope_client.py` — `UpstreamServiceError`, `InferenceTimeoutError`
-- `app/tasks/worker_tasks.py` — `extract_memories_from_conversation`
+- `app/tasks/worker_tasks.py` — `extract_memories`
 - `app/services/embedding.py` — `search_similar()`
 - `app/core/config.py` — new settings fields
 - `app/routers/chat.py` — conversation/message DB operations pattern
