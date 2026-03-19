@@ -52,8 +52,18 @@ class Settings(BaseSettings):
 
     # ── AI / Model API ──
     dashscope_api_key: str = ""
-    dashscope_model: str = "qwen3-omni-flash-realtime"
+    dashscope_model: str = "qwen3.5-plus"
     dashscope_embedding_model: str = "text-embedding-v3"
+
+    # ── Realtime Voice ──
+    realtime_interrupt_threshold_ms: int = 500
+    realtime_idle_timeout_seconds: int = 60
+    realtime_close_timeout_seconds: int = 120
+    realtime_max_session_seconds: int = 1800
+    realtime_max_concurrent_sessions: int = 50
+    realtime_context_history_turns: int = 10
+    realtime_rag_refresh_turns: int = 5
+    realtime_reconnect_max_attempts: int = 3
 
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
