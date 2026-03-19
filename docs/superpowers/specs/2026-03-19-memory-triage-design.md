@@ -43,15 +43,20 @@ find_duplicate_memory(threshold=0.90)
 
 ### embedding 向量复用
 
-`find_duplicate_memory()` 内部会调用 `create_embedding()` 生成新事实的向量。为避免 `find_related_memories()` 重复生成同一向量，改造 `find_duplicate_memory()` 使其返回已生成的向量，供后续步骤复用。
+`find_duplicate_memory()` 内部会调用 `create_embedding()` 生成新事实的向量。为避免重复生成同一向量，新增一个包装函数 `find_duplicate_memory_with_vector()`，不修改原函数签名，保持向后兼容。
 
-改造后签名：
+新增函数：
 ```python
-async def find_duplicate_memory(...) -> tuple[dict | None, list[float]]:
-    """Returns (duplicate_match_or_None, query_vector)."""
+async def find_duplicate_memory_with_vector(
+    db, *, workspace_id, project_id, text, threshold=0.90,
+) -> tuple[dict | None, list[float]]:
+    """Like find_duplicate_memory but also returns the query vector for reuse.
+    Returns (duplicate_match_or_None, query_vector)."""
 ```
 
-`find_related_memories()` 接收该向量作为参数：
+原 `find_duplicate_memory()` 签名不变（`-> dict | None`），内部重构为调用 `find_duplicate_memory_with_vector()` 后丢弃向量，保持所有现有调用者兼容。
+
+`find_related_memories()` 接收预计算向量作为参数：
 ```python
 async def find_related_memories(
     db, *, workspace_id, project_id, query_vector: list[float],
@@ -59,7 +64,7 @@ async def find_related_memories(
 ) -> list[dict]:
 ```
 
-同样，`embed_and_store()` 也可复用该向量（如果最终决定新建记忆），避免第三次 embedding 调用。改造后签名增加可选参数：
+`embed_and_store()` 增加可选 `vector` 参数，复用已有向量避免重复 embedding 调用：
 ```python
 async def embed_and_store(..., vector: list[float] | None = None) -> str:
     """If vector is provided, skip embedding call and use it directly."""
@@ -97,7 +102,22 @@ async def find_related_memories(
     Returns list of {memory_id, content, category, score}."""
 ```
 
-SQL 查询：在 `find_duplicate_memory()` 基础上修改 WHERE 条件为 `score >= :low AND score < :high`，LIMIT 改为参数化，SELECT 增加 `m.category`。
+完整 SQL 查询：
+
+```sql
+SELECT e.memory_id, m.content, m.category,
+       1 - (e.vector <=> :query_vector::vector) AS score
+FROM embeddings e
+JOIN memories m ON m.id = e.memory_id
+WHERE e.workspace_id = :workspace_id
+  AND e.project_id = :project_id
+  AND e.memory_id IS NOT NULL
+  AND e.vector IS NOT NULL
+  AND 1 - (e.vector <=> :query_vector::vector) >= :low
+  AND 1 - (e.vector <=> :query_vector::vector) < :high
+ORDER BY e.vector <=> :query_vector::vector
+LIMIT :limit
+```
 
 #### 3. triage_memory() (worker_tasks.py)
 
@@ -148,6 +168,8 @@ async def triage_memory(
 - temperature: 0.1
 - max_tokens: 256
 
+JSON 解析逻辑：与现有提取 prompt 一致，使用 `re.search(r'\{.*\}', response, re.DOTALL)` 提取 JSON 对象，处理 LLM 可能包裹的 markdown 代码块或前缀文字。
+
 #### 4. extract_memories 改造 (worker_tasks.py)
 
 在现有 `_extract_and_store_facts()` 内部，替换去重检查后的新建逻辑：
@@ -162,9 +184,14 @@ if duplicate:
 
 **改造后逻辑：**
 ```python
-duplicate, query_vector = await find_duplicate_memory(db, ..., threshold=settings.memory_triage_similarity_high)
+duplicate, query_vector = await find_duplicate_memory_with_vector(
+    db, ..., threshold=settings.memory_triage_similarity_high,
+)
 if duplicate:
     continue
+
+# 收集候选 ID 用于后续验证
+candidate_ids = set()
 
 # 查找相关但不重复的候选
 candidates = await find_related_memories(
@@ -174,6 +201,8 @@ candidates = await find_related_memories(
 )
 
 if candidates:
+    candidate_ids = {c["memory_id"] for c in candidates}
+
     # 调用轻量 LLM 审核
     try:
         decision = await triage_memory(fact_text, candidates)
@@ -184,18 +213,36 @@ if candidates:
     target_id = decision.get("target_memory_id")
     merged = decision.get("merged_content")
 
+    # 验证 target_id 来自候选列表（防止 LLM 幻觉）
+    if target_id and target_id not in candidate_ids:
+        action = "create"  # fallback
+
     if action == "discard":
         continue
     elif action == "append" and target_id:
-        # 新建 + 设 parent
-        memory = Memory(..., parent_memory_id=target_id)
-        # embed_and_store(vector=query_vector)
+        # 验证目标存在且同 project
+        target = db.query(Memory).filter(
+            Memory.id == target_id,
+            Memory.project_id == project_id,
+        ).first()
+        if not target:
+            action = "create"  # fallback，走下面的正常新建
+        else:
+            memory = Memory(..., parent_memory_id=target_id)
+            # embed_and_store(vector=query_vector)
     elif action in ("merge", "replace") and target_id and merged:
-        # 更新目标记忆
-        target = db.query(Memory).get(target_id)
+        # 更新目标记忆（用 raw SQL 避免中间 commit）
+        target = db.query(Memory).filter(
+            Memory.id == target_id,
+            Memory.project_id == project_id,
+        ).first()
         if target:
             target.content = merged
-            delete_embeddings_for_memory(db, target_id)
+            # 删旧 embedding（raw SQL DELETE，不 commit）
+            db.execute(sql_text(
+                "DELETE FROM embeddings WHERE memory_id = :mid"
+            ), {"mid": target_id})
+            # 重新 embed（注意：不传 vector 参数，因为内容已变，需要新向量）
             await embed_and_store(db, ..., memory_id=target_id, chunk_text=merged)
         continue  # 不新建
     # else: action == "create" 或 fallback → 正常新建
@@ -203,14 +250,23 @@ if candidates:
 # 正常新建逻辑（不变，但 embed_and_store 复用 query_vector）
 ```
 
+**事务管理注意事项：**
+
+`embed_and_store()` 和 `delete_embeddings_for_memory()` 目前内部都会调用 `db.commit()`，这会破坏外层事务边界。改造方案：
+
+1. `embed_and_store()` 增加 `auto_commit: bool = True` 参数，triage 流程中传 `auto_commit=False`
+2. merge/replace 路径中直接用 raw SQL `DELETE` 替代 `delete_embeddings_for_memory()`，避免中间 commit
+3. 所有 DB 变更统一由 `extract_memories` 末尾的 `db.commit()` 提交
+4. 如果中途失败，`db.rollback()` 可以回滚全部变更，不会出现"记忆更新了但没有 embedding"的中间态
+
 ### 各 action 处理细节
 
 | Action | Memory 操作 | Embedding 操作 | parent_memory_id |
 |--------|-----------|---------------|-----------------|
 | `create` | 新建 | `embed_and_store(vector=query_vector)` | null |
 | `append` | 新建 | `embed_and_store(vector=query_vector)` | 目标记忆 ID |
-| `merge` | 更新目标 content | 删旧 embedding + 重新 embed | 不改 |
-| `replace` | 更新目标 content | 删旧 embedding + 重新 embed | 不改 |
+| `merge` | 更新目标 content | 删旧 embedding + 重新 embed（不传 vector，内容已变需新向量） | 不改 |
+| `replace` | 更新目标 content | 删旧 embedding + 重新 embed（不传 vector，内容已变需新向量） | 不改 |
 | `discard` | 无 | 无 | 无 |
 
 ### 记忆类型规则（不变）
@@ -228,8 +284,23 @@ if candidates:
 - `find_related_memories()` 失败 → 跳过审核，走 create 路径
 - `triage_memory()` LLM 调用失败 → fallback 到 `create`
 - `triage_memory()` 返回无法解析的 JSON → fallback 到 `create`
-- `target_memory_id` 在数据库中不存在 → fallback 到 `create`
+- `target_memory_id` 不在候选列表中（LLM 幻觉） → fallback 到 `create`
+- `target_memory_id` 在数据库中不存在或不属于当前 project → fallback 到 `create`
+- merge/replace 中 embed 失败 → `db.rollback()` 回滚所有变更，记忆和 embedding 状态一致
 - 所有 fallback 保证记忆提取流程不中断
+
+## 并发安全
+
+`extract_memories` 是 Celery 任务，同一 project 的两轮对话可能并发执行。两个任务可能同时找到同一候选并决定 merge，第二个会覆盖第一个的合并结果。
+
+当前阶段接受这个风险，原因：
+1. 并发 merge 同一记忆的概率很低（需要两条相似事实在几秒内同时提取）
+2. 即使发生，结果也不是数据损坏，只是丢失一次合并——事实会在下次对话中重新提取
+3. 如果未来需要严格保证，可加 `SELECT ... FOR UPDATE` 或 Celery 任务锁
+
+## MemoryEdge 说明
+
+本次改动只使用 `parent_memory_id`（树结构）进行 `append` 归档。`MemoryEdge`（图结构）的自动填充留待未来迭代，可能用于标记 "related_to"、"supersedes" 等语义关系。
 
 ## 成本与性能
 
