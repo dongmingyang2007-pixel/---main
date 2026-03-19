@@ -27,12 +27,12 @@ const PUBLIC_NAV_KEYS = [
 ] as const;
 
 const CONSOLE_NAV_ITEMS = [
+  { href: "/app", navKey: "home" },
   { href: "/app/assistants", navKey: "assistants" },
-  { href: "/app/knowledge", navKey: "knowledge" },
-  { href: "/app/training", navKey: "training" },
   { href: "/app/chat", navKey: "chat" },
-  { href: "/app/models", navKey: "models" },
+  { href: "/app/memory", navKey: "memory" },
   { href: "/app/devices", navKey: "devices" },
+  { href: "/app/discover", navKey: "discover" },
   { href: "/app/settings", navKey: "settings" },
 ] as const;
 

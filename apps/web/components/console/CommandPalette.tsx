@@ -13,18 +13,17 @@ import {
 } from "@/components/ui/command";
 
 const NAVIGATION_ITEMS = [
+  { key: "nav.home", href: "/app" },
   { key: "nav.assistants", href: "/app/assistants" },
-  { key: "nav.knowledge", href: "/app/knowledge" },
-  { key: "nav.training", href: "/app/training" },
   { key: "nav.chat", href: "/app/chat" },
-  { key: "nav.models", href: "/app/models" },
+  { key: "nav.memory", href: "/app/memory" },
   { key: "nav.devices", href: "/app/devices" },
+  { key: "nav.discover", href: "/app/discover" },
   { key: "nav.settings", href: "/app/settings" },
 ];
 
 const ACTION_ITEMS = [
   { key: "cmd.newAssistant", href: "/app/assistants/new" },
-  { key: "cmd.startTraining", href: "/app/training" },
 ];
 
 export function CommandPalette() {

@@ -8,21 +8,21 @@ import { useTranslations } from "next-intl";
 const NAV_KEYS = [
   { href: "/app", key: "dashboard" },
   { href: "/app/assistants", key: "assistants" },
-  { href: "/app/knowledge", key: "knowledge" },
-  { href: "/app/training", key: "training" },
   { href: "/app/chat", key: "chat" },
-  { href: "/app/settings", key: "settings" },
+  { href: "/app/memory", key: "memory" },
   { href: "/app/devices", key: "devices" },
+  { href: "/app/discover", key: "discover" },
+  { href: "/app/settings", key: "settings" },
 ];
 
 const ROUTE_KEYS = [
   { match: (p: string) => p === "/app", key: "app" },
   { match: (p: string) => p.startsWith("/app/assistants"), key: "assistants" },
-  { match: (p: string) => p.startsWith("/app/knowledge"), key: "knowledge" },
-  { match: (p: string) => p.startsWith("/app/training"), key: "training" },
   { match: (p: string) => p.startsWith("/app/chat"), key: "chat" },
-  { match: (p: string) => p.startsWith("/app/settings"), key: "settings" },
+  { match: (p: string) => p.startsWith("/app/memory"), key: "memory" },
   { match: (p: string) => p.startsWith("/app/devices"), key: "devices" },
+  { match: (p: string) => p.startsWith("/app/discover"), key: "discover" },
+  { match: (p: string) => p.startsWith("/app/settings"), key: "settings" },
 ];
 
 export function AppShell({ title, children }: { title: string; children: ReactNode }) {

@@ -52,7 +52,7 @@ export function InlineTopBar() {
     }));
   }, [pathname, projectNames, t]);
 
-  const showProjectSelect = /^\/app\/(assistants|knowledge|training|chat)(?:\/|$)/.test(pathname);
+  const showProjectSelect = /^\/app\/(assistants|chat)(?:\/|$)/.test(pathname);
 
   return (
     <div className="inline-topbar">
