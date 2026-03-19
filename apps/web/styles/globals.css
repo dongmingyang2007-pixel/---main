@@ -9329,6 +9329,113 @@ button {
   border-top: 1px solid var(--border);
 }
 
+/* ── Devices Page ──────────────────────────── */
+
+.devices-page { padding: 24px 32px; max-width: 900px; }
+
+.devices-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px;
+}
+.devices-topbar-title { font-size: 17px; font-weight: 700; color: var(--text-primary); }
+.devices-add-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  background: var(--accent); color: white; border: none; cursor: pointer;
+  transition: filter 0.15s;
+}
+.devices-add-btn:hover { filter: brightness(0.9); }
+.devices-add-btn svg { width: 14px; height: 14px; stroke: white; }
+
+.device-hero {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 20px; padding: 28px; display: flex; gap: 32px; margin-bottom: 24px;
+}
+
+.device-visual {
+  width: 180px; min-width: 180px; height: 180px;
+  background: linear-gradient(135deg, var(--bg-base), color-mix(in srgb, var(--border) 50%, var(--bg-base)));
+  border-radius: 20px; display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.device-visual svg { width: 80px; height: 80px; }
+
+.device-pulse {
+  position: absolute; top: 12px; right: 12px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--success);
+  animation: device-pulse 2s ease-in-out infinite;
+}
+@keyframes device-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(42,138,90,0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(42,138,90,0); }
+}
+
+.device-info { flex: 1; display: flex; flex-direction: column; }
+.device-name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.device-name { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.device-status-badge {
+  padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  background: color-mix(in srgb, var(--success) 10%, transparent); color: var(--success);
+}
+.device-model-info { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+
+.device-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.device-stat {
+  padding: 14px; background: var(--bg-base); border-radius: 12px;
+}
+.device-stat-value { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.device-stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.device-stat-bar {
+  height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden;
+}
+.device-stat-fill { height: 100%; border-radius: 2px; }
+
+.device-actions { display: flex; gap: 8px; margin-top: auto; }
+.device-action-btn {
+  padding: 8px 16px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); background: white; color: var(--text-secondary);
+  cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; gap: 6px;
+}
+.device-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+.device-action-btn svg { width: 14px; height: 14px; }
+
+.device-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.device-settings-card {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px;
+}
+.device-settings-title {
+  font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.device-settings-title svg { width: 16px; height: 16px; stroke: var(--accent); }
+
+.device-setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.device-setting-row:last-child { border-bottom: none; }
+.device-setting-label { font-size: 13px; color: var(--text-primary); }
+.device-setting-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.device-setting-select {
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12px; color: var(--text-secondary); background: white; cursor: pointer; font-weight: 500;
+}
+
+.device-toggle {
+  width: 40px; height: 22px; border-radius: 11px; background: var(--border);
+  position: relative; cursor: pointer; transition: background 0.2s; border: none;
+}
+.device-toggle.on { background: var(--accent); }
+.device-toggle::after {
+  content: ''; position: absolute;
+  width: 18px; height: 18px; border-radius: 50%; background: white;
+  top: 2px; left: 2px; transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.device-toggle.on::after { transform: translateX(18px); }
+
 /* ── Reduced Motion ──────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
