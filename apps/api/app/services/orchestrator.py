@@ -6,6 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.entities import Conversation, DataItem, Dataset, Memory, ModelCatalog, PipelineConfig, Project
+from app.services.context_loader import (
+    extract_personality,
+    filter_knowledge_chunks,
+    load_conversation_context,
+    load_permanent_memories,
+)
 from app.services.dashscope_client import chat_completion, omni_completion
 from app.services.embedding import search_similar
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
@@ -24,32 +30,12 @@ def _load_active_conversation_context(
     project_id: str,
     conversation_id: str,
 ) -> tuple[Project, Conversation]:
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.workspace_id == workspace_id,
-            Project.deleted_at.is_(None),
-        )
-        .first()
+    return load_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
     )
-    if not project:
-        raise RuntimeError("project_not_found")
-
-    conversation = (
-        db.query(Conversation)
-        .join(Project, Project.id == Conversation.project_id)
-        .filter(
-            Conversation.id == conversation_id,
-            Conversation.workspace_id == workspace_id,
-            Conversation.project_id == project_id,
-            Project.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not conversation:
-        raise RuntimeError("conversation_not_found")
-    return project, conversation
 
 
 def _filter_knowledge_chunks_for_prompt(
@@ -59,30 +45,15 @@ def _filter_knowledge_chunks_for_prompt(
     project_id: str,
     results: list[dict],
 ) -> list[dict]:
-    data_item_ids = [result["data_item_id"] for result in results if result.get("data_item_id")]
-    if not data_item_ids:
-        return [result for result in results if not result.get("memory_id")]
-
-    visible_data_item_ids = {
-        data_item_id
-        for data_item_id, in db.query(DataItem.id)
-        .join(Dataset, Dataset.id == DataItem.dataset_id)
-        .join(Project, Project.id == Dataset.project_id)
-        .filter(
-            DataItem.id.in_(data_item_ids),
-            DataItem.deleted_at.is_(None),
-            Dataset.deleted_at.is_(None),
-            Project.id == project_id,
-            Project.workspace_id == workspace_id,
-            Project.deleted_at.is_(None),
-        )
-        .all()
-    }
-    return [
-        result
-        for result in results
-        if result.get("memory_id") is None and result.get("data_item_id") in visible_data_item_ids
-    ]
+    # Filter out memory-sourced results first (handled separately),
+    # then delegate dataset visibility check to shared context_loader.
+    non_memory_results = [r for r in results if r.get("memory_id") is None]
+    return filter_knowledge_chunks(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        results=non_memory_results,
+    )
 
 
 def _load_visible_permanent_memories(
@@ -92,22 +63,12 @@ def _load_visible_permanent_memories(
     project_id: str,
     conversation_created_by: str | None,
 ) -> list[Memory]:
-    permanent_memories = (
-        db.query(Memory)
-        .filter(
-            Memory.workspace_id == workspace_id,
-            Memory.project_id == project_id,
-            Memory.type == "permanent",
-        )
-        .order_by(Memory.updated_at.desc())
-        .limit(20)
-        .all()
+    return load_permanent_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_created_by=conversation_created_by,
     )
-    return [
-        memory
-        for memory in permanent_memories
-        if not is_private_memory(memory) or get_memory_owner_user_id(memory) == conversation_created_by
-    ]
 
 
 def _filter_relevant_memory_ids_for_prompt(
@@ -248,14 +209,7 @@ async def _build_and_call_llm(
         pass  # RAG failure is non-fatal, continue without knowledge
 
     # 3. Load project personality
-    personality = ""
-    if project and project.description:
-        desc = project.description
-        match = re.search(r"\[personality:(.*?)\]", desc, re.DOTALL)
-        if match:
-            personality = match.group(1).strip()
-        else:
-            personality = desc  # fallback: use raw description as personality
+    personality = extract_personality(project.description) if project else ""
 
     # 4. Assemble system prompt
     system_parts: list[str] = []
@@ -453,11 +407,7 @@ async def orchestrate_voice_inference(
             )
             .all()
         )
-        personality = ""
-        if project and project.description:
-            desc = project.description
-            match = re.search(r"\[personality:(.*?)\]", desc, re.DOTALL)
-            personality = match.group(1).strip() if match else desc
+        personality = extract_personality(project.description) if project else ""
 
         system_parts: list[str] = []
         if personality:
@@ -496,7 +446,7 @@ async def orchestrate_voice_inference(
                     )
                     .first()
                 )
-                tts_model = tts_config.model_id if tts_config else "cosyvoice-v1"
+                tts_model = tts_config.model_id if tts_config else "qwen3-tts-flash"
                 tts_model_info = (
                     db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
                 )
@@ -530,7 +480,7 @@ async def orchestrate_voice_inference(
             )
             .first()
         )
-        asr_model = asr_config.model_id if asr_config else "paraformer-v2"
+        asr_model = asr_config.model_id if asr_config else "qwen3-asr-flash"
         asr_model_info = (
             db.query(ModelCatalog).filter(ModelCatalog.model_id == asr_model).first()
         )
@@ -622,7 +572,7 @@ async def orchestrate_voice_inference(
                 )
                 .first()
             )
-            tts_model = tts_config.model_id if tts_config else "cosyvoice-v1"
+            tts_model = tts_config.model_id if tts_config else "qwen3-tts-flash"
             tts_model_info = (
                 db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
             )
