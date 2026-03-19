@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import type { MemoryNode } from "@/hooks/useGraphData";
+import { formatRelativeTime } from "@/lib/format-time";
 
 interface MemoryListViewProps {
   nodes: MemoryNode[];
@@ -19,21 +20,6 @@ const FILTER_CATEGORIES: Record<FilterKey, string[]> = {
   preference: ["偏好", "preference", "喜好", "习惯"],
   pack: ["记忆包", "pack", "bundle"],
 };
-
-function formatTimestamp(iso: string, tf: (key: string, values?: Record<string, string | number>) => string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return tf("time.justNow");
-  if (diffMin < 60) return tf("time.minutesAgo", { n: diffMin });
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return tf("time.hoursAgo", { n: diffHr });
-  const diffDay = Math.floor(diffHr / 24);
-  if (diffDay < 30) return tf("time.daysAgo", { n: diffDay });
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 function getTypeClass(node: MemoryNode): string {
   if (node.type === "permanent") return "permanent";
@@ -174,7 +160,7 @@ export default function MemoryListView({
                 <span className={`memory-type-dot ${getTypeClass(node)}`} />
                 <span className="memory-list-category">{node.category || node.type}</span>
                 <span className="memory-list-time">
-                  {formatTimestamp(node.updated_at, t)}
+                  {formatRelativeTime(node.updated_at, t)}
                 </span>
               </div>
               <div className="memory-list-content">{node.content}</div>
@@ -200,9 +186,9 @@ export default function MemoryListView({
                 </span>
               </div>
               <div className="memory-detail-time">
-                {t("memory.created")}: {formatTimestamp(selectedNode.created_at, t)}
+                {t("memory.created")}: {formatRelativeTime(selectedNode.created_at, t)}
                 {" · "}
-                {t("memory.updated")}: {formatTimestamp(selectedNode.updated_at, t)}
+                {t("memory.updated")}: {formatRelativeTime(selectedNode.updated_at, t)}
               </div>
             </div>
 

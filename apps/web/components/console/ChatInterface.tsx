@@ -12,6 +12,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   audioBase64?: string | null;
+  memories_extracted?: string;
 }
 
 interface ApiMessage {
@@ -287,13 +288,13 @@ export function ChatInterface({
                 </button>
               )}
             </div>
-            {msg.role === "assistant" && (msg as any).memories_extracted && (
+            {msg.role === "assistant" && msg.memories_extracted && (
               <div className="chat-memory-indicator">
                 <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
                   <circle cx={12} cy={12} r={3} />
                   <path d="M12 2v4m0 12v4" />
                 </svg>
-                {t("memory.remembered")}：{(msg as any).memories_extracted}
+                {t("memory.remembered")}：{msg.memories_extracted}
               </div>
             )}
           </div>

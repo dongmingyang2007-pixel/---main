@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
+import { getProviderStyle } from "@/lib/model-utils";
 
 /* ── Types (mirrors ModelCatalogDetailOut) ── */
 
@@ -29,25 +30,6 @@ interface ModelDetail {
   supports_cache: boolean;
   price_unit: string;
   price_note: string | null;
-}
-
-/* ── Provider colours (same as discover page) ── */
-
-const PROVIDER_COLORS: Record<string, { bg: string; label: string }> = {
-  qwen: { bg: "linear-gradient(135deg, #c8734a, #e8925a)", label: "Q" },
-  alibaba: { bg: "linear-gradient(135deg, #c8734a, #e8925a)", label: "Q" },
-  deepseek: { bg: "linear-gradient(135deg, #3a6a9a, #4a8ac8)", label: "DS" },
-};
-
-function providerStyle(provider: string): { bg: string; label: string } {
-  const key = provider.toLowerCase();
-  for (const [prefix, val] of Object.entries(PROVIDER_COLORS)) {
-    if (key.includes(prefix)) return val;
-  }
-  return {
-    bg: "linear-gradient(135deg, #6b7280, #9ca3af)",
-    label: provider.charAt(0).toUpperCase(),
-  };
 }
 
 /* ── Capability tag mapping (same consumer language as discover page) ── */
@@ -168,7 +150,7 @@ export default function ModelDetailPage() {
     );
   }
 
-  const prov = providerStyle(model.provider);
+  const prov = getProviderStyle(model.provider);
   const tags = buildTags(model, t);
 
   /* ── Modality helpers ── */

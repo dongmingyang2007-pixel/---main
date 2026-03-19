@@ -8,6 +8,7 @@ import { ChatInterface } from "@/components/console/ChatInterface";
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { formatRelativeTime } from "@/lib/format-time";
 import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useProjectSelection } from "@/lib/useProjectSelection";
 import { useModal } from "@/components/ui/modal-dialog";
@@ -41,24 +42,6 @@ function getDateGroup(dateStr: string): string {
   if (diffDays === 1) return "yesterday";
   if (diffDays <= 7) return "thisWeek";
   return "earlier";
-}
-
-function formatTime(dateStr: string, tf: (key: string, values?: Record<string, string | number>) => string): string {
-  try {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return tf("time.justNow");
-    if (diffMin < 60) return tf("time.minutesAgo", { n: diffMin });
-    const diffHrs = Math.floor(diffMin / 60);
-    if (diffHrs < 24) return tf("time.hoursAgo", { n: diffHrs });
-    const diffDays = Math.floor(diffHrs / 24);
-    if (diffDays < 30) return tf("time.daysAgo", { n: diffDays });
-    return d.toLocaleDateString();
-  } catch {
-    return dateStr;
-  }
 }
 
 function normalizeConversationText(content: string): string {
@@ -164,7 +147,7 @@ function ChatPageContent() {
     let cancelled = false;
     const fallbackTitle = t("newConversation");
     const targets = conversations.filter((conversation) => {
-      const timeLabel = formatTime(conversation.updated_at, t);
+      const timeLabel = formatRelativeTime(conversation.updated_at, t);
       return !isMeaningfulConversationTitle(
         conversation.title,
         fallbackTitle,
@@ -317,7 +300,7 @@ function ChatPageContent() {
 
   const getConversationTitle = useCallback(
     (conversation: Conversation) => {
-      const timeLabel = formatTime(conversation.updated_at, t);
+      const timeLabel = formatRelativeTime(conversation.updated_at, t);
       if (
         isMeaningfulConversationTitle(
           conversation.title,
@@ -334,7 +317,7 @@ function ChatPageContent() {
 
   const getConversationMeta = useCallback(
     (conversation: Conversation) => {
-      const timeLabel = formatTime(conversation.updated_at, t);
+      const timeLabel = formatRelativeTime(conversation.updated_at, t);
       const summary = conversationSummaries[conversation.id];
       const title = getConversationTitle(conversation);
       if (summary?.preview && summary.preview !== title) {

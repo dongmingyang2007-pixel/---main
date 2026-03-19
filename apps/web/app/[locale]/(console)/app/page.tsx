@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { PageTransition } from "@/components/console/PageTransition";
 import { apiGet } from "@/lib/api";
+import { formatRelativeTime } from "@/lib/format-time";
 
 type Project = { id: string; name: string };
 
@@ -13,23 +14,6 @@ interface RecentConversation {
   id: string;
   title: string;
   updated_at: string;
-}
-
-function formatRelativeTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return "";
-    if (diffMin < 60) return `${diffMin}m`;
-    const diffHrs = Math.floor(diffMin / 60);
-    if (diffHrs < 24) return `${diffHrs}h`;
-    const diffDays = Math.floor(diffHrs / 24);
-    return `${diffDays}d`;
-  } catch {
-    return "";
-  }
 }
 
 export default function DashboardPage() {
@@ -126,7 +110,7 @@ export default function DashboardPage() {
                   {chat.title || t("dashboard.noChats")}
                 </span>
                 <span className="dashboard-recent-time">
-                  {formatRelativeTime(chat.updated_at)}
+                  {formatRelativeTime(chat.updated_at, t)}
                 </span>
               </Link>
             ))

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
+import { getProviderStyle } from "@/lib/model-utils";
 
 /* ── Types (mirrored from ModelPickerModal) ── */
 
@@ -19,25 +20,6 @@ interface CatalogModel {
   output_price: number;
   context_window: number;
   max_output: number;
-}
-
-/* ── Provider colours ── */
-
-const PROVIDER_COLORS: Record<string, { bg: string; label: string }> = {
-  qwen:     { bg: "linear-gradient(135deg, #c8734a, #e8925a)", label: "Q" },
-  alibaba:  { bg: "linear-gradient(135deg, #c8734a, #e8925a)", label: "Q" },
-  deepseek: { bg: "linear-gradient(135deg, #3a6a9a, #4a8ac8)", label: "DS" },
-};
-
-function providerStyle(provider: string): { bg: string; label: string } {
-  const key = provider.toLowerCase();
-  for (const [prefix, val] of Object.entries(PROVIDER_COLORS)) {
-    if (key.includes(prefix)) return val;
-  }
-  return {
-    bg: "linear-gradient(135deg, #6b7280, #9ca3af)",
-    label: provider.charAt(0).toUpperCase(),
-  };
 }
 
 /* ── Capability tag mapping ── */
@@ -296,7 +278,7 @@ export default function DiscoverPage() {
           ) : (
             <div className="discover-grid">
               {filteredModels.map((model) => {
-                const prov = providerStyle(model.provider);
+                const prov = getProviderStyle(model.provider);
                 const tags = buildTags(model, t);
                 return (
                   <Link
