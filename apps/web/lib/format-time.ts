@@ -1,4 +1,5 @@
-type TranslateFn = (key: string, values?: Record<string, unknown>) => string;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TranslateFn = (key: any, values?: any) => string;
 
 export function formatRelativeTime(dateStr: string, t: TranslateFn): string {
   const date = new Date(dateStr);
