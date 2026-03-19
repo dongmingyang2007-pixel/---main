@@ -18,8 +18,12 @@ export function ChatIcon() {
 export function MemoryIcon() {
   return (
     <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx={12} cy={12} r={3} />
-      <path d="M12 2v4m0 12v4m-7.07-15.07l2.83 2.83m8.48 8.48l2.83 2.83m-17.07 0l2.83-2.83m8.48-8.48l2.83-2.83" />
+      <circle cx={12} cy={5} r={2.5} />
+      <circle cx={5} cy={17} r={2.5} />
+      <circle cx={19} cy={17} r={2.5} />
+      <line x1={12} y1={7.5} x2={7} y2={14.5} />
+      <line x1={12} y1={7.5} x2={17} y2={14.5} />
+      <line x1={7.5} y1={17} x2={16.5} y2={17} />
     </svg>
   );
 }

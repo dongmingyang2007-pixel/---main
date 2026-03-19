@@ -6013,16 +6013,16 @@ button {
 }
 
 .sidebar-v2-footer {
-  padding: 8px;
+  padding: 4px 8px 8px;
   border-top: 1px solid var(--border);
-  margin: 0 8px;
+  margin: 0;
 }
 
 .sidebar-v2-user {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px;
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
