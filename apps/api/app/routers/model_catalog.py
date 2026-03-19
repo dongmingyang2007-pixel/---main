@@ -74,6 +74,8 @@ def _derive_modalities(item: ModelCatalog) -> tuple[list[str], list[str]]:
         input_modalities = ["text"]
         if "vision" in capabilities:
             input_modalities.append("image")
+        if "video" in capabilities:
+            input_modalities.append("video")
         if "audio_input" in capabilities:
             input_modalities.append("audio")
         output_modalities = ["text"]

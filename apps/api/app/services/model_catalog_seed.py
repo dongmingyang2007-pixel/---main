@@ -181,7 +181,7 @@ MODEL_CATALOG_SEED: Sequence[dict[str, Any]] = (
         "provider": "qwen",
         "category": "llm",
         "description": "端到端全模态实时模型，直接接收音频、图片与文本并输出语音和文字。",
-        "capabilities": ["text", "vision", "audio_input", "audio_output", "realtime", "multilingual"],
+        "capabilities": ["text", "vision", "video", "audio_input", "audio_output", "realtime", "multilingual"],
         "context_window": 131072,
         "max_output": 8192,
         "input_price": 0.0022,
