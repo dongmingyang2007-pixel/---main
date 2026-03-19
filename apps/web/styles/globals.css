@@ -5602,101 +5602,6 @@ button {
   overflow: hidden;
 }
 
-/* ── Icon Bar ────────────────────────────────── */
-
-.icon-bar {
-  width: 52px;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 14px 0;
-  flex-shrink: 0;
-}
-
-.icon-bar-top,
-.icon-bar-bottom {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.icon-bar-item {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  transition: color 150ms, background 150ms;
-  text-decoration: none;
-}
-
-.icon-bar-item:hover {
-  color: var(--text-primary);
-  background: var(--bg-base);
-}
-
-.icon-bar-item svg {
-  pointer-events: none;
-}
-
-.icon-bar-item.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-/* ── List Panel ──────────────────────────────── */
-
-.list-panel {
-  width: 180px;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border-light);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  position: relative;
-  transition: width 200ms ease-in-out;
-}
-
-.list-panel.is-collapsed {
-  width: 0;
-  border-right: none;
-  overflow: hidden;
-}
-
-.list-panel-content {
-  flex: 1;
-  padding: 16px 12px;
-  overflow: hidden;
-}
-
-.list-panel-toggle {
-  position: absolute;
-  top: 50%;
-  right: -12px;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 24px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 5;
-  color: var(--text-muted);
-  box-shadow: var(--shadow-card);
-}
-
-.list-panel-toggle:hover {
-  color: var(--text-primary);
-}
-
 /* ── App Modal (replaces native prompt/confirm/alert) ── */
 
 .app-modal-overlay {
@@ -5967,27 +5872,6 @@ button {
 .console-section-list-create:hover {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-/* ── Responsive: Tablet ──────────────────────── */
-
-@media (max-width: 1023px) {
-  .list-panel {
-    position: absolute;
-    left: 52px;
-    top: 50px;
-    bottom: 24px;
-    z-index: 20;
-    box-shadow: var(--shadow-raised);
-    width: 0;
-    border-right: none;
-    overflow: hidden;
-  }
-
-  .list-panel:not(.is-collapsed) {
-    width: 200px;
-    border-right: 1px solid var(--border-light);
-  }
 }
 
 /* ── Expandable Sidebar v2 ── */
@@ -6272,14 +6156,6 @@ button {
 /* ── Responsive: Mobile ──────────────────────── */
 
 @media (max-width: 767px) {
-  .icon-bar {
-    display: none;
-  }
-
-  .list-panel {
-    display: none;
-  }
-
   .site-header-v2.is-console {
     display: none;
   }
