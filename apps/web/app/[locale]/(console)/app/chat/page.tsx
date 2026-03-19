@@ -99,6 +99,7 @@ function ChatPageContent() {
   const modal = useModal();
   const searchParams = useSearchParams();
   const requestedProjectId = searchParams.get("project_id") || "";
+  const requestedConvId = searchParams.get("conv") || "";
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<
@@ -223,6 +224,13 @@ function ChatPageContent() {
     }
     void selectProject(requestedProjectId);
   }, [projects, requestedProjectId, selectProject, selectedProjectId]);
+
+  useEffect(() => {
+    if (!requestedConvId) return;
+    if (conversations.some((c) => c.id === requestedConvId)) {
+      setActiveConversationId(requestedConvId);
+    }
+  }, [requestedConvId, conversations]);
 
   // Create new conversation
   const handleNewConversation = useCallback(async () => {
@@ -390,7 +398,7 @@ function ChatPageContent() {
 
                 {(() => {
                   const filtered = conversations.filter(
-                    (c) => !search || c.title?.toLowerCase().includes(search.toLowerCase()),
+                    (c) => !search || getConversationTitle(c).toLowerCase().includes(search.toLowerCase()),
                   );
                   const dateGroupKeys = ["today", "yesterday", "thisWeek", "earlier"] as const;
                   const dateGroupLabels: Record<string, string> = {
@@ -416,6 +424,14 @@ function ChatPageContent() {
                             key={conv.id}
                             className={`chat-sidebar-item${activeConversationId === conv.id ? " is-active" : ""}`}
                             onClick={() => setActiveConversationId(conv.id)}
+                            tabIndex={0}
+                            role="button"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setActiveConversationId(conv.id);
+                              }
+                            }}
                           >
                             <div className="chat-sidebar-item-info">
                               <div className="chat-sidebar-item-title">

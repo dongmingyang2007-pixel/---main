@@ -407,8 +407,7 @@ export function ChatInterface({
           projectId={projectId}
           workspaceId={
             (typeof document !== "undefined" &&
-              (document.cookie.match(/mingrun_workspace_id=([^;]+)/)?.[1] ||
-                document.cookie.match(/qihang_workspace_id=([^;]+)/)?.[1])) ||
+              document.cookie.match(/mingrun_workspace_id=([^;]+)/)?.[1]) ||
             ""
           }
         />

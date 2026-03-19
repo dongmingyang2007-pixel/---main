@@ -127,7 +127,12 @@ export function Sidebar() {
 
         {/* User area */}
         <div className="sidebar-v2-footer">
-          <Link href="/app/settings" prefetch={false} className="sidebar-v2-user">
+          <Link
+            href="/app/settings"
+            prefetch={false}
+            className={clsx("sidebar-v2-user", isActive("/app/settings") && "is-active")}
+            aria-current={isActive("/app/settings") ? "page" : undefined}
+          >
             <span className="sidebar-v2-icon">
               <SettingsIcon />
             </span>

@@ -121,7 +121,7 @@ export default function DashboardPage() {
             </div>
           ) : (
             recentChats.map((chat) => (
-              <Link key={chat.id} href="/app/chat" className="dashboard-recent-item">
+              <Link key={chat.id} href={`/app/chat?conv=${chat.id}`} className="dashboard-recent-item">
                 <span className="dashboard-recent-text">
                   {chat.title || t("dashboard.noChats")}
                 </span>

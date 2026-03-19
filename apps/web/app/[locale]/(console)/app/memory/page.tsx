@@ -71,10 +71,36 @@ export default function MemoryPage() {
   };
 
   const handleImport = () => {
-    console.log("Import memories — not yet implemented");
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (item.content) {
+              await createMemory(item.content, item.category || "");
+            }
+          }
+        }
+      } catch {
+        // silently handle parse errors
+      }
+    };
+    input.click();
   };
 
-  const handleNewMemory = async (content: string, category?: string) => {
+  const handleNewMemory = async () => {
+    const content = window.prompt("输入记忆内容：");
+    if (!content?.trim()) return;
+    await createMemory(content.trim(), "");
+  };
+
+  const handleCreateMemoryFromGraph = async (content: string, category?: string) => {
     await createMemory(content, category);
   };
 
@@ -192,7 +218,7 @@ export default function MemoryPage() {
           <button
             type="button"
             className="memory-action-btn primary"
-            onClick={() => void handleNewMemory("", "")}
+            onClick={() => void handleNewMemory()}
           >
             <svg
               width="14"
@@ -232,7 +258,7 @@ export default function MemoryPage() {
             nodes={data.nodes}
             edges={data.edges}
             onNodeSelect={() => {}}
-            onCreateMemory={handleNewMemory}
+            onCreateMemory={handleCreateMemoryFromGraph}
             onUpdateMemory={updateMemory}
             onDeleteMemory={deleteMemory}
             onPromoteMemory={promoteMemory}
