@@ -158,6 +158,37 @@
   "config": {
     "tab": "⚙️ 配置"
   },
+  "profile": {
+    "startChat": "开始聊天",
+    "settings": "设置",
+    "tab": {
+      "overview": "概览",
+      "personality": "性格",
+      "knowledge": "知识",
+      "models": "模型"
+    },
+    "card": {
+      "personality": "性格",
+      "activity": "活跃度",
+      "models": "模型配置",
+      "knowledge": "知识"
+    },
+    "edit": "编辑",
+    "change": "更换",
+    "manage": "管理",
+    "stat": {
+      "conversations": "对话",
+      "memories": "新记忆",
+      "hours": "时长"
+    },
+    "model": {
+      "llm": "对话模型",
+      "asr": "语音识别",
+      "tts": "语音合成"
+    },
+    "noFiles": "暂无知识文件",
+    "customPersonality": "自定义"
+  },
   "canvas": {
     "model": "基座模型",
     "knowledge": "知识库",

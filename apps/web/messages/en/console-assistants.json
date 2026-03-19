@@ -158,6 +158,37 @@
   "config": {
     "tab": "⚙️ Config"
   },
+  "profile": {
+    "startChat": "Start chatting",
+    "settings": "Settings",
+    "tab": {
+      "overview": "Overview",
+      "personality": "Personality",
+      "knowledge": "Knowledge",
+      "models": "Models"
+    },
+    "card": {
+      "personality": "Personality",
+      "activity": "Activity",
+      "models": "Model Config",
+      "knowledge": "Knowledge"
+    },
+    "edit": "Edit",
+    "change": "Change",
+    "manage": "Manage",
+    "stat": {
+      "conversations": "Conversations",
+      "memories": "New memories",
+      "hours": "Hours"
+    },
+    "model": {
+      "llm": "Chat model",
+      "asr": "Speech recognition",
+      "tts": "Speech synthesis"
+    },
+    "noFiles": "No knowledge files",
+    "customPersonality": "Custom"
+  },
   "canvas": {
     "model": "Base Model",
     "knowledge": "Knowledge",
