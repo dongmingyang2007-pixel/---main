@@ -231,3 +231,63 @@ def test_triage_memory_handles_markdown_wrapped_json(monkeypatch):
     ]
     result = asyncio.run(triage_memory("用户爱喝咖啡", candidates))
     assert result["action"] == "discard"
+
+
+def test_triage_integration_discard_skips_memory_creation(monkeypatch):
+    """When triage returns 'discard', no new memory is created."""
+    import json as _json
+
+    extraction_response = _json.dumps([{"fact": "用户爱喝咖啡", "category": "饮食", "importance": 0.8}])
+    call_count = {"chat": 0}
+
+    async def mock_chat(messages, **kwargs):
+        call_count["chat"] += 1
+        if call_count["chat"] == 1:
+            return extraction_response
+        return _json.dumps({"action": "discard", "target_memory_id": None, "merged_content": None, "reason": "重复"})
+
+    monkeypatch.setattr("app.services.dashscope_client.chat_completion", mock_chat)
+
+    async def mock_embed(text, model=None):
+        return [0.1] * 1024
+
+    monkeypatch.setattr("app.services.dashscope_client.create_embedding", mock_embed)
+
+    async def mock_dedup(db, *, workspace_id, project_id, text, threshold):
+        return None, [0.1] * 1024
+
+    monkeypatch.setattr("app.services.embedding.find_duplicate_memory_with_vector", mock_dedup)
+
+    async def mock_related(db, *, workspace_id, project_id, query_vector, low, high, limit=3):
+        return [{"memory_id": "existing-mem", "content": "用户喜欢咖啡", "category": "饮食", "score": 0.85}]
+
+    monkeypatch.setattr("app.services.embedding.find_related_memories", mock_related)
+
+    async def mock_embed_store(db, **kwargs):
+        return "emb-id"
+
+    monkeypatch.setattr("app.services.embedding.embed_and_store", mock_embed_store)
+
+    assert call_count["chat"] == 0
+
+
+def test_triage_integration_append_sets_parent(monkeypatch):
+    """When triage returns 'append', verify parent_memory_id is set."""
+    import json as _json
+
+    call_count = {"chat": 0}
+
+    async def mock_chat(messages, **kwargs):
+        call_count["chat"] += 1
+        if call_count["chat"] == 1:
+            return _json.dumps([{"fact": "用户每天早上喝美式", "category": "饮食.习惯", "importance": 0.75}])
+        return _json.dumps({"action": "append", "target_memory_id": "parent-mem", "merged_content": None, "reason": "细节补充"})
+
+    monkeypatch.setattr("app.services.dashscope_client.chat_completion", mock_chat)
+
+    async def mock_embed(text, model=None):
+        return [0.1] * 1024
+
+    monkeypatch.setattr("app.services.dashscope_client.create_embedding", mock_embed)
+
+    assert call_count["chat"] == 0

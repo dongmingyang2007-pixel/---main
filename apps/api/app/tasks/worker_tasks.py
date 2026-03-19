@@ -609,7 +609,7 @@ def extract_memories(
 
     from app.models.entities import Memory
     from app.services.dashscope_client import chat_completion
-    from app.services.embedding import embed_and_store, find_duplicate_memory
+    from app.services.embedding import embed_and_store, find_duplicate_memory_with_vector, find_related_memories
 
     EXTRACTION_PROMPT = """你是一个记忆提取器。分析以下对话，提取值得记住的事实。
 
@@ -689,17 +689,84 @@ AI：{ai_response}
 
                 # Deduplication: skip if a highly similar memory already exists
                 try:
-                    duplicate = await find_duplicate_memory(
+                    duplicate, query_vector = await find_duplicate_memory_with_vector(
                         db,
                         workspace_id=workspace_id,
                         project_id=project_id,
                         text=fact_text,
-                        threshold=0.90,
+                        threshold=settings.memory_triage_similarity_high,
                     )
                     if duplicate:
                         continue
                 except Exception:  # noqa: BLE001
-                    pass  # Dedup check failure is non-fatal
+                    query_vector = None  # Dedup check failure is non-fatal
+
+                # ── Memory Triage: check for related (but not duplicate) memories ──
+                parent_memory_id = None
+                if query_vector:
+                    try:
+                        candidates = await find_related_memories(
+                            db,
+                            workspace_id=workspace_id,
+                            project_id=project_id,
+                            query_vector=query_vector,
+                            low=settings.memory_triage_similarity_low,
+                            high=settings.memory_triage_similarity_high,
+                        )
+                    except Exception:  # noqa: BLE001
+                        candidates = []
+
+                    if candidates:
+                        candidate_ids = {c["memory_id"] for c in candidates}
+                        try:
+                            decision = await triage_memory(fact_text, candidates)
+                        except Exception:  # noqa: BLE001
+                            decision = {"action": "create"}
+
+                        action = decision.get("action", "create")
+                        target_id = decision.get("target_memory_id")
+                        merged = decision.get("merged_content")
+
+                        # Validate target_id comes from candidate list
+                        if target_id and target_id not in candidate_ids:
+                            action = "create"
+
+                        if action == "discard":
+                            continue
+
+                        if action == "append" and target_id:
+                            target = db.query(Memory).filter(
+                                Memory.id == target_id,
+                                Memory.project_id == project_id,
+                            ).first()
+                            if target:
+                                parent_memory_id = target_id
+                            # else: fallthrough to create
+
+                        elif action in ("merge", "replace") and target_id and merged:
+                            target = db.query(Memory).filter(
+                                Memory.id == target_id,
+                                Memory.project_id == project_id,
+                            ).first()
+                            if target:
+                                target.content = merged
+                                db.execute(
+                                    sql_text("DELETE FROM embeddings WHERE memory_id = :mid"),
+                                    {"mid": target_id},
+                                )
+                                try:
+                                    await embed_and_store(
+                                        db,
+                                        workspace_id=workspace_id,
+                                        project_id=project_id,
+                                        memory_id=target_id,
+                                        chunk_text=merged,
+                                        auto_commit=False,
+                                    )
+                                except Exception:  # noqa: BLE001
+                                    pass
+                                continue  # Don't create a new memory
+                            # else: fallthrough to create
 
                 memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
                 metadata = {"importance": importance, "source": "auto_extraction"}
@@ -713,6 +780,7 @@ AI：{ai_response}
                     category=fact.get("category", ""),
                     type=memory_type,
                     source_conversation_id=conversation_id if memory_type == "temporary" else None,
+                    parent_memory_id=parent_memory_id,
                     metadata_json=metadata,
                 )
                 db.add(memory)
@@ -726,6 +794,8 @@ AI：{ai_response}
                         project_id=project_id,
                         memory_id=memory.id,
                         chunk_text=memory.content,
+                        vector=query_vector,
+                        auto_commit=False,
                     )
                 except Exception:  # noqa: BLE001
                     pass  # Embedding failure is non-fatal
