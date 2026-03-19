@@ -57,3 +57,52 @@ def test_build_system_prompt_with_knowledge():
         knowledge_chunks=["降噪技术文档片段"],
     )
     assert "降噪技术文档片段" in prompt
+
+
+import asyncio
+from app.services.realtime_bridge import RealtimeSession, SessionState
+
+
+def test_session_initial_state():
+    session = RealtimeSession(
+        workspace_id="ws1",
+        project_id="proj1",
+        conversation_id="conv1",
+        user_id="user1",
+    )
+    assert session.state == SessionState.CONNECTING
+    assert session.turn_count == 0
+    assert session.is_ai_speaking is False
+
+
+def test_session_should_interrupt_short_speech():
+    session = RealtimeSession(
+        workspace_id="ws1",
+        project_id="proj1",
+        conversation_id="conv1",
+        user_id="user1",
+    )
+    session._ai_speaking = True
+    assert session.should_interrupt(speech_duration_ms=200) is False
+
+
+def test_session_should_interrupt_long_speech():
+    session = RealtimeSession(
+        workspace_id="ws1",
+        project_id="proj1",
+        conversation_id="conv1",
+        user_id="user1",
+    )
+    session._ai_speaking = True
+    assert session.should_interrupt(speech_duration_ms=600) is True
+
+
+def test_session_should_not_interrupt_when_ai_silent():
+    session = RealtimeSession(
+        workspace_id="ws1",
+        project_id="proj1",
+        conversation_id="conv1",
+        user_id="user1",
+    )
+    session._ai_speaking = False
+    assert session.should_interrupt(speech_duration_ms=600) is False
