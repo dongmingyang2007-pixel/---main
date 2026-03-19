@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -30,6 +32,7 @@ from app.services.memory_visibility import build_private_memory_metadata
 from app.services.runtime_state import runtime_state
 from app.services.storage import build_run_artifact_object_key, delete_object, put_json_object
 from app.services.train import append_job_log, append_metric, generate_mock_loss
+from app.services import dashscope_client
 from app.tasks.celery_app import celery_app
 
 
@@ -515,6 +518,81 @@ def index_data_item(
         db.close()
 
 
+TRIAGE_PROMPT = """你是记忆管理器。判断一条新事实与已有记忆的关系。
+
+新事实：{fact}
+
+已有记忆：
+{candidates_formatted}
+
+请选择一个操作：
+- create: 新事实是全新话题，与已有记忆无关，应独立创建
+- append: 新事实是对某条已有记忆的补充/细节，应挂载为其子记忆
+- merge: 新事实和某条已有记忆说的是同一件事，应合并为一条更完整的记忆
+- replace: 新事实表明情况已变化（如搬家、换工作），应替换旧信息
+- discard: 新事实和某条已有记忆实质重复，无需保存
+
+输出 JSON：
+{{"action": "...", "target_memory_id": "...", "merged_content": "合并/替换后的完整内容", "reason": "一句话解释"}}
+
+规则：
+- target_memory_id：create 和 discard 时为 null，其他操作必须指定
+- merged_content：仅 merge 和 replace 时需要，其他为 null
+- merge 时写出合并后的完整内容，不要丢失原有信息
+- replace 时写出替换后的内容，旧信息不再保留"""
+
+
+async def triage_memory(
+    fact: str,
+    candidates: list[dict],
+) -> dict:
+    """Call lightweight LLM to decide how to file a new fact against existing memories.
+
+    Returns {"action": "create|append|merge|replace|discard",
+             "target_memory_id": str | None,
+             "merged_content": str | None,
+             "reason": str | None}
+    """
+    from app.core.config import settings
+
+    candidates_formatted = "\n".join(
+        f"- ID: {c['memory_id']} | 分类: {c['category']} | 内容: {c['content']}"
+        for c in candidates
+    )
+
+    prompt = TRIAGE_PROMPT.format(
+        fact=fact,
+        candidates_formatted=candidates_formatted,
+    )
+
+    fallback = {"action": "create", "target_memory_id": None, "merged_content": None, "reason": None}
+
+    try:
+        raw = await dashscope_client.chat_completion(
+            [{"role": "user", "content": prompt}],
+            model=settings.memory_triage_model,
+            temperature=0.1,
+            max_tokens=256,
+        )
+    except Exception:  # noqa: BLE001
+        return fallback
+
+    # Parse JSON (handle markdown code blocks)
+    json_match = re.search(r"\{.*\}", raw.strip(), re.DOTALL)
+    if not json_match:
+        return fallback
+
+    try:
+        decision = json.loads(json_match.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return fallback
+
+    if decision.get("action") not in ("create", "append", "merge", "replace", "discard"):
+        return fallback
+
+    return decision
+
+
 @celery_app.task(name="app.tasks.worker_tasks.extract_memories")
 def extract_memories(
     workspace_id: str,
@@ -531,7 +609,7 @@ def extract_memories(
 
     from app.models.entities import Memory
     from app.services.dashscope_client import chat_completion
-    from app.services.embedding import embed_and_store
+    from app.services.embedding import embed_and_store, find_duplicate_memory
 
     EXTRACTION_PROMPT = """你是一个记忆提取器。分析以下对话，提取值得记住的事实。
 
@@ -582,60 +660,78 @@ AI：{ai_response}
             ai_response=ai_response,
         )
 
-        # Call model to extract memories
-        raw_response = asyncio.run(
-            chat_completion(
+        # ── Async helper: extract, dedup, and embed in a single event loop ──
+        async def _extract_and_store_facts() -> None:
+            raw_response = await chat_completion(
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,  # Low temperature for structured extraction
                 max_tokens=1024,
             )
-        )
 
-        # Parse JSON from response (handle markdown code blocks)
-        json_str = raw_response.strip()
-        json_match = re.search(r"\[.*\]", json_str, re.DOTALL)
-        if not json_match:
-            return
+            # Parse JSON from response (handle markdown code blocks)
+            json_str = raw_response.strip()
+            json_match = re.search(r"\[.*\]", json_str, re.DOTALL)
+            if not json_match:
+                return
 
-        facts = json.loads(json_match.group(0))
-        if not facts:
-            return
+            facts = json.loads(json_match.group(0))
+            if not facts:
+                return
 
-        for fact in facts:
-            importance = fact.get("importance", 0)
-            if importance < 0.7:
-                continue
+            for fact in facts:
+                importance = fact.get("importance", 0)
+                if importance < 0.7:
+                    continue
 
-            memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
-            metadata = {"importance": importance, "source": "auto_extraction"}
-            if memory_type == "permanent":
-                metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
+                fact_text = fact.get("fact", "")
+                if not fact_text.strip():
+                    continue
 
-            memory = Memory(
-                workspace_id=workspace_id,
-                project_id=project_id,
-                content=fact.get("fact", ""),
-                category=fact.get("category", ""),
-                type=memory_type,
-                source_conversation_id=conversation_id if memory_type == "temporary" else None,
-                metadata_json=metadata,
-            )
-            db.add(memory)
-            db.flush()
+                # Deduplication: skip if a highly similar memory already exists
+                try:
+                    duplicate = await find_duplicate_memory(
+                        db,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        text=fact_text,
+                        threshold=0.90,
+                    )
+                    if duplicate:
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass  # Dedup check failure is non-fatal
 
-            # Embed the memory for future RAG retrieval
-            try:
-                asyncio.run(
-                    embed_and_store(
+                memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
+                metadata = {"importance": importance, "source": "auto_extraction"}
+                if memory_type == "permanent":
+                    metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
+
+                memory = Memory(
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    content=fact_text,
+                    category=fact.get("category", ""),
+                    type=memory_type,
+                    source_conversation_id=conversation_id if memory_type == "temporary" else None,
+                    metadata_json=metadata,
+                )
+                db.add(memory)
+                db.flush()
+
+                # Embed the memory for future RAG retrieval
+                try:
+                    await embed_and_store(
                         db,
                         workspace_id=workspace_id,
                         project_id=project_id,
                         memory_id=memory.id,
                         chunk_text=memory.content,
                     )
-                )
-            except Exception:  # noqa: BLE001
-                pass  # Embedding failure is non-fatal
+                except Exception:  # noqa: BLE001
+                    pass  # Embedding failure is non-fatal
+
+        # Run all async work in a single event loop
+        asyncio.run(_extract_and_store_facts())
 
         # ── Auto-promotion: temporary → permanent when same fact appears in 2+ conversations ──
         # A temporary memory should auto-promote to permanent if:

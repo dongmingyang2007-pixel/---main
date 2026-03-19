@@ -169,3 +169,63 @@ def test_session_get_turn_texts():
     # Should be cleared after retrieval
     assert session._current_transcript == ""
     assert session._current_response_text == ""
+
+
+import json
+
+
+def test_triage_memory_parses_merge_response(monkeypatch):
+    """triage_memory correctly parses a merge decision from LLM."""
+    from app.tasks.worker_tasks import triage_memory
+
+    mock_response = json.dumps({
+        "action": "merge",
+        "target_memory_id": "mem-123",
+        "merged_content": "用户是前端工程师，使用Vue和React",
+        "reason": "补充了技术栈细节",
+    })
+    monkeypatch.setattr(
+        "app.services.dashscope_client.chat_completion",
+        lambda *a, **kw: asyncio.coroutine(lambda: mock_response)(),
+    )
+
+    candidates = [
+        {"memory_id": "mem-123", "content": "用户是前端工程师", "category": "工作.职业", "score": 0.82},
+    ]
+    result = asyncio.run(triage_memory("用户是前端工程师，使用Vue和React", candidates))
+    assert result["action"] == "merge"
+    assert result["target_memory_id"] == "mem-123"
+    assert "Vue" in result["merged_content"]
+
+
+def test_triage_memory_fallback_on_bad_json(monkeypatch):
+    """triage_memory returns create fallback when LLM returns unparseable response."""
+    from app.tasks.worker_tasks import triage_memory
+
+    monkeypatch.setattr(
+        "app.services.dashscope_client.chat_completion",
+        lambda *a, **kw: asyncio.coroutine(lambda: "I don't understand")(),
+    )
+
+    candidates = [
+        {"memory_id": "mem-456", "content": "用户住在北京", "category": "生活.住址", "score": 0.75},
+    ]
+    result = asyncio.run(triage_memory("用户搬到了上海", candidates))
+    assert result["action"] == "create"
+
+
+def test_triage_memory_handles_markdown_wrapped_json(monkeypatch):
+    """triage_memory extracts JSON from markdown code blocks."""
+    from app.tasks.worker_tasks import triage_memory
+
+    mock_response = '```json\n{"action": "discard", "target_memory_id": null, "merged_content": null, "reason": "重复"}\n```'
+    monkeypatch.setattr(
+        "app.services.dashscope_client.chat_completion",
+        lambda *a, **kw: asyncio.coroutine(lambda: mock_response)(),
+    )
+
+    candidates = [
+        {"memory_id": "mem-789", "content": "用户喜欢咖啡", "category": "生活.饮食", "score": 0.88},
+    ]
+    result = asyncio.run(triage_memory("用户爱喝咖啡", candidates))
+    assert result["action"] == "discard"
