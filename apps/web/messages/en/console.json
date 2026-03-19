@@ -150,5 +150,20 @@
   "discover.category.asr": "Speech Recognition",
   "discover.category.tts": "Speech Synthesis",
   "discover.category.vision": "Visual Understanding",
-  "discover.memories": "memories"
+  "discover.memories": "memories",
+  "modelDetail.backToDiscover": "Back to Discover",
+  "modelDetail.useModel": "Use this model",
+  "modelDetail.description": "Description",
+  "modelDetail.capabilities": "Capabilities",
+  "modelDetail.inputModalities": "Input Modalities",
+  "modelDetail.outputModalities": "Output Modalities",
+  "modelDetail.text": "Text",
+  "modelDetail.image": "Image",
+  "modelDetail.audio": "Audio",
+  "modelDetail.video": "Video",
+  "modelDetail.cap.functionCalling": "Tool Calling",
+  "modelDetail.cap.thinking": "Deep Thinking",
+  "modelDetail.cap.webSearch": "Web Search",
+  "modelDetail.cap.streaming": "Streaming",
+  "modelDetail.cap.cache": "Cache Acceleration"
 }

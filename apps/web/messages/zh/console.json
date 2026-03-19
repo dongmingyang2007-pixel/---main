@@ -150,5 +150,20 @@
   "discover.category.asr": "语音识别",
   "discover.category.tts": "语音合成",
   "discover.category.vision": "视觉理解",
-  "discover.memories": "条记忆"
+  "discover.memories": "条记忆",
+  "modelDetail.backToDiscover": "返回发现",
+  "modelDetail.useModel": "使用此模型",
+  "modelDetail.description": "简介",
+  "modelDetail.capabilities": "模型能力",
+  "modelDetail.inputModalities": "输入模态",
+  "modelDetail.outputModalities": "输出模态",
+  "modelDetail.text": "文本",
+  "modelDetail.image": "图像",
+  "modelDetail.audio": "音频",
+  "modelDetail.video": "视频",
+  "modelDetail.cap.functionCalling": "工具调用",
+  "modelDetail.cap.thinking": "深度思考",
+  "modelDetail.cap.webSearch": "联网搜索",
+  "modelDetail.cap.streaming": "流式输出",
+  "modelDetail.cap.cache": "缓存加速"
 }
