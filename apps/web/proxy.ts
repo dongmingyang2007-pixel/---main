@@ -131,8 +131,8 @@ export function proxy(request: NextRequest) {
   // Route redirects — old paths → new paths (before auth so bookmarks work)
   const ROUTE_REDIRECTS: Record<string, string> = {
     "/app/projects": "/app/assistants",
-    "/app/datasets": "/app/knowledge",
-    "/app/train": "/app/training",
+    "/app/datasets": "/app",
+    "/app/train": "/app",
     "/app/eval": "/app/assistants",
     "/app/billing": "/app/settings",
   };

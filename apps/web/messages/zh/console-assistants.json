@@ -6,7 +6,7 @@
   "wizard": {
     "stepModel": "选择模型",
     "stepModelDesc": "为你的 AI 助手选择一个基础模型",
-    "stepKnowledge": "上传知识库",
+    "stepKnowledge": "教它知识",
     "stepKnowledgeDesc": "上传文档让 AI 助手学习你的专业知识",
     "stepPersonality": "设置人格",
     "stepPersonalityDesc": "定义 AI 助手的性格和沟通风格",
@@ -24,7 +24,7 @@
     "uploadHint": "支持 PDF、TXT、DOCX、MD 格式",
     "skipKnowledge": "跳过，稍后添加",
     "skipPersonality": "跳过，使用默认",
-    "promptLabel": "系统提示词",
+    "promptLabel": "性格描述",
     "promptPlaceholder": "描述你的 AI 助手的性格和行为方式...",
     "tagsLabel": "性格标签",
     "nameLabel": "助手名称",
@@ -37,7 +37,7 @@
     "summaryFileUnit": "个文件",
     "summaryNone": "未设置",
     "summaryDefault": "使用默认",
-    "submit": "开始训练",
+    "submit": "创建助手",
     "submitting": "创建中...",
     "back": "上一步",
     "next": "下一步",
@@ -86,7 +86,7 @@
     "noMetrics": "暂无指标数据。"
   },
   "graph": {
-    "tab": "🕸 记忆图谱",
+    "tab": "记忆图谱",
     "addMemory": "添加记忆",
     "search": "搜索记忆…",
     "stats": "共 {count} 个记忆",
@@ -156,7 +156,7 @@
     "disconnect": "断开"
   },
   "config": {
-    "tab": "⚙️ 配置"
+    "tab": "配置"
   },
   "profile": {
     "startChat": "开始聊天",
@@ -183,8 +183,13 @@
     },
     "model": {
       "llm": "对话模型",
+      "llmShort": "对话",
+      "vision": "视觉理解",
+      "visionShort": "视觉",
       "asr": "语音识别",
-      "tts": "语音合成"
+      "asrShort": "识别",
+      "tts": "语音合成",
+      "ttsShort": "合成"
     },
     "noFiles": "暂无知识文件",
     "customPersonality": "自定义"
@@ -199,7 +204,7 @@
     "edit": "编辑",
     "save": "保存",
     "add": "添加",
-    "promptLabel": "系统提示词",
+    "promptLabel": "性格描述",
     "personalityUnset": "暂未设定",
     "knowledgeItems": "{count} 条资料",
     "skillParameters": "技能参数（JSON）",

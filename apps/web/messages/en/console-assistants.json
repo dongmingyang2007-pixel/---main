@@ -6,7 +6,7 @@
   "wizard": {
     "stepModel": "Choose a Model",
     "stepModelDesc": "Select a base model for your AI assistant",
-    "stepKnowledge": "Upload Knowledge",
+    "stepKnowledge": "Teach It Knowledge",
     "stepKnowledgeDesc": "Upload documents to teach your AI assistant domain knowledge",
     "stepPersonality": "Set Personality",
     "stepPersonalityDesc": "Define the character and communication style of your AI",
@@ -24,7 +24,7 @@
     "uploadHint": "Supports PDF, TXT, DOCX, MD",
     "skipKnowledge": "Skip, add later",
     "skipPersonality": "Skip, use default",
-    "promptLabel": "System Prompt",
+    "promptLabel": "Personality Description",
     "promptPlaceholder": "Describe your AI assistant's personality and behavior...",
     "tagsLabel": "Personality Tags",
     "nameLabel": "Assistant Name",
@@ -37,7 +37,7 @@
     "summaryFileUnit": "files",
     "summaryNone": "Not set",
     "summaryDefault": "Using default",
-    "submit": "Start Training",
+    "submit": "Create Assistant",
     "submitting": "Creating...",
     "back": "Back",
     "next": "Next",
@@ -86,7 +86,7 @@
     "noMetrics": "No metrics available."
   },
   "graph": {
-    "tab": "🕸 Memory Graph",
+    "tab": "Memory Graph",
     "addMemory": "Add Memory",
     "search": "Search memories…",
     "stats": "{count} memories",
@@ -156,7 +156,7 @@
     "disconnect": "Disconnect"
   },
   "config": {
-    "tab": "⚙️ Config"
+    "tab": "Config"
   },
   "profile": {
     "startChat": "Start chatting",
@@ -183,8 +183,13 @@
     },
     "model": {
       "llm": "Chat model",
+      "llmShort": "Chat",
+      "vision": "Visual Understanding",
+      "visionShort": "Vision",
       "asr": "Speech recognition",
-      "tts": "Speech synthesis"
+      "asrShort": "ASR",
+      "tts": "Speech synthesis",
+      "ttsShort": "TTS"
     },
     "noFiles": "No knowledge files",
     "customPersonality": "Custom"
@@ -199,7 +204,7 @@
     "edit": "Edit",
     "save": "Save",
     "add": "Add",
-    "promptLabel": "System Prompt",
+    "promptLabel": "Personality Description",
     "personalityUnset": "Not configured yet",
     "knowledgeItems": "{count, plural, one {# item} other {# items}}",
     "skillParameters": "Skill Parameters (JSON)",

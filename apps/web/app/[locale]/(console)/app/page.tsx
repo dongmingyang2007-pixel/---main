@@ -3,16 +3,41 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { PageTransition } from "@/components/console/PageTransition";
 import { apiGet } from "@/lib/api";
 
 type Project = { id: string; name: string };
+
+interface RecentConversation {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
+function formatRelativeTime(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "";
+    if (diffMin < 60) return `${diffMin}m`;
+    const diffHrs = Math.floor(diffMin / 60);
+    if (diffHrs < 24) return `${diffHrs}h`;
+    const diffDays = Math.floor(diffHrs / 24);
+    return `${diffDays}d`;
+  } catch {
+    return "";
+  }
+}
 
 export default function DashboardPage() {
   const t = useTranslations("console");
   const router = useRouter();
   const [assistants, setAssistants] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recentChats, setRecentChats] = useState<RecentConversation[]>([]);
 
   useEffect(() => {
     void apiGet<{ items: Project[] }>("/api/v1/projects")
@@ -22,6 +47,18 @@ export default function DashboardPage() {
   }, []);
 
   const firstAssistant = assistants[0];
+
+  useEffect(() => {
+    if (!firstAssistant) return;
+    void apiGet<RecentConversation[]>(
+      `/api/v1/chat/conversations?project_id=${firstAssistant.id}`,
+    )
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setRecentChats(list.slice(0, 3));
+      })
+      .catch(() => setRecentChats([]));
+  }, [firstAssistant]);
 
   return (
     <PageTransition>
@@ -71,6 +108,29 @@ export default function DashboardPage() {
             <div className="dashboard-stat-value">-</div>
             <div className="dashboard-stat-label">{t("dashboard.stat.devices")}</div>
           </div>
+        </div>
+
+        {/* Recent Conversations */}
+        <div className="dashboard-section-title">{t("dashboard.recentChats")}</div>
+        <div className="dashboard-recent-list">
+          {recentChats.length === 0 ? (
+            <div className="dashboard-recent-item" style={{ justifyContent: "center", cursor: "default" }}>
+              <span className="dashboard-recent-text" style={{ color: "var(--text-secondary)" }}>
+                {t("dashboard.noChats")}
+              </span>
+            </div>
+          ) : (
+            recentChats.map((chat) => (
+              <Link key={chat.id} href="/app/chat" className="dashboard-recent-item">
+                <span className="dashboard-recent-text">
+                  {chat.title || t("dashboard.noChats")}
+                </span>
+                <span className="dashboard-recent-time">
+                  {formatRelativeTime(chat.updated_at)}
+                </span>
+              </Link>
+            ))
+          )}
         </div>
       </div>
     </PageTransition>

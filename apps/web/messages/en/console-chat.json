@@ -1,5 +1,5 @@
 {
-  "title": "Chat Debug",
+  "title": "Chat",
   "description": "Test conversations with your AI assistants",
   "emptyHint": "Select an AI assistant to start testing",
   "emptyConversationHint": "New conversation created. Send the first message to begin testing.",
@@ -15,6 +15,7 @@
   "voiceRecord": "Hold to record",
   "voiceRecording": "Recording... release to send",
   "voiceSending": "Transcribing...",
+  "searchPlaceholder": "Search conversations\u2026",
   "voicePlay": "Play audio",
   "micPermissionDenied": "Microphone permission denied",
   "dateGroup.today": "Today",
@@ -24,6 +25,10 @@
   "tool.search": "Search",
   "tool.think": "Deep Think",
   "memory.remembered": "Remembered",
+  "time.justNow": "Just now",
+  "time.minutesAgo": "{n}m ago",
+  "time.hoursAgo": "{n}h ago",
+  "time.daysAgo": "{n}d ago",
   "errors": {
     "generic": "Sorry, something went wrong. Please try again.",
     "inferenceTimeout": "The AI response timed out. Please try again shortly.",

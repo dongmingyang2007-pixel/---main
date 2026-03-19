@@ -321,7 +321,7 @@ export default function AssistantDetailPage() {
                   {t("profile.card.models")}
                 </div>
                 <div className="profile-model-row">
-                  <div className="profile-model-icon">LLM</div>
+                  <div className="profile-model-icon">{t("profile.model.llmShort")}</div>
                   <div className="profile-model-info">
                     <div className="profile-model-label">{t("profile.model.llm")}</div>
                     <div className="profile-model-name">{formatModelName(meta.model)}</div>
@@ -329,7 +329,15 @@ export default function AssistantDetailPage() {
                   <button type="button" className="profile-model-change">{t("profile.change")}</button>
                 </div>
                 <div className="profile-model-row">
-                  <div className="profile-model-icon">ASR</div>
+                  <div className="profile-model-icon">{t("profile.model.visionShort")}</div>
+                  <div className="profile-model-info">
+                    <div className="profile-model-label">{t("profile.model.vision")}</div>
+                    <div className="profile-model-name">Qwen VL Max</div>
+                  </div>
+                  <button type="button" className="profile-model-change">{t("profile.change")}</button>
+                </div>
+                <div className="profile-model-row">
+                  <div className="profile-model-icon">{t("profile.model.asrShort")}</div>
                   <div className="profile-model-info">
                     <div className="profile-model-label">{t("profile.model.asr")}</div>
                     <div className="profile-model-name">Paraformer-v2</div>
@@ -337,7 +345,7 @@ export default function AssistantDetailPage() {
                   <button type="button" className="profile-model-change">{t("profile.change")}</button>
                 </div>
                 <div className="profile-model-row">
-                  <div className="profile-model-icon">TTS</div>
+                  <div className="profile-model-icon">{t("profile.model.ttsShort")}</div>
                   <div className="profile-model-info">
                     <div className="profile-model-label">{t("profile.model.tts")}</div>
                     <div className="profile-model-name">CosyVoice-v1</div>
@@ -377,7 +385,7 @@ export default function AssistantDetailPage() {
 
           {activeTab === "models" && (
             <div style={{ padding: "24px 0", color: "var(--text-secondary)", fontSize: "13px" }}>
-              {formatModelName(meta.model)} / Paraformer-v2 / CosyVoice-v1
+              {formatModelName(meta.model)} / Qwen VL Max / Paraformer-v2 / CosyVoice-v1
             </div>
           )}
         </div>

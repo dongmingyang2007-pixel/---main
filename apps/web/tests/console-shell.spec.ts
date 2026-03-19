@@ -88,7 +88,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await expect(page.getByRole("button", { name: "🕸 记忆图谱" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "记忆图谱" })).toBeVisible();
     await expect(page.getByRole("link", { name: "试用对话" })).toBeVisible();
     expect(failingResponses).toEqual([]);
   });
@@ -251,7 +251,7 @@ test.describe("Console Shell", () => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.getByRole("button", { name: "⚙️ 配置" }).click();
+    await page.getByRole("button", { name: "配置" }).click();
 
     await expect(page.locator(".canvas-model-name")).toHaveText("Qwen3.5-Plus");
     await expect(page.locator(".canvas-model-name")).not.toHaveText("---");
@@ -455,7 +455,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.getByRole("button", { name: "⚙️ 配置" }).click();
+    await page.getByRole("button", { name: "配置" }).click();
 
     const knowledgeCard = page.locator(".canvas-card").filter({
       has: page.locator(".canvas-card-label", { hasText: "知识库" }),
@@ -598,7 +598,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.getByRole("button", { name: "⚙️ 配置" }).click();
+    await page.getByRole("button", { name: "配置" }).click();
 
     const personalityCard = page.locator(".canvas-card").filter({
       has: page.locator(".canvas-card-label", { hasText: "人格设定" }),

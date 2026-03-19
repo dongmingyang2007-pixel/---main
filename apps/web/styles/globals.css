@@ -6153,6 +6153,19 @@ button {
   margin-top: 2px;
 }
 
+.dashboard-section-title {
+  font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; margin-top: 24px;
+}
+.dashboard-recent-list { display: flex; flex-direction: column; gap: 8px; }
+.dashboard-recent-item {
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; transition: background 0.15s; text-decoration: none; color: inherit;
+}
+.dashboard-recent-item:hover { background: color-mix(in srgb, var(--border) 30%, var(--bg-surface)); }
+.dashboard-recent-text { font-size: 13px; color: var(--text-primary); }
+.dashboard-recent-time { font-size: 11px; color: var(--text-secondary); }
+
 /* ── Responsive: Mobile ──────────────────────── */
 
 @media (max-width: 767px) {
@@ -8464,6 +8477,18 @@ button {
 .chat-sidebar-header select:focus {
   border-color: var(--accent);
 }
+
+.chat-search {
+  padding: 8px 12px;
+}
+.chat-search-input {
+  width: 100%; padding: 7px 10px 7px 30px;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12px; background: white; outline: none; color: var(--text-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a8a7a' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 10px center;
+}
+.chat-search-input:focus { border-color: var(--accent); }
 
 .chat-sidebar-list {
   flex: 1;

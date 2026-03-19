@@ -43,19 +43,19 @@ function getDateGroup(dateStr: string): string {
   return "earlier";
 }
 
-function formatTime(dateStr: string): string {
+function formatTime(dateStr: string, tf: (key: string, values?: Record<string, string | number>) => string): string {
   try {
     const d = new Date(dateStr);
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
     const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return "刚刚";
-    if (diffMin < 60) return `${diffMin}分钟前`;
+    if (diffMin < 1) return tf("time.justNow");
+    if (diffMin < 60) return tf("time.minutesAgo", { n: diffMin });
     const diffHrs = Math.floor(diffMin / 60);
-    if (diffHrs < 24) return `${diffHrs}小时前`;
+    if (diffHrs < 24) return tf("time.hoursAgo", { n: diffHrs });
     const diffDays = Math.floor(diffHrs / 24);
-    if (diffDays < 30) return `${diffDays}天前`;
-    return d.toLocaleDateString("zh-CN");
+    if (diffDays < 30) return tf("time.daysAgo", { n: diffDays });
+    return d.toLocaleDateString();
   } catch {
     return dateStr;
   }
@@ -109,6 +109,7 @@ function ChatPageContent() {
   const [conversationSummaries, setConversationSummaries] = useState<
     Record<string, ConversationSummary>
   >({});
+  const [search, setSearch] = useState("");
 
   const loadConversations = useCallback(async (projectId: string) => {
     if (!projectId) {
@@ -162,7 +163,7 @@ function ChatPageContent() {
     let cancelled = false;
     const fallbackTitle = t("newConversation");
     const targets = conversations.filter((conversation) => {
-      const timeLabel = formatTime(conversation.updated_at);
+      const timeLabel = formatTime(conversation.updated_at, t);
       return !isMeaningfulConversationTitle(
         conversation.title,
         fallbackTitle,
@@ -308,7 +309,7 @@ function ChatPageContent() {
 
   const getConversationTitle = useCallback(
     (conversation: Conversation) => {
-      const timeLabel = formatTime(conversation.updated_at);
+      const timeLabel = formatTime(conversation.updated_at, t);
       if (
         isMeaningfulConversationTitle(
           conversation.title,
@@ -325,7 +326,7 @@ function ChatPageContent() {
 
   const getConversationMeta = useCallback(
     (conversation: Conversation) => {
-      const timeLabel = formatTime(conversation.updated_at);
+      const timeLabel = formatTime(conversation.updated_at, t);
       const summary = conversationSummaries[conversation.id];
       const title = getConversationTitle(conversation);
       if (summary?.preview && summary.preview !== title) {
@@ -366,6 +367,16 @@ function ChatPageContent() {
                 </select>
               </div>
 
+              <div className="chat-search">
+                <input
+                  type="text"
+                  className="chat-search-input"
+                  placeholder={t("searchPlaceholder")}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+
               <div className="chat-sidebar-list">
                 {loadingConversations && (
                   <div className="chat-sidebar-empty">...</div>
@@ -378,6 +389,9 @@ function ChatPageContent() {
                 )}
 
                 {(() => {
+                  const filtered = conversations.filter(
+                    (c) => !search || c.title?.toLowerCase().includes(search.toLowerCase()),
+                  );
                   const dateGroupKeys = ["today", "yesterday", "thisWeek", "earlier"] as const;
                   const dateGroupLabels: Record<string, string> = {
                     today: t("dateGroup.today"),
@@ -387,7 +401,7 @@ function ChatPageContent() {
                   };
                   const grouped = new Map<string, Conversation[]>();
                   for (const key of dateGroupKeys) grouped.set(key, []);
-                  for (const conv of conversations) {
+                  for (const conv of filtered) {
                     const group = getDateGroup(conv.updated_at);
                     grouped.get(group)!.push(conv);
                   }
