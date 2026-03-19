@@ -43,14 +43,14 @@ test.describe("Foundation design system", () => {
   test("deep-linked console login returns to the requested route", async ({ page }) => {
     await installWorkbenchApiMock(page);
 
-    await page.goto("/en/app/knowledge");
+    await page.goto("/en/app/chat");
     await expect(page).toHaveURL(/\/en\/login\?next=/);
 
     await page.locator("#login-email").fill("deep-link@example.com");
     await page.locator("#login-password").fill("password-1234");
     await page.locator("button[type='submit']").click();
 
-    await expect(page).toHaveURL(/\/en\/app\/knowledge$/);
+    await expect(page).toHaveURL(/\/en\/app\/chat$/);
     await expect(page.locator("[data-theme='console']").first()).toBeVisible();
   });
 

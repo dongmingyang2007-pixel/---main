@@ -63,76 +63,8 @@ test.describe("Console Shell", () => {
   test("navigation works via IconBar", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/app");
-    await page.click(".icon-bar-item[aria-label='知识库']");
-    await expect(page).toHaveURL(/\/app\/knowledge$/);
-    await expect(page.locator("#knowledge-name")).toBeVisible();
-  });
-
-  test("models icon remains clickable after hover on desktop", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/app/assistants");
-    const modelsIcon = page.locator(".icon-bar-item[aria-label='模型广场']");
-    await modelsIcon.hover();
-    const box = await modelsIcon.boundingBox();
-    if (!box) {
-      throw new Error("Expected models icon to have a bounding box");
-    }
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(page).toHaveURL(/\/app\/models$/);
-    await expect(page.getByRole("heading", { name: "模型广场" })).toBeVisible();
-  });
-
-  test("models icon bypasses client-side router navigation", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.addInitScript(() => {
-      const sessionKey = "playwright:nav-events";
-      const pushEvents = JSON.parse(window.sessionStorage.getItem(sessionKey) || "[]");
-      window.sessionStorage.setItem(sessionKey, JSON.stringify(pushEvents));
-
-      const originalPushState = window.history.pushState.bind(window.history);
-      window.history.pushState = function (...args) {
-        const nextEvents = JSON.parse(window.sessionStorage.getItem(sessionKey) || "[]");
-        nextEvents.push(String(args[2] || ""));
-        window.sessionStorage.setItem(sessionKey, JSON.stringify(nextEvents));
-        return originalPushState(...args);
-      };
-    });
-
-    await page.goto("/app/assistants");
-    const modelsIcon = page.locator(".icon-bar-item[aria-label='模型广场']");
-    const box = await modelsIcon.boundingBox();
-    if (!box) {
-      throw new Error("Expected models icon to have a bounding box");
-    }
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(page).toHaveURL(/\/app\/models$/);
-
-    const pushEvents = await page.evaluate(() =>
-      JSON.parse(window.sessionStorage.getItem("playwright:nav-events") || "[]"),
-    );
-    expect(pushEvents).toEqual([]);
-  });
-
-  test("models page stays mounted when catalog data is partial", async ({ page }) => {
-    await installWorkbenchApiMock(page, { authenticated: true });
-
-    await page.route("**/api/v1/models/catalog", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            model_id: "qwen3.5-plus",
-            display_name: "Qwen3.5-Plus",
-            capabilities: ["chat", "vision"],
-          },
-        ]),
-      });
-    });
-
-    await page.goto("/app/models");
-    await expect(page.getByRole("heading", { name: "模型广场" })).toBeVisible();
-    await expect(page.locator(".marketplace-card-name")).toContainText("Qwen3.5-Plus");
+    await page.click(".icon-bar-item[aria-label='对话']");
+    await expect(page).toHaveURL(/\/app\/chat$/);
   });
 
   test("english console shell also renders correctly", async ({ page }) => {

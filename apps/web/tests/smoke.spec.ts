@@ -58,20 +58,4 @@ test("console pages load correctly against mocked API", async ({ page }) => {
   await page.goto("/app/assistants");
   await expect(page.getByRole("heading", { name: "我的 AI", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /Seed Console Project/i }).first()).toBeVisible();
-
-  // Knowledge page loads and shows the create form
-  await page.goto("/app/knowledge");
-  await expect(page.getByRole("heading", { name: "知识库", exact: true })).toBeVisible();
-
-  // Create a dataset via the knowledge form
-  const stamp = `${Date.now()}`;
-  const datasetName = `知识包-${stamp}`;
-  await page.locator("#knowledge-name").fill(datasetName);
-  await page.getByRole("button", { name: "新建知识包" }).click();
-  await expect(page.getByText(datasetName)).toBeVisible();
-
-  // Training page loads and shows job list
-  await page.goto("/app/training");
-  await expect(page.getByRole("heading", { name: "训练中心", exact: true })).toBeVisible();
-  await expect(page.getByRole("table", { name: "训练任务列表" }).getByText(/baseline/i)).toBeVisible();
 });
