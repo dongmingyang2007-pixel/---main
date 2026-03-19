@@ -92,14 +92,6 @@ export default function DiscoverPage() {
   const showPacks = tab === "all" || tab === "packs";
   const showModels = tab === "all" || tab === "models";
 
-  /* Static pack data filtered by search */
-  const packMatches = useMemo(() => {
-    if (!q) return [true, true];
-    return [
-      "\u7EBF\u6027\u4EE3\u6570\u57FA\u7840 \u6570\u5B66\u8001\u738B \u5411\u91CF \u77E9\u9635 \u7279\u5F81\u503C \u884C\u5217\u5F0F".toLowerCase().includes(q),
-      "\u65E5\u8BED N3 \u8BCD\u6C47 Yuki JLPT \u8BED\u6CD5".toLowerCase().includes(q),
-    ];
-  }, [q]);
 
   return (
     <div className="discover-page">
@@ -139,118 +131,12 @@ export default function DiscoverPage() {
         <section>
           <div className="discover-section-header">
             <h2 className="discover-section-title">{t("discover.hotPacks")}</h2>
-            <button className="discover-section-link">
-              {t("discover.viewAll")} &rarr;
-            </button>
           </div>
-
-          <div className="discover-grid">
-            {/* Card 1 – Linear Algebra */}
-            {(!q || packMatches[0]) && (
-              <div className="pack-card">
-                <span className="pack-badge hot">{t("discover.badgeHot")}</span>
-                <div className="pack-header">
-                  <div
-                    className="pack-icon"
-                    style={{ background: "rgba(124, 77, 196, 0.12)" }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#7c4dc4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="pack-name">{"\u7EBF\u6027\u4EE3\u6570\u57FA\u7840"}</div>
-                    <div className="pack-author">by {"\u6570\u5B66\u8001\u738B"}</div>
-                  </div>
-                </div>
-                <div className="pack-desc">
-                  {"\u6DB5\u76D6\u5411\u91CF\u3001\u77E9\u9635\u8FD0\u7B97\u3001\u7279\u5F81\u503C\u3001\u884C\u5217\u5F0F\u7B49\u6838\u5FC3\u6982\u5FF5"}
-                </div>
-                <div className="pack-footer">
-                  <div className="pack-stats">
-                    <span className="pack-stat">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      2.3k
-                    </span>
-                    <span className="pack-stat">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                      48 {t("discover.memories")}
-                    </span>
-                  </div>
-                  <button className="pack-dl-btn">{t("discover.get")}</button>
-                </div>
-              </div>
-            )}
-
-            {/* Card 2 – Japanese N3 */}
-            {(!q || packMatches[1]) && (
-              <div className="pack-card">
-                <span className="pack-badge new">{t("discover.badgeNew")}</span>
-                <div className="pack-header">
-                  <div
-                    className="pack-icon"
-                    style={{ background: "rgba(42, 138, 90, 0.12)" }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#2a8a5a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                      <circle cx="9" cy="7" r="4" />
-                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="pack-name">{"\u65E5\u8BED N3 \u8BCD\u6C47"}</div>
-                    <div className="pack-author">by Yuki</div>
-                  </div>
-                </div>
-                <div className="pack-desc">
-                  {"JLPT N3 \u5E38\u7528\u8BCD\u6C47\u548C\u8BED\u6CD5\u70B9\uFF0C\u52A9\u624B\u80FD\u7528\u65E5\u8BED\u5BF9\u8BDD\u7EC3\u4E60"}
-                </div>
-                <div className="pack-footer">
-                  <div className="pack-stats">
-                    <span className="pack-stat">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      856
-                    </span>
-                    <span className="pack-stat">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                      120 {t("discover.memories")}
-                    </span>
-                  </div>
-                  <button className="pack-dl-btn">{t("discover.get")}</button>
-                </div>
-              </div>
-            )}
-
-            {/* Card 3 – Upload CTA */}
-            <div className="upload-cta">
-              <div className="upload-cta-icon">
-                <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-              </div>
-              <div className="upload-cta-title">{t("discover.sharePack")}</div>
-              <div className="upload-cta-desc">{t("discover.sharePackDesc")}</div>
-            </div>
+          <div className="discover-empty-state">
+            <svg width={40} height={40} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{opacity: 0.4, marginBottom: 12}}>
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            </svg>
+            <p>{t("discover.noPacksYet")}</p>
           </div>
         </section>
       )}

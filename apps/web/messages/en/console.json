@@ -150,6 +150,7 @@
   "discover.category.tts": "Speech Synthesis",
   "discover.category.vision": "Visual Understanding",
   "discover.memories": "memories",
+  "discover.noPacksYet": "No memory packs yet. Stay tuned.",
   "modelDetail.backToDiscover": "Back to Discover",
   "modelDetail.useModel": "Use this model",
   "modelDetail.description": "Description",

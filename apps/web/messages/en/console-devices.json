@@ -21,5 +21,8 @@
   "audio.speed": "Speed",
   "audio.noise": "Noise Cancellation",
   "audio.noiseDesc": "Enhance recognition in noisy environments",
-  "noDevice": "No device connected. Tap above to pair."
+  "noDevice": "No device connected. Tap above to pair.",
+  "toast.checkUpdate": "Firmware is up to date",
+  "toast.settings": "Device settings coming soon",
+  "toast.info": "Device info coming soon"
 }

@@ -150,6 +150,7 @@
   "discover.category.tts": "语音合成",
   "discover.category.vision": "视觉理解",
   "discover.memories": "条记忆",
+  "discover.noPacksYet": "暂无记忆包，敬请期待",
   "modelDetail.backToDiscover": "返回发现",
   "modelDetail.useModel": "使用此模型",
   "modelDetail.description": "简介",

@@ -1,12 +1,22 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
+import clsx from "clsx";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { PanelLayout } from "@/components/console/PanelLayout";
 
 export default function DevicesPage() {
   const t = useTranslations("console-devices");
+  const [continuous, setContinuous] = useState(false);
+  const [noise, setNoise] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  }, []);
 
   return (
     <PanelLayout>
@@ -73,21 +83,21 @@ export default function DevicesPage() {
 
               {/* Actions */}
               <div className="device-actions">
-                <button className="device-action-btn">
+                <button className="device-action-btn" onClick={() => showToast(t("toast.checkUpdate"))}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="1 4 1 10 7 10" />
                     <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                   </svg>
                   {t("action.checkUpdate")}
                 </button>
-                <button className="device-action-btn">
+                <button className="device-action-btn" onClick={() => showToast(t("toast.settings"))}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
                   {t("action.settings")}
                 </button>
-                <button className="device-action-btn">
+                <button className="device-action-btn" onClick={() => showToast(t("toast.info"))}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" y1="16" x2="12" y2="12" />
@@ -137,7 +147,7 @@ export default function DevicesPage() {
                   <div className="device-setting-label">{t("voice.continuous")}</div>
                   <div className="device-setting-desc">{t("voice.continuousDesc")}</div>
                 </div>
-                <button type="button" className="device-toggle" aria-label={t("voice.continuous")} />
+                <button type="button" className={clsx("device-toggle", continuous && "on")} aria-label={t("voice.continuous")} onClick={() => setContinuous(v => !v)} />
               </div>
             </div>
 
@@ -176,11 +186,14 @@ export default function DevicesPage() {
                   <div className="device-setting-label">{t("audio.noise")}</div>
                   <div className="device-setting-desc">{t("audio.noiseDesc")}</div>
                 </div>
-                <button type="button" className="device-toggle on" aria-label={t("audio.noise")} />
+                <button type="button" className={clsx("device-toggle", noise && "on")} aria-label={t("audio.noise")} onClick={() => setNoise(v => !v)} />
               </div>
             </div>
           </div>
         </div>
+        {toast && (
+          <div className="device-toast">{toast}</div>
+        )}
       </PageTransition>
     </PanelLayout>
   );

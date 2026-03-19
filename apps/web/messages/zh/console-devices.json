@@ -21,5 +21,8 @@
   "audio.speed": "语速",
   "audio.noise": "降噪",
   "audio.noiseDesc": "在嘈杂环境中增强语音识别",
-  "noDevice": "暂无连接设备，点击上方按钮配对"
+  "noDevice": "暂无连接设备，点击上方按钮配对",
+  "toast.checkUpdate": "已是最新版本",
+  "toast.settings": "设备设置功能即将推出",
+  "toast.info": "设备信息功能即将推出"
 }

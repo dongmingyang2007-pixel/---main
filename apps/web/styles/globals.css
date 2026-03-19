@@ -7062,6 +7062,36 @@ button {
   border-color: transparent;
 }
 
+/* ─ Wizard Identity Step ─ */
+
+.wizard-identity-layout {
+  display: flex;
+  gap: 32px;
+  align-items: flex-start;
+}
+
+.wizard-identity-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.wizard-identity-avatar {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+.wizard-identity-avatar:hover { transform: scale(1.05); }
+
+.wizard-identity-right {
+  flex: 1;
+}
+
 /* ─ Wizard responsive ─ */
 
 @media (max-width: 640px) {
@@ -7078,6 +7108,9 @@ button {
     height: 28px;
     font-size: 12px;
   }
+
+  .wizard-identity-layout { flex-direction: column; align-items: center; }
+  .wizard-identity-right { width: 100%; }
 
   .wizard-personality-grid {
     grid-template-columns: 1fr;
@@ -9518,6 +9551,26 @@ button {
 }
 .device-toggle.on::after { transform: translateX(18px); }
 
+.device-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-primary);
+  color: var(--bg-card, #fff);
+  padding: 10px 24px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  z-index: 1000;
+  animation: device-toast-in 0.25s ease;
+}
+@keyframes device-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* ── Discover Page ──────────────────────────── */
 
 .discover-page { padding: 24px 32px; }
@@ -9646,6 +9699,17 @@ button {
   cursor: pointer; text-align: center; transition: all 0.15s; display: block;
 }
 .model-card-btn:hover { background: var(--accent); color: white; border-color: var(--accent); }
+
+.discover-empty-state {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 32px;
+}
 
 /* ── Console Responsive: Tablet + Mobile ────── */
 

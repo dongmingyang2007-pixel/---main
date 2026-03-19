@@ -89,7 +89,8 @@ function ArrowLeftIcon() {
 
 export default function ModelDetailPage() {
   const params = useParams();
-  const modelId = params.modelId as string;
+  const rawId = params.modelId;
+  const modelId = Array.isArray(rawId) ? rawId.join("/") : (rawId as string);
   const t = useTranslations("console");
 
   const [model, setModel] = useState<ModelDetail | null>(null);
