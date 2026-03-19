@@ -64,7 +64,7 @@ WebSocket handshake includes `token` query parameter (bearer token). Backend val
 | `session.ready` | JSON | `{}` | Context loaded, ready to talk |
 | `transcript.partial` | JSON | `{text}` | Real-time partial transcription of user speech |
 | `transcript.final` | JSON | `{text}` | Final transcription of user utterance |
-| `audio.delta` | Binary | MP3/PCM audio chunk | AI response audio for immediate playback |
+| `audio.delta` | Binary | PCM 24kHz 16bit mono | AI response audio for immediate playback via AudioWorklet |
 | `response.text` | JSON | `{text}` | AI response text (for display in expanded panel) |
 | `response.done` | JSON | `{}` | Current response turn complete |
 | `interrupt.ack` | JSON | `{}` | AI response interrupted, client should stop playback |
@@ -112,9 +112,13 @@ The 500ms threshold is configurable via `REALTIME_INTERRUPT_THRESHOLD_MS` settin
 - Older turns dropped from context but preserved in database
 
 ### Code reuse
-- Reuses `orchestrator.py`: `_load_personality()`, `_load_memories()`, `_rag_search()`
-- Reuses `worker_tasks.py`: `extract_memories_from_conversation` Celery task
-- No rewrite needed; functions called at appropriate points in WebSocket lifecycle
+
+The bridge layer needs context-loading logic similar to `orchestrator.py`'s `orchestrate_text_inference()` flow. The existing orchestrator uses private helpers (`_load_active_conversation_context()`, `_load_visible_permanent_memories()`, `_filter_relevant_memory_ids_for_prompt()`, `_filter_knowledge_chunks_for_prompt()`) that are tightly coupled to the HTTP request/response cycle.
+
+**Approach**: Extract the core context-assembly logic into shared utility functions in a new `app/services/context_loader.py` module that both `orchestrator.py` and `realtime_bridge.py` can call. This avoids duplicating the personality/memory/RAG loading logic.
+
+- Reuses `worker_tasks.py`: `extract_memories_from_conversation` Celery task (no changes needed)
+- Reuses `embedding.py`: `search_similar()` for RAG search
 
 ## Frontend UI: Dynamic Island Floating Widget
 
@@ -207,15 +211,16 @@ All active states (Listening, AI Speaking) have two sub-states: **collapsed pill
 |------|---------|
 | `apps/api/app/routers/realtime.py` | FastAPI WebSocket endpoint |
 | `apps/api/app/services/realtime_bridge.py` | Dual WebSocket bridge logic, interruption handling, context management |
+| `apps/api/app/services/context_loader.py` | Shared context-assembly logic (personality, memories, RAG) extracted from orchestrator |
 | `apps/web/components/console/RealtimeVoice.tsx` | Dynamic island floating widget component |
 | `apps/web/hooks/useRealtimeVoice.ts` | WebSocket client hook, audio capture/playback, state machine |
 | `apps/api/alembic/versions/..._add_realtime_settings.py` | Migration for new config columns if needed |
 
 ## Dependencies on Existing Code
 
-- `app/services/orchestrator.py` — `_load_personality()`, `_load_memories()`, `_rag_search()`
+- `app/services/orchestrator.py` — context-loading logic to be refactored into shared `context_loader.py` (existing private helpers: `_load_active_conversation_context()`, `_load_visible_permanent_memories()`, `_filter_relevant_memory_ids_for_prompt()`, `_filter_knowledge_chunks_for_prompt()`)
 - `app/services/dashscope_client.py` — `UpstreamServiceError`, `InferenceTimeoutError`
 - `app/tasks/worker_tasks.py` — `extract_memories_from_conversation`
-- `app/services/embedding.py` — `search_similar()`, `find_duplicate_memory()`
+- `app/services/embedding.py` — `search_similar()`
 - `app/core/config.py` — new settings fields
 - `app/routers/chat.py` — conversation/message DB operations pattern
