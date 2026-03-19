@@ -15,6 +15,7 @@
     "stepModelLabel": "Model",
     "stepKnowledgeLabel": "Knowledge",
     "stepPersonalityLabel": "Personality",
+    "stepIdentityLabel": "Identity",
     "stepFinishLabel": "Finish",
     "modelLight": "Light",
     "modelMedium": "Balanced",
@@ -40,7 +41,24 @@
     "submitting": "Creating...",
     "back": "Back",
     "next": "Next",
-    "skip": "Skip"
+    "skip": "Skip",
+    "finish": "Finish",
+    "personality": {
+      "title": "What should your assistant be like?",
+      "subtitle": "Choose a personality template or describe in your own words"
+    },
+    "identity": {
+      "title": "Give it a name and look",
+      "subtitle": "Make your assistant unique",
+      "nameLabel": "Assistant name",
+      "namePlaceholder": "Give it a name...",
+      "greetingLabel": "Greeting",
+      "greetingPlaceholder": "What should your assistant say when it first meets you..."
+    },
+    "knowledge": {
+      "skipNotice": "This step is optional. You can add knowledge anytime in assistant settings.",
+      "skipLink": "Skip and finish"
+    }
   },
   "versions": {
     "title": "Version History",

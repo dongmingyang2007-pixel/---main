@@ -8,28 +8,32 @@ import { apiPatch, apiPost } from "@/lib/api";
 import { startAssistantTraining } from "@/lib/assistant-training";
 import { uploadKnowledgeFiles } from "@/lib/knowledge-upload";
 
-import { StepFinish } from "./StepFinish";
+import { StepIdentity } from "./StepIdentity";
 import { StepKnowledge } from "./StepKnowledge";
-import type { ModelChoice, PipelineChoices } from "./StepModel";
-import { StepModel } from "./StepModel";
 import { StepPersonality } from "./StepPersonality";
 
+interface PipelineChoices {
+  asrModelId?: string;
+  asrModelName?: string;
+  ttsModelId?: string;
+  ttsModelName?: string;
+}
+
 interface WizardData {
-  model: ModelChoice | null;
   pipeline: PipelineChoices;
   knowledgeFiles: File[];
   personality: { description: string; tags: string[] };
   name: string;
   color: string;
+  greeting: string;
 }
 
-const STEP_COUNT = 4;
+const STEP_COUNT = 3;
 
 const STEP_KEYS = [
-  "wizard.stepModelLabel",
-  "wizard.stepKnowledgeLabel",
   "wizard.stepPersonalityLabel",
-  "wizard.stepFinishLabel",
+  "wizard.stepIdentityLabel",
+  "wizard.stepKnowledgeLabel",
 ] as const;
 
 export function WizardShell() {
@@ -39,7 +43,6 @@ export function WizardShell() {
   const [step, setStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [data, setData] = useState<WizardData>({
-    model: null,
     pipeline: {
       asrModelId: "paraformer-v2",
       asrModelName: "Paraformer V2",
@@ -50,13 +53,14 @@ export function WizardShell() {
     personality: { description: "", tags: [] },
     name: "",
     color: "accent",
+    greeting: "",
   });
 
   const canNext = useCallback(() => {
-    if (step === 0) return data.model !== null;
-    if (step === 3) return data.name.trim().length > 0;
+    if (step === 0) return data.personality.description.trim().length > 0;
+    if (step === 1) return data.name.trim().length > 0;
     return true;
-  }, [step, data.model, data.name]);
+  }, [step, data.personality.description, data.name]);
 
   const goNext = useCallback(() => {
     if (step < STEP_COUNT - 1) setStep((s) => s + 1);
@@ -66,20 +70,16 @@ export function WizardShell() {
     if (step > 0) setStep((s) => s - 1);
   }, [step]);
 
-  const handleSkip = useCallback(() => {
-    goNext();
-  }, [goNext]);
-
   const handleSubmit = useCallback(async () => {
     if (!data.name.trim()) return;
     setIsSubmitting(true);
 
     try {
-      // Build description from model/personality choices
+      const defaultModel = { id: "qwen3.5-plus", name: "Qwen 3.5 Plus", tier: "custom" as const };
+
+      // Build description from personality choices
       const parts: string[] = [];
-      if (data.model) {
-        parts.push(`[model:${data.model.id}|${data.model.tier}]`);
-      }
+      parts.push(`[model:${defaultModel.id}|${defaultModel.tier}]`);
       if (data.personality.description) {
         parts.push(`[personality:${data.personality.description}]`);
       }
@@ -88,6 +88,9 @@ export function WizardShell() {
       }
       if (data.color) {
         parts.push(`[color:${data.color}]`);
+      }
+      if (data.greeting) {
+        parts.push(`[greeting:${data.greeting}]`);
       }
       const description = parts.join("\n");
 
@@ -99,16 +102,15 @@ export function WizardShell() {
       // Set pipeline configs after project creation
       const pipelinePromises: Promise<unknown>[] = [];
 
-      if (data.model) {
-        pipelinePromises.push(
-          apiPatch("/api/v1/pipeline", {
-            project_id: result.id,
-            model_type: "llm",
-            model_id: data.model.id,
-            config_json: {},
-          }),
-        );
-      }
+      // Always set the default LLM
+      pipelinePromises.push(
+        apiPatch("/api/v1/pipeline", {
+          project_id: result.id,
+          model_type: "llm",
+          model_id: defaultModel.id,
+          config_json: {},
+        }),
+      );
 
       if (data.pipeline.asrModelId) {
         pipelinePromises.push(
@@ -143,6 +145,8 @@ export function WizardShell() {
     }
   }, [data, router]);
 
+  const isLastStep = step === STEP_COUNT - 1;
+
   return (
     <div className="wizard-shell">
       {/* Progress bar */}
@@ -176,7 +180,7 @@ export function WizardShell() {
                 i === step ? "wizard-progress-label--current" : ""
               }`}
             >
-              {t(STEP_KEYS[i] as "wizard.stepModelLabel")}
+              {t(STEP_KEYS[i] as "wizard.stepPersonalityLabel")}
             </span>
           </div>
         ))}
@@ -185,42 +189,29 @@ export function WizardShell() {
       {/* Step content */}
       <div className="wizard-content">
         {step === 0 && (
-          <StepModel
-            selected={data.model}
-            pipeline={data.pipeline}
-            onSelect={(model) => setData((d) => ({ ...d, model }))}
-            onPipelineChange={(pipeline) =>
-              setData((d) => ({ ...d, pipeline }))
-            }
-          />
-        )}
-        {step === 1 && (
-          <StepKnowledge
-            files={data.knowledgeFiles}
-            onFilesChange={(knowledgeFiles) =>
-              setData((d) => ({ ...d, knowledgeFiles }))
-            }
-            onSkip={handleSkip}
-          />
-        )}
-        {step === 2 && (
           <StepPersonality
             personality={data.personality}
             onPersonalityChange={(personality) =>
               setData((d) => ({ ...d, personality }))
             }
-            onSkip={handleSkip}
           />
         )}
-        {step === 3 && (
-          <StepFinish
+        {step === 1 && (
+          <StepIdentity
             name={data.name}
             color={data.color}
-            model={data.model}
-            fileCount={data.knowledgeFiles.length}
-            personalityPreview={data.personality.description}
+            greeting={data.greeting}
             onNameChange={(name) => setData((d) => ({ ...d, name }))}
             onColorChange={(color) => setData((d) => ({ ...d, color }))}
+            onGreetingChange={(greeting) => setData((d) => ({ ...d, greeting }))}
+          />
+        )}
+        {step === 2 && (
+          <StepKnowledge
+            files={data.knowledgeFiles}
+            onFilesChange={(knowledgeFiles) =>
+              setData((d) => ({ ...d, knowledgeFiles }))
+            }
             onSubmit={handleSubmit}
             isSubmitting={isSubmitting}
           />
@@ -238,12 +229,7 @@ export function WizardShell() {
         )}
 
         <div className="wizard-nav-right">
-          {(step === 1 || step === 2) && (
-            <button type="button" className="wizard-nav-btn wizard-nav-btn--skip" onClick={handleSkip}>
-              {t("wizard.skip")}
-            </button>
-          )}
-          {step < STEP_COUNT - 1 && (
+          {!isLastStep && (
             <button
               type="button"
               className="wizard-nav-btn wizard-nav-btn--next"
@@ -251,6 +237,16 @@ export function WizardShell() {
               disabled={!canNext()}
             >
               {t("wizard.next")}
+            </button>
+          )}
+          {isLastStep && (
+            <button
+              type="button"
+              className="wizard-nav-btn wizard-nav-btn--next"
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? t("wizard.submitting") : t("wizard.finish")}
             </button>
           )}
         </div>

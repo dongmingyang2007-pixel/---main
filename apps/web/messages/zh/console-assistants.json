@@ -14,7 +14,8 @@
     "stepFinishDesc": "为你的 AI 助手命名并确认设置",
     "stepModelLabel": "选择模型",
     "stepKnowledgeLabel": "知识库",
-    "stepPersonalityLabel": "人格设置",
+    "stepPersonalityLabel": "性格",
+    "stepIdentityLabel": "命名",
     "stepFinishLabel": "完成",
     "modelLight": "轻量级",
     "modelMedium": "均衡型",
@@ -40,7 +41,24 @@
     "submitting": "创建中...",
     "back": "上一步",
     "next": "下一步",
-    "skip": "跳过"
+    "skip": "跳过",
+    "finish": "完成",
+    "personality": {
+      "title": "你的助手是什么样的？",
+      "subtitle": "选择一个性格模板，或者用自己的话描述"
+    },
+    "identity": {
+      "title": "给它一个名字和形象",
+      "subtitle": "让你的助手成为独一无二的存在",
+      "nameLabel": "助手名字",
+      "namePlaceholder": "给它起个名字...",
+      "greetingLabel": "开场白",
+      "greetingPlaceholder": "助手第一次见到你时会说什么..."
+    },
+    "knowledge": {
+      "skipNotice": "这一步是可选的，你可以随时在助手设置中添加知识",
+      "skipLink": "跳过，直接完成"
+    }
   },
   "versions": {
     "title": "版本历史",

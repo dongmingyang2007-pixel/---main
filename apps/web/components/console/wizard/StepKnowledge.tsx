@@ -20,10 +20,11 @@ function formatFileSize(bytes: number): string {
 interface StepKnowledgeProps {
   files: File[];
   onFilesChange: (files: File[]) => void;
-  onSkip: () => void;
+  onSubmit: () => void;
+  isSubmitting: boolean;
 }
 
-export function StepKnowledge({ files, onFilesChange, onSkip }: StepKnowledgeProps) {
+export function StepKnowledge({ files, onFilesChange, onSubmit, isSubmitting }: StepKnowledgeProps) {
   const t = useTranslations("console-assistants");
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -73,6 +74,18 @@ export function StepKnowledge({ files, onFilesChange, onSkip }: StepKnowledgePro
     <div className="wizard-step-knowledge">
       <h2 className="wizard-step-title">{t("wizard.stepKnowledge")}</h2>
       <p className="wizard-step-desc">{t("wizard.stepKnowledgeDesc")}</p>
+
+      <div className="wizard-knowledge-skip-banner">
+        <span>{t("wizard.knowledge.skipNotice")}</span>
+        <button
+          type="button"
+          className="wizard-knowledge-skip-link"
+          onClick={onSubmit}
+          disabled={isSubmitting}
+        >
+          {t("wizard.knowledge.skipLink")} &rarr;
+        </button>
+      </div>
 
       <div
         className={`wizard-upload-area ${isDragOver ? "wizard-upload-area--active" : ""}`}
@@ -127,9 +140,6 @@ export function StepKnowledge({ files, onFilesChange, onSkip }: StepKnowledgePro
         </ul>
       )}
 
-      <button type="button" className="wizard-skip-btn" onClick={onSkip}>
-        {t("wizard.skipKnowledge")}
-      </button>
     </div>
   );
 }

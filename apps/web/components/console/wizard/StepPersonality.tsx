@@ -66,10 +66,9 @@ interface PersonalityData {
 interface StepPersonalityProps {
   personality: PersonalityData;
   onPersonalityChange: (data: PersonalityData) => void;
-  onSkip: () => void;
 }
 
-export function StepPersonality({ personality, onPersonalityChange, onSkip }: StepPersonalityProps) {
+export function StepPersonality({ personality, onPersonalityChange }: StepPersonalityProps) {
   const t = useTranslations("console-assistants");
 
   const selectTemplate = useCallback(
@@ -94,8 +93,8 @@ export function StepPersonality({ personality, onPersonalityChange, onSkip }: St
 
   return (
     <div className="wizard-step-personality">
-      <h2 className="wizard-step-title">{t("wizard.stepPersonality")}</h2>
-      <p className="wizard-step-desc">{t("wizard.stepPersonalityDesc")}</p>
+      <h2 className="wizard-step-title">{t("wizard.personality.title")}</h2>
+      <p className="wizard-step-desc">{t("wizard.personality.subtitle")}</p>
 
       <div className="wizard-personality-grid">
         {TEMPLATES.map((tmpl) => (
@@ -143,9 +142,6 @@ export function StepPersonality({ personality, onPersonalityChange, onSkip }: St
         </div>
       </div>
 
-      <button type="button" className="wizard-skip-btn" onClick={onSkip}>
-        {t("wizard.skipPersonality")}
-      </button>
     </div>
   );
 }
