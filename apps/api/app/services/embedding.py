@@ -13,13 +13,16 @@ async def embed_and_store(
     memory_id: str | None = None,
     data_item_id: str | None = None,
     chunk_text: str,
+    vector: list[float] | None = None,
+    auto_commit: bool = True,
 ) -> str:
     """Embed text and store the vector in the embeddings table.
-    Returns the embedding ID."""
-    # Get vector from DashScope
-    vector = await create_embedding(chunk_text)
+    Returns the embedding ID.
+    If vector is provided, skip the embedding API call and use it directly.
+    If auto_commit is False, the caller is responsible for committing."""
+    if vector is None:
+        vector = await create_embedding(chunk_text)
 
-    # Insert with raw SQL for pgvector support
     embedding_id = str(uuid4())
     db.execute(
         sql_text("""
@@ -33,10 +36,11 @@ async def embed_and_store(
             "memory_id": memory_id,
             "data_item_id": data_item_id,
             "chunk_text": chunk_text,
-            "vector": str(vector),  # pgvector expects string like "[0.1, 0.2, ...]"
+            "vector": str(vector),
         },
     )
-    db.commit()
+    if auto_commit:
+        db.commit()
     return embedding_id
 
 
@@ -80,6 +84,124 @@ async def search_similar(
             "score": float(row[4]) if row[4] else 0.0,
         }
         for row in results
+    ]
+
+
+async def find_duplicate_memory_with_vector(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    text: str,
+    threshold: float = 0.90,
+) -> tuple[dict | None, list[float]]:
+    """Check if a highly similar memory already exists.
+
+    Returns (best_match_or_None, query_vector).
+    The query_vector is always returned for reuse by downstream functions.
+    """
+    query_vector = await create_embedding(text)
+
+    row = db.execute(
+        sql_text("""
+            SELECT e.memory_id, m.content,
+                   1 - (e.vector <=> :query_vector::vector) AS score
+            FROM embeddings e
+            JOIN memories m ON m.id = e.memory_id
+            WHERE e.workspace_id = :workspace_id
+              AND e.project_id = :project_id
+              AND e.memory_id IS NOT NULL
+              AND e.vector IS NOT NULL
+              AND 1 - (e.vector <=> :query_vector::vector) >= :threshold
+            ORDER BY e.vector <=> :query_vector::vector
+            LIMIT 1
+        """),
+        {
+            "workspace_id": workspace_id,
+            "project_id": project_id,
+            "query_vector": str(query_vector),
+            "threshold": threshold,
+        },
+    ).fetchone()
+
+    if not row:
+        return None, query_vector
+
+    return {
+        "memory_id": row[0],
+        "content": row[1],
+        "score": float(row[2]) if row[2] else 0.0,
+    }, query_vector
+
+
+async def find_duplicate_memory(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    text: str,
+    threshold: float = 0.90,
+) -> dict | None:
+    """Check if a highly similar memory already exists.
+
+    Returns the best match {memory_id, content, score} if similarity >= threshold,
+    or None if no duplicate found.
+    """
+    result, _ = await find_duplicate_memory_with_vector(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        text=text,
+        threshold=threshold,
+    )
+    return result
+
+
+async def find_related_memories(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    query_vector: list[float],
+    low: float = 0.70,
+    high: float = 0.90,
+    limit: int = 3,
+) -> list[dict]:
+    """Find memories with similarity in [low, high) range.
+    Returns list of {memory_id, content, category, score}, ordered by descending similarity."""
+    rows = db.execute(
+        sql_text("""
+            SELECT e.memory_id, m.content, m.category,
+                   1 - (e.vector <=> :query_vector::vector) AS score
+            FROM embeddings e
+            JOIN memories m ON m.id = e.memory_id
+            WHERE e.workspace_id = :workspace_id
+              AND e.project_id = :project_id
+              AND e.memory_id IS NOT NULL
+              AND e.vector IS NOT NULL
+              AND 1 - (e.vector <=> :query_vector::vector) >= :low
+              AND 1 - (e.vector <=> :query_vector::vector) < :high
+            ORDER BY e.vector <=> :query_vector::vector
+            LIMIT :limit
+        """),
+        {
+            "workspace_id": workspace_id,
+            "project_id": project_id,
+            "query_vector": str(query_vector),
+            "low": low,
+            "high": high,
+            "limit": limit,
+        },
+    ).fetchall()
+
+    return [
+        {
+            "memory_id": row[0],
+            "content": row[1],
+            "category": row[2],
+            "score": float(row[3]) if row[3] else 0.0,
+        }
+        for row in rows
     ]
 
 
