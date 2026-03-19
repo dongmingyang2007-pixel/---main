@@ -60,7 +60,8 @@ def test_build_system_prompt_with_knowledge():
 
 
 import asyncio
-from app.services.realtime_bridge import RealtimeSession, SessionState
+import pytest
+from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
 
 
 def test_session_initial_state():
@@ -106,3 +107,55 @@ def test_session_should_not_interrupt_when_ai_silent():
     )
     session._ai_speaking = False
     assert session.should_interrupt(speech_duration_ms=600) is False
+
+
+def test_register_session_blocks_duplicate_user():
+    """One user cannot have two concurrent sessions."""
+    from app.services.realtime_bridge import _active_sessions
+
+    _active_sessions.clear()
+
+    s1 = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c1", user_id="u1")
+    s2 = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c2", user_id="u1")
+
+    assert asyncio.run(register_session("u1", s1)) is True
+    assert asyncio.run(register_session("u1", s2)) is False
+
+    asyncio.run(unregister_session("u1"))
+    assert asyncio.run(register_session("u1", s2)) is True
+    asyncio.run(unregister_session("u1"))
+    _active_sessions.clear()
+
+
+def test_register_session_enforces_global_limit(monkeypatch):
+    """Global concurrent session limit is enforced."""
+    from app.services.realtime_bridge import _active_sessions
+
+    _active_sessions.clear()
+
+    monkeypatch.setattr("app.services.realtime_bridge.settings.realtime_max_concurrent_sessions", 2)
+
+    s1 = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c1", user_id="u1")
+    s2 = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c2", user_id="u2")
+    s3 = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c3", user_id="u3")
+
+    assert asyncio.run(register_session("u1", s1)) is True
+    assert asyncio.run(register_session("u2", s2)) is True
+    assert asyncio.run(register_session("u3", s3)) is False  # limit reached
+
+    asyncio.run(unregister_session("u1"))
+    asyncio.run(unregister_session("u2"))
+    _active_sessions.clear()
+
+
+def test_session_get_turn_texts():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._current_transcript = "你好"
+    session._current_response_text = "你好，有什么可以帮你的？"
+
+    user_text, ai_text = session.get_turn_texts()
+    assert user_text == "你好"
+    assert ai_text == "你好，有什么可以帮你的？"
+    # Should be cleared after retrieval
+    assert session._current_transcript == ""
+    assert session._current_response_text == ""
