@@ -1,4 +1,5 @@
 import base64
+from typing import NoReturn
 
 import httpx
 
@@ -16,14 +17,14 @@ class InferenceTimeoutError(UpstreamServiceError):
     """Third-party model provider timed out."""
 
 
-def raise_upstream_error(exc: Exception) -> None:
+def raise_upstream_error(exc: Exception) -> NoReturn:
     if isinstance(exc, InferenceTimeoutError | UpstreamServiceError):
         raise exc
     if isinstance(exc, httpx.TimeoutException):
         raise InferenceTimeoutError("Inference timeout") from exc
     if isinstance(exc, httpx.HTTPError):
         raise UpstreamServiceError("Model API unavailable") from exc
-    raise exc
+    raise UpstreamServiceError(f"Unexpected model API error: {exc}") from exc
 
 
 async def chat_completion(

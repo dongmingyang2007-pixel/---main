@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import zipfile
 
 from sqlalchemy.orm import Session
 
 from app.services.embedding import embed_and_store
+
+logger = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif"}
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -22,9 +27,45 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
     return chunks
 
 
+async def _ocr_image(content: bytes) -> str:
+    """Use Qwen-VL-OCR to extract text from an image."""
+    from app.core.config import settings
+
+    if not settings.dashscope_api_key:
+        return ""
+
+    try:
+        from app.services.vision_client import describe_image
+
+        return await describe_image(
+            content,
+            prompt="请识别并提取这张图片中的所有文字内容。如果图片没有文字，请简要描述图片内容。",
+            model="qwen-vl-ocr",
+        )
+    except Exception:  # noqa: BLE001
+        # Fallback to qwen-vl-plus if qwen-vl-ocr is unavailable
+        try:
+            from app.services.vision_client import describe_image
+
+            return await describe_image(
+                content,
+                prompt="请识别并提取这张图片中的所有文字内容。如果图片没有文字，请简要描述图片内容。",
+                model="qwen-vl-plus",
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("Image OCR failed for both qwen-vl-ocr and qwen-vl-plus")
+            return ""
+
+
 def extract_text_from_content(content: bytes, filename: str) -> str:
-    """Extract plain text from file content based on extension."""
+    """Extract plain text from file content based on extension.
+
+    For image files, returns empty string — use extract_text_async instead.
+    """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext in IMAGE_EXTENSIONS:
+        return ""  # Images require async OCR, handled in index_document
 
     if ext in ("txt", "md"):
         return content.decode("utf-8", errors="ignore")
@@ -63,9 +104,16 @@ async def index_document(
 ) -> int:
     """Index a document: extract text, chunk, embed, store.
 
+    Supports text files (txt, md, pdf, docx) and image files (via OCR).
     Returns the number of chunks created.
     """
-    text = extract_text_from_content(content, filename)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if ext in IMAGE_EXTENSIONS:
+        text = await _ocr_image(content)
+    else:
+        text = extract_text_from_content(content, filename)
+
     if not text.strip():
         return 0
 
