@@ -17,6 +17,16 @@ def test_realtime_settings_defaults():
     assert s.realtime_reconnect_max_attempts == 3
 
 
+def test_memory_triage_settings_defaults():
+    s = Settings(
+        database_url="postgresql+psycopg://x:x@localhost/test",
+        jwt_secret="test-secret-that-is-long-enough-32chars",
+    )
+    assert s.memory_triage_model == "qwen-turbo"
+    assert s.memory_triage_similarity_low == 0.70
+    assert s.memory_triage_similarity_high == 0.90
+
+
 from app.services.context_loader import (
     extract_personality,
     build_system_prompt,

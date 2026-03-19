@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     dashscope_model: str = "qwen3.5-plus"
     dashscope_embedding_model: str = "text-embedding-v3"
 
+    # ── Memory Triage ──
+    memory_triage_model: str = "qwen-turbo"
+    memory_triage_similarity_low: float = 0.70
+    memory_triage_similarity_high: float = 0.90
+
     # ── Realtime Voice ──
     realtime_interrupt_threshold_ms: int = 500
     realtime_idle_timeout_seconds: int = 60
