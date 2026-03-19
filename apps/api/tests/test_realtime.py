@@ -184,10 +184,11 @@ def test_triage_memory_parses_merge_response(monkeypatch):
         "merged_content": "用户是前端工程师，使用Vue和React",
         "reason": "补充了技术栈细节",
     })
-    monkeypatch.setattr(
-        "app.services.dashscope_client.chat_completion",
-        lambda *a, **kw: asyncio.coroutine(lambda: mock_response)(),
-    )
+
+    async def mock_chat(*a, **kw):
+        return mock_response
+
+    monkeypatch.setattr("app.services.dashscope_client.chat_completion", mock_chat)
 
     candidates = [
         {"memory_id": "mem-123", "content": "用户是前端工程师", "category": "工作.职业", "score": 0.82},
@@ -202,10 +203,10 @@ def test_triage_memory_fallback_on_bad_json(monkeypatch):
     """triage_memory returns create fallback when LLM returns unparseable response."""
     from app.tasks.worker_tasks import triage_memory
 
-    monkeypatch.setattr(
-        "app.services.dashscope_client.chat_completion",
-        lambda *a, **kw: asyncio.coroutine(lambda: "I don't understand")(),
-    )
+    async def mock_chat(*a, **kw):
+        return "I don't understand"
+
+    monkeypatch.setattr("app.services.dashscope_client.chat_completion", mock_chat)
 
     candidates = [
         {"memory_id": "mem-456", "content": "用户住在北京", "category": "生活.住址", "score": 0.75},
@@ -219,10 +220,11 @@ def test_triage_memory_handles_markdown_wrapped_json(monkeypatch):
     from app.tasks.worker_tasks import triage_memory
 
     mock_response = '```json\n{"action": "discard", "target_memory_id": null, "merged_content": null, "reason": "重复"}\n```'
-    monkeypatch.setattr(
-        "app.services.dashscope_client.chat_completion",
-        lambda *a, **kw: asyncio.coroutine(lambda: mock_response)(),
-    )
+
+    async def mock_chat(*a, **kw):
+        return mock_response
+
+    monkeypatch.setattr("app.services.dashscope_client.chat_completion", mock_chat)
 
     candidates = [
         {"memory_id": "mem-789", "content": "用户喜欢咖啡", "category": "生活.饮食", "score": 0.88},
