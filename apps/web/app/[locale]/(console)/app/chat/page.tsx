@@ -408,6 +408,7 @@ function ChatPageContent() {
               <ChatInterface
                 key={activeConversationId ?? "no-conversation"}
                 conversationId={activeConversationId}
+                projectId={selectedProjectId}
                 onConversationActivity={handleConversationActivity}
               />
             </div>

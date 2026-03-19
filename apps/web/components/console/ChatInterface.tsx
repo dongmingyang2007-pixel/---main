@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import RealtimeVoice from "./RealtimeVoice";
 
 interface Message {
   id: string;
@@ -28,6 +29,7 @@ interface VoiceResponse {
 
 interface ChatInterfaceProps {
   conversationId?: string | null;
+  projectId?: string | null;
   onConversationActivity?: (payload: {
     conversationId: string;
     previewText: string;
@@ -47,6 +49,7 @@ function playAudio(base64Audio: string) {
 
 export function ChatInterface({
   conversationId,
+  projectId,
   onConversationActivity,
 }: ChatInterfaceProps) {
   const t = useTranslations("console-chat");
@@ -350,6 +353,19 @@ export function ChatInterface({
       )}
       {voiceStatus === "sending" && (
         <div className="chat-voice-indicator">{t("voiceSending")}</div>
+      )}
+
+      {conversationId && projectId && (
+        <RealtimeVoice
+          conversationId={conversationId}
+          projectId={projectId}
+          workspaceId={
+            (typeof document !== "undefined" &&
+              (document.cookie.match(/mingrun_workspace_id=([^;]+)/)?.[1] ||
+                document.cookie.match(/qihang_workspace_id=([^;]+)/)?.[1])) ||
+            ""
+          }
+        />
       )}
     </div>
   );
