@@ -42,7 +42,7 @@ from app.services.storage import (
     object_exists,
     put_object_bytes,
 )
-from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
+from app.services.upload_validation import buffer_upload_body, ensure_uploaded_object_matches
 from app.tasks.worker_tasks import cleanup_pending_model_artifact_upload
 
 
@@ -285,21 +285,24 @@ async def proxy_model_artifact_upload(
     if content_type and content_type != session["media_type"]:
         raise ApiError("content_type_mismatch", "Content-Type does not match upload session", status_code=400)
 
-    payload = await read_upload_body(
+    buffered_upload = await buffer_upload_body(
         request,
         expected_size=session["size_bytes"],
         max_bytes=settings.upload_max_mb * 1024 * 1024,
     )
-    if settings.env != "test":
-        try:
-            put_object_bytes(
-                bucket_name=settings.s3_private_bucket,
-                object_key=session["object_key"],
-                payload=payload,
-                media_type=session["media_type"],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+    try:
+        if settings.env != "test":
+            try:
+                put_object_bytes(
+                    bucket_name=settings.s3_private_bucket,
+                    object_key=session["object_key"],
+                    payload=buffered_upload.file,
+                    media_type=session["media_type"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+    finally:
+        buffered_upload.close()
 
     session["uploaded"] = True
     runtime_state.set_json(

@@ -28,6 +28,7 @@ from app.schemas.dataset import (
 )
 from app.services.audit import write_audit_log
 from app.services.storage import create_presigned_get
+from app.services.upload_validation import is_safe_preview_media_type
 from app.tasks.worker_tasks import cleanup_deleted_dataset
 
 
@@ -90,9 +91,13 @@ def _build_data_item_out(item: DataItem) -> DataItemOut:
         width=item.width,
         height=item.height,
         meta_json=_sanitize_item_meta(item.meta_json),
-        preview_url=create_presigned_get(
-            bucket_name=settings.s3_private_bucket,
-            object_key=item.object_key,
+        preview_url=(
+            create_presigned_get(
+                bucket_name=settings.s3_private_bucket,
+                object_key=item.object_key,
+            )
+            if is_safe_preview_media_type(item.media_type)
+            else None
         ),
         download_url=create_presigned_get(
             bucket_name=settings.s3_private_bucket,

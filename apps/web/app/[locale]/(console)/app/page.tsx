@@ -20,14 +20,12 @@ export default function DashboardPage() {
   const t = useTranslations("console");
   const router = useRouter();
   const [assistants, setAssistants] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
   const [recentChats, setRecentChats] = useState<RecentConversation[]>([]);
 
   useEffect(() => {
     void apiGet<{ items: Project[] }>("/api/v1/projects")
       .then((data) => setAssistants(data.items || []))
-      .catch(() => setAssistants([]))
-      .finally(() => setLoading(false));
+      .catch(() => setAssistants([]));
   }, []);
 
   const firstAssistant = assistants[0];

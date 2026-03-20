@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -90,23 +90,34 @@ function ChatPageContent() {
   >(null);
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [loadedConversationProjectId, setLoadedConversationProjectId] = useState("");
   const [conversationSummaries, setConversationSummaries] = useState<
     Record<string, ConversationSummary>
   >({});
   const [search, setSearch] = useState("");
+  const conversationsRequestSeq = useRef(0);
 
   const loadConversations = useCallback(async (projectId: string) => {
+    const requestSeq = conversationsRequestSeq.current + 1;
+    conversationsRequestSeq.current = requestSeq;
+
     if (!projectId) {
       setConversations([]);
       setActiveConversationId(null);
+      setLoadedConversationProjectId("");
+      setLoadingConversations(false);
       return;
     }
 
+    setLoadedConversationProjectId("");
     setLoadingConversations(true);
     try {
       const data = await apiGet<Conversation[]>(
         `/api/v1/chat/conversations?project_id=${projectId}`,
       );
+      if (requestSeq !== conversationsRequestSeq.current) {
+        return;
+      }
       const list = Array.isArray(data) ? data : [];
       setConversations(list);
       setConversationSummaries((prev) => {
@@ -124,10 +135,17 @@ function ChatPageContent() {
           : (list[0]?.id ?? null),
       );
     } catch {
+      if (requestSeq !== conversationsRequestSeq.current) {
+        return;
+      }
       setConversations([]);
       setActiveConversationId(null);
     } finally {
+      if (requestSeq !== conversationsRequestSeq.current) {
+        return;
+      }
       setLoadingConversations(false);
+      setLoadedConversationProjectId(projectId);
     }
   }, []);
 
@@ -239,6 +257,36 @@ function ChatPageContent() {
     }
   }, [creatingConversation, selectedProjectId, t]);
 
+  useEffect(() => {
+    if (!selectedProjectId || loadingConversations || creatingConversation) {
+      return;
+    }
+    if (loadedConversationProjectId !== selectedProjectId) {
+      return;
+    }
+    if (
+      requestedProjectId &&
+      requestedProjectId !== selectedProjectId &&
+      projects.some((project) => project.id === requestedProjectId)
+    ) {
+      return;
+    }
+    if (activeConversationId || conversations.length > 0) {
+      return;
+    }
+    void handleNewConversation();
+  }, [
+    activeConversationId,
+    conversations.length,
+    creatingConversation,
+    handleNewConversation,
+    loadedConversationProjectId,
+    loadingConversations,
+    projects,
+    requestedProjectId,
+    selectedProjectId,
+  ]);
+
   // Delete conversation
   const handleDeleteConversation = useCallback(
     async (convId: string, e: React.MouseEvent) => {
@@ -325,7 +373,7 @@ function ChatPageContent() {
       }
       return timeLabel;
     },
-    [conversationSummaries, getConversationTitle],
+    [conversationSummaries, getConversationTitle, t],
   );
 
   return (
@@ -455,7 +503,6 @@ function ChatPageContent() {
             {/* Main chat area */}
             <div className="chat-main">
               <ChatInterface
-                key={activeConversationId ?? "no-conversation"}
                 conversationId={activeConversationId}
                 projectId={selectedProjectId}
                 onConversationActivity={handleConversationActivity}

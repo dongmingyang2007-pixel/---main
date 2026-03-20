@@ -1,26 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 
-const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100";
-const CONFIGURED_API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100";
 const COOKIE_ORIGINS = expandLoopbackOrigins(APP_ORIGIN);
-
-function alignLoopbackHost(origin: string, appOrigin: string): string {
-  try {
-    const apiUrl = new URL(origin);
-    const appUrl = new URL(appOrigin);
-    const isApiLoopback = apiUrl.hostname === "localhost" || apiUrl.hostname === "127.0.0.1";
-    const isAppLoopback = appUrl.hostname === "localhost" || appUrl.hostname === "127.0.0.1";
-
-    if (isApiLoopback && isAppLoopback && apiUrl.hostname !== appUrl.hostname) {
-      apiUrl.hostname = appUrl.hostname;
-      return apiUrl.origin;
-    }
-  } catch {
-    return origin;
-  }
-
-  return origin;
-}
 
 function expandLoopbackOrigins(origin: string): string[] {
   try {
@@ -39,14 +20,12 @@ function expandLoopbackOrigins(origin: string): string[] {
   }
 }
 
-const API_ORIGINS = Array.from(
-  new Set([CONFIGURED_API_ORIGIN, alignLoopbackHost(CONFIGURED_API_ORIGIN, APP_ORIGIN)]),
-);
-
 type Project = {
   id: string;
   name: string;
   description?: string;
+  default_chat_mode: "standard" | "omni_realtime" | "synthetic_realtime";
+  assistant_root_memory_id?: string | null;
   created_at: string;
 };
 
@@ -62,6 +41,17 @@ type DatasetVersion = {
   id: string;
   dataset_id: string;
   version: number;
+};
+
+type DataItem = {
+  id: string;
+  dataset_id: string;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  download_url: string;
+  preview_url?: string | null;
+  created_at: string;
 };
 
 type Job = {
@@ -101,7 +91,14 @@ type Conversation = {
 type PipelineConfigItem = {
   id: string;
   project_id: string;
-  model_type: "llm" | "asr" | "tts" | "vision";
+  model_type:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   model_id: string;
   config_json: Record<string, unknown>;
   created_at: string;
@@ -111,12 +108,39 @@ type PipelineConfigItem = {
 type CatalogModel = {
   id: string;
   model_id: string;
+  canonical_model_id?: string;
   display_name: string;
   provider: string;
   provider_display?: string;
-  category: "llm" | "asr" | "tts" | "vision";
+  official_group_key?: string;
+  category:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   description: string;
   capabilities: string[];
+  official_group?: string;
+  official_category_key?: string;
+  official_category?: string;
+  official_order?: number;
+  official_url?: string;
+  aliases?: string[];
+  pipeline_slot?:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts"
+    | null;
+  is_selectable_in_console?: boolean;
+  supported_tools?: string[];
+  supported_features?: string[];
   input_price: number;
   output_price: number;
   context_window: number;
@@ -165,6 +189,7 @@ type MockDb = {
   conversationsByProjectId: Record<string, Conversation[]>;
   messagesByConversationId: Record<string, ChatMessage[]>;
   datasets: Dataset[];
+  dataItemsByDatasetId: Record<string, DataItem[]>;
   datasetVersions: DatasetVersion[];
   jobs: Job[];
   models: Model[];
@@ -193,6 +218,7 @@ function nextId(db: MockDb, prefix: string): string {
 function createMockDb(): MockDb {
   const workspaceId = "ws-playwright";
   const seedProjectId = "proj-seed";
+  const seedRootMemoryId = "memory-root-seed";
   const seedDatasetId = "dataset-seed";
   const seedVersionId = "dsv-seed";
   const seedModelId = "model-seed";
@@ -205,6 +231,8 @@ function createMockDb(): MockDb {
         id: seedProjectId,
         name: "Seed Console Project",
         description: "Default workspace project",
+        default_chat_mode: "standard",
+        assistant_root_memory_id: seedRootMemoryId,
         created_at: nowIso(),
       },
     ],
@@ -221,6 +249,9 @@ function createMockDb(): MockDb {
         created_at: nowIso(),
       },
     ],
+    dataItemsByDatasetId: {
+      [seedDatasetId]: [],
+    },
     datasetVersions: [
       {
         id: seedVersionId,
@@ -281,27 +312,303 @@ function createMockDb(): MockDb {
         created_at: nowIso(),
         updated_at: nowIso(),
       },
+      {
+        id: "pipe-vision-seed",
+        project_id: seedProjectId,
+        model_type: "vision",
+        model_id: "qwen-vl-plus",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+      {
+        id: "pipe-realtime-seed",
+        project_id: seedProjectId,
+        model_type: "realtime",
+        model_id: "qwen3-omni-flash-realtime",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+      {
+        id: "pipe-realtime-asr-seed",
+        project_id: seedProjectId,
+        model_type: "realtime_asr",
+        model_id: "qwen3-asr-flash-realtime",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
+      {
+        id: "pipe-realtime-tts-seed",
+        project_id: seedProjectId,
+        model_type: "realtime_tts",
+        model_id: "qwen3-tts-flash-realtime",
+        config_json: {},
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      },
     ],
     modelCatalog: [
       {
         id: "catalog-qwen3.5-plus",
         model_id: "qwen3.5-plus",
+        canonical_model_id: "qwen3.5-plus",
         display_name: "Qwen3.5-Plus",
         provider: "qwen",
         provider_display: "千问 · 阿里云",
         category: "llm",
-        description: "均衡的旗舰级通用模型，支持视觉、函数调用和联网搜索。",
-        capabilities: ["chat", "vision", "function_calling", "web_search"],
+        description: "均衡的旗舰级通用模型，支持视觉、视频理解、函数调用和联网搜索。",
+        capabilities: ["chat", "vision", "video", "function_calling", "web_search"],
+        official_group_key: "text",
+        official_group: "文本",
+        official_category_key: "text_generation",
+        official_category: "文本生成",
+        official_order: 3002,
+        official_url: "https://help.aliyun.com/zh/model-studio/text-generation",
+        aliases: ["qwen3-plus"],
+        pipeline_slot: "llm",
+        is_selectable_in_console: true,
+        supported_tools: ["function_calling", "web_search"],
+        supported_features: ["streaming", "deep_thinking", "structured_output", "cache"],
         input_price: 0.004,
         output_price: 0.012,
         context_window: 131072,
         max_output: 8192,
+        input_modalities: ["text", "image", "video"],
+        output_modalities: ["text"],
+        supports_function_calling: true,
+        supports_web_search: true,
+        supports_structured_output: true,
+        supports_cache: true,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "tokens",
+        price_note: null,
+      },
+      {
+        id: "catalog-qwen-max",
+        model_id: "qwen-max",
+        canonical_model_id: "qwen-max",
+        display_name: "Qwen Max",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "llm",
+        description: "更强的推理与更长上下文能力。",
+        capabilities: ["chat", "vision", "function_calling"],
+        official_group_key: "text",
+        official_group: "文本",
+        official_category_key: "text_generation",
+        official_category: "文本生成",
+        official_order: 3001,
+        official_url: "https://help.aliyun.com/zh/model-studio/text-generation",
+        aliases: [],
+        pipeline_slot: "llm",
+        is_selectable_in_console: true,
+        supported_tools: ["function_calling", "web_search"],
+        supported_features: ["streaming", "deep_thinking", "structured_output", "cache"],
+        input_price: 0.008,
+        output_price: 0.024,
+        context_window: 262144,
+        max_output: 16384,
         input_modalities: ["text", "image"],
         output_modalities: ["text"],
         supports_function_calling: true,
         supports_web_search: true,
         supports_structured_output: true,
         supports_cache: true,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "tokens",
+        price_note: null,
+      },
+      {
+        id: "catalog-qwen3-omni-flash-realtime",
+        model_id: "qwen3-omni-flash-realtime",
+        canonical_model_id: "qwen3-omni-flash-realtime",
+        display_name: "Qwen3-Omni-Flash-Realtime",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "llm",
+        description: "端到端全模态实时模型，直接接收语音并直接输出语音与文本。",
+        capabilities: ["chat", "vision", "audio_input", "audio_output", "realtime"],
+        official_group_key: "realtime",
+        official_group: "Realtime",
+        official_category_key: "realtime_omni",
+        official_category: "实时全模态",
+        official_order: 11001,
+        official_url: "https://help.aliyun.com/zh/model-studio/qwen-omni",
+        aliases: [],
+        pipeline_slot: "realtime",
+        is_selectable_in_console: true,
+        supported_tools: [],
+        supported_features: ["streaming"],
+        input_price: 0.0022,
+        output_price: 0.0083,
+        context_window: 131072,
+        max_output: 8192,
+        input_modalities: ["text", "image", "audio"],
+        output_modalities: ["text", "audio"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "tokens",
+        price_note: null,
+      },
+      {
+        id: "catalog-qwen3-asr-flash-realtime",
+        model_id: "qwen3-asr-flash-realtime",
+        canonical_model_id: "qwen3-asr-flash-realtime",
+        display_name: "Qwen3-ASR-Flash-Realtime",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "realtime_asr",
+        description: "实时语音识别模型，适合持续语音流输入。",
+        capabilities: ["asr", "realtime_asr"],
+        official_group_key: "realtime",
+        official_group: "Realtime",
+        official_category_key: "realtime_asr",
+        official_category: "实时语音识别",
+        official_order: 11011,
+        official_url: "https://help.aliyun.com/zh/model-studio/models",
+        aliases: [],
+        pipeline_slot: "realtime_asr",
+        is_selectable_in_console: true,
+        supported_tools: [],
+        supported_features: ["streaming"],
+        input_price: 0,
+        output_price: 0,
+        context_window: 0,
+        max_output: 0,
+        input_modalities: ["audio"],
+        output_modalities: ["text"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "audio",
+        price_note: "按音频时长计费",
+      },
+      {
+        id: "catalog-qwen3-tts-flash-realtime",
+        model_id: "qwen3-tts-flash-realtime",
+        canonical_model_id: "qwen3-tts-flash-realtime",
+        display_name: "Qwen3-TTS-Flash-Realtime",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "realtime_tts",
+        description: "实时语音合成模型，适合低延迟分段播放。",
+        capabilities: ["tts", "realtime_tts"],
+        official_group_key: "realtime",
+        official_group: "Realtime",
+        official_category_key: "realtime_tts",
+        official_category: "实时语音合成",
+        official_order: 11012,
+        official_url: "https://help.aliyun.com/zh/model-studio/models",
+        aliases: [],
+        pipeline_slot: "realtime_tts",
+        is_selectable_in_console: true,
+        supported_tools: [],
+        supported_features: ["streaming"],
+        input_price: 0,
+        output_price: 0,
+        context_window: 0,
+        max_output: 0,
+        input_modalities: ["text"],
+        output_modalities: ["audio"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "characters",
+        price_note: "按字符计费",
+      },
+      {
+        id: "catalog-qwen-vl-plus",
+        model_id: "qwen-vl-plus",
+        canonical_model_id: "qwen-vl-plus",
+        display_name: "Qwen VL Plus",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "vision",
+        description: "通用视觉理解模型。",
+        capabilities: ["vision"],
+        official_group_key: "vision",
+        official_group: "视觉",
+        official_category_key: "vision",
+        official_category: "视觉理解",
+        official_order: 4002,
+        official_url: "https://help.aliyun.com/zh/model-studio/models",
+        aliases: [],
+        pipeline_slot: "vision",
+        is_selectable_in_console: true,
+        supported_tools: [],
+        supported_features: ["streaming"],
+        input_price: 0,
+        output_price: 0,
+        context_window: 32768,
+        max_output: 4096,
+        input_modalities: ["image", "text"],
+        output_modalities: ["text"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
+        batch_input_price: null,
+        batch_output_price: null,
+        cache_read_price: null,
+        cache_write_price: null,
+        price_unit: "tokens",
+        price_note: null,
+      },
+      {
+        id: "catalog-qwen3-vl-plus",
+        model_id: "qwen3-vl-plus",
+        canonical_model_id: "qwen3-vl-plus",
+        display_name: "Qwen3-VL-Plus",
+        provider: "qwen",
+        provider_display: "千问 · 阿里云",
+        category: "vision",
+        description: "新一代视觉理解模型，支持图像、OCR、视频与更强的视觉推理能力。",
+        capabilities: ["vision", "ocr", "video", "thinking"],
+        official_group_key: "vision",
+        official_group: "视觉",
+        official_category_key: "vision",
+        official_category: "视觉理解",
+        official_order: 4003,
+        official_url: "https://help.aliyun.com/zh/model-studio/models",
+        aliases: [],
+        pipeline_slot: "vision",
+        is_selectable_in_console: true,
+        supported_tools: [],
+        supported_features: ["streaming", "deep_thinking"],
+        input_price: 0.001,
+        output_price: 0.01,
+        context_window: 32768,
+        max_output: 4096,
+        input_modalities: ["image", "video"],
+        output_modalities: ["text"],
+        supports_function_calling: false,
+        supports_web_search: false,
+        supports_structured_output: false,
+        supports_cache: false,
         batch_input_price: null,
         batch_output_price: null,
         cache_read_price: null,
@@ -363,7 +670,27 @@ function createMockDb(): MockDb {
       },
     ],
     memoryNodesByProjectId: {
-      [seedProjectId]: [],
+      [seedProjectId]: [
+        {
+          id: seedRootMemoryId,
+          workspace_id: workspaceId,
+          project_id: seedProjectId,
+          content: "Seed Console Project",
+          category: "assistant",
+          type: "permanent",
+          source_conversation_id: null,
+          parent_memory_id: null,
+          position_x: 0,
+          position_y: 0,
+          metadata_json: {
+            node_kind: "assistant-root",
+            assistant_name: "Seed Console Project",
+            system_managed: true,
+          },
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+      ],
     },
     counters: {
       proj: 1,
@@ -487,14 +814,109 @@ export async function installWorkbenchApiMock(
     }
 
     if (pathname === "/api/v1/projects" && method === "POST") {
-      const body = readJsonBody<{ name?: string; description?: string }>(route);
+      const body = readJsonBody<{
+        name?: string;
+        description?: string;
+        default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+      }>(route);
       const project: Project = {
         id: nextId(db, "proj"),
         name: body.name || "Untitled project",
         description: body.description || "",
+        default_chat_mode: body.default_chat_mode || "standard",
+        assistant_root_memory_id: null,
         created_at: nowIso(),
       };
+      const rootMemoryId = `memory-root-${project.id}`;
+      project.assistant_root_memory_id = rootMemoryId;
       db.projects.unshift(project);
+      db.conversationsByProjectId[project.id] = [];
+      db.pipelineConfigs.push(
+        {
+          id: `pipe-llm-${project.id}`,
+          project_id: project.id,
+          model_type: "llm",
+          model_id: "qwen3.5-plus",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-asr-${project.id}`,
+          project_id: project.id,
+          model_type: "asr",
+          model_id: "paraformer-v2",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-tts-${project.id}`,
+          project_id: project.id,
+          model_type: "tts",
+          model_id: "cosyvoice",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-vision-${project.id}`,
+          project_id: project.id,
+          model_type: "vision",
+          model_id: "qwen-vl-plus",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-realtime-${project.id}`,
+          project_id: project.id,
+          model_type: "realtime",
+          model_id: "qwen3-omni-flash-realtime",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-realtime-asr-${project.id}`,
+          project_id: project.id,
+          model_type: "realtime_asr",
+          model_id: "qwen3-asr-flash-realtime",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+        {
+          id: `pipe-realtime-tts-${project.id}`,
+          project_id: project.id,
+          model_type: "realtime_tts",
+          model_id: "qwen3-tts-flash-realtime",
+          config_json: {},
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+      );
+      db.memoryNodesByProjectId[project.id] = [
+        {
+          id: rootMemoryId,
+          workspace_id: db.workspaceId,
+          project_id: project.id,
+          content: project.name,
+          category: "assistant",
+          type: "permanent",
+          source_conversation_id: null,
+          parent_memory_id: null,
+          position_x: 0,
+          position_y: 0,
+          metadata_json: {
+            node_kind: "assistant-root",
+            assistant_name: project.name,
+            system_managed: true,
+          },
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        },
+      ];
       await fulfillJson(route, project, 201);
       return;
     }
@@ -508,6 +930,49 @@ export async function installWorkbenchApiMock(
         return;
       }
       await fulfillJson(route, project);
+      return;
+    }
+
+    if (projectDetailMatch && method === "PATCH") {
+      const projectId = projectDetailMatch[1];
+      const body = readJsonBody<{
+        name?: string;
+        description?: string;
+        default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+      }>(route);
+      const index = db.projects.findIndex((item) => item.id === projectId);
+      if (index < 0) {
+        await fulfillJson(route, { error: { message: "project not found" } }, 404);
+        return;
+      }
+
+      const current = db.projects[index]!;
+      const updated: Project = {
+        ...current,
+        name: body.name ?? current.name,
+        description: body.description ?? current.description,
+        default_chat_mode: body.default_chat_mode ?? current.default_chat_mode,
+      };
+      db.projects[index] = updated;
+      const rootMemoryId = updated.assistant_root_memory_id;
+      if (rootMemoryId) {
+        db.memoryNodesByProjectId[projectId] = (db.memoryNodesByProjectId[projectId] || []).map((node) =>
+          node.id === rootMemoryId
+            ? {
+                ...node,
+                content: updated.name,
+                metadata_json: {
+                  ...node.metadata_json,
+                  node_kind: "assistant-root",
+                  assistant_name: updated.name,
+                  system_managed: true,
+                },
+                updated_at: nowIso(),
+              }
+            : node,
+        );
+      }
+      await fulfillJson(route, updated);
       return;
     }
 
@@ -532,6 +997,53 @@ export async function installWorkbenchApiMock(
       ];
       db.messagesByConversationId[conversation.id] = [];
       await fulfillJson(route, conversation);
+      return;
+    }
+
+    const conversationDictateMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/dictate$/);
+    if (conversationDictateMatch && method === "POST") {
+      await fulfillJson(route, {
+        text_input: "这是听写结果",
+      });
+      return;
+    }
+
+    const conversationSpeechMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/speech$/);
+    if (conversationSpeechMatch && method === "POST") {
+      await fulfillJson(route, {
+        audio_response: "AQID",
+      });
+      return;
+    }
+
+    const conversationImageMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/image$/);
+    if (conversationImageMatch && method === "POST") {
+      const conversationId = conversationImageMatch[1];
+      const now = nowIso();
+      const userMessage: ChatMessage = {
+        id: nextId(db, "msg"),
+        conversation_id: conversationId,
+        role: "user",
+        content: "请描述这张图片",
+        created_at: now,
+      };
+      const assistantMessage: ChatMessage = {
+        id: nextId(db, "msg"),
+        conversation_id: conversationId,
+        role: "assistant",
+        content: "Mock image response",
+        created_at: now,
+      };
+      db.messagesByConversationId[conversationId] = [
+        ...(db.messagesByConversationId[conversationId] || []),
+        userMessage,
+        assistantMessage,
+      ];
+      await fulfillJson(route, {
+        message: assistantMessage,
+        text_input: userMessage.content,
+        audio_response: "AQID",
+      });
       return;
     }
 
@@ -578,6 +1090,7 @@ export async function installWorkbenchApiMock(
     if (pathname === "/api/v1/memory" && method === "POST") {
       const body = readJsonBody<{ project_id?: string; content?: string; category?: string }>(route);
       const projectId = body.project_id || db.projects[0]?.id || "";
+      const project = db.projects.find((item) => item.id === projectId);
       const node: MemoryNode = {
         id: nextId(db, "memory"),
         workspace_id: db.workspaceId,
@@ -586,7 +1099,7 @@ export async function installWorkbenchApiMock(
         category: body.category || "",
         type: "permanent",
         source_conversation_id: null,
-        parent_memory_id: null,
+        parent_memory_id: project?.assistant_root_memory_id || null,
         position_x: null,
         position_y: null,
         metadata_json: {},
@@ -656,6 +1169,13 @@ export async function installWorkbenchApiMock(
       return;
     }
 
+    const datasetItemsMatch = pathname.match(/^\/api\/v1\/datasets\/([^/]+)\/items$/);
+    if (datasetItemsMatch && method === "GET") {
+      const datasetId = datasetItemsMatch[1];
+      await fulfillJson(route, db.dataItemsByDatasetId[datasetId] || []);
+      return;
+    }
+
     if (pathname === "/api/v1/train/jobs" && method === "GET") {
       const projectId = searchParams.get("project_id") || "";
       await fulfillJson(
@@ -707,14 +1227,89 @@ export async function installWorkbenchApiMock(
     }
 
     if (pathname === "/api/v1/models/catalog" && method === "GET") {
-      await fulfillJson(route, db.modelCatalog);
+      const category = searchParams.get("category");
+      const view = searchParams.get("view");
+      const supportsRealtime = (model: CatalogModel) => {
+        const capabilities = new Set((model.capabilities || []).map((item) => item.toLowerCase()));
+        return capabilities.has("realtime") && capabilities.has("audio_input") && capabilities.has("audio_output");
+      };
+      if (view === "discover") {
+        const items = db.modelCatalog
+          .filter((model) => model.provider === "qwen" && model.official_category)
+          .map((model) => ({
+            canonical_model_id: model.canonical_model_id || model.model_id,
+            model_id: model.model_id,
+            display_name: model.display_name,
+            provider: model.provider,
+            provider_display: model.provider_display || "千问 · 阿里云",
+            official_group_key: model.official_group_key || null,
+            official_group: model.official_group || "文本",
+            official_category_key: model.official_category_key || null,
+            official_category: model.official_category || "文本生成",
+            official_order: model.official_order || 0,
+            description: model.description,
+            input_modalities: model.input_modalities || [],
+            output_modalities: model.output_modalities || [],
+            supported_tools: model.supported_tools || [],
+            supported_features: model.supported_features || [],
+            official_url: model.official_url || "https://help.aliyun.com/zh/model-studio/models",
+            aliases: model.aliases || [],
+            pipeline_slot: model.pipeline_slot || null,
+            is_selectable_in_console: model.is_selectable_in_console ?? true,
+          }));
+        const taxonomyMap = new Map<string, { key: string; label: string; group_key: string | null; group_label: string; group: string; order: number; count: number }>();
+        items.forEach((item) => {
+          const key = item.official_category_key || item.official_category;
+          const current = taxonomyMap.get(key);
+          if (current) {
+            current.count += 1;
+            return;
+          }
+          taxonomyMap.set(key, {
+            key,
+            label: item.official_category,
+            group_key: item.official_group_key,
+            group_label: item.official_group,
+            group: item.official_group,
+            order: item.official_order,
+            count: 1,
+          });
+        });
+        await fulfillJson(route, {
+          taxonomy: Array.from(taxonomyMap.values()).sort((a, b) => a.order - b.order),
+          items: items.sort((a, b) => a.official_order - b.official_order),
+        });
+        return;
+      }
+      await fulfillJson(
+        route,
+        category === "realtime"
+          ? db.modelCatalog
+            .filter((model) => supportsRealtime(model))
+            .map((model) => ({ ...model, category: "realtime" as const }))
+          : category === "llm"
+            ? db.modelCatalog.filter((model) => model.category === "llm" && !supportsRealtime(model))
+            : category === "realtime_asr"
+              ? db.modelCatalog.filter((model) => model.category === "realtime_asr")
+              : category === "realtime_tts"
+                ? db.modelCatalog.filter((model) => model.category === "realtime_tts")
+            : category
+              ? db.modelCatalog.filter((model) => model.category === category)
+              : db.modelCatalog,
+      );
       return;
     }
 
     const modelCatalogDetailMatch = pathname.match(/^\/api\/v1\/models\/catalog\/([^/]+)$/);
     if (modelCatalogDetailMatch && method === "GET") {
       const modelId = modelCatalogDetailMatch[1];
-      const model = db.modelCatalog.find((item) => item.model_id === modelId);
+      const aliases: Record<string, string[]> = {
+        "qwen3-plus": ["qwen3.5-plus"],
+      };
+      const candidateIds = [modelId, ...(aliases[modelId] || [])];
+      const model = candidateIds
+        .map((candidateId) => db.modelCatalog.find((item) => item.model_id === candidateId))
+        .find(Boolean);
       if (!model) {
         await fulfillJson(route, { error: { message: "catalog model not found" } }, 404);
         return;
@@ -734,7 +1329,14 @@ export async function installWorkbenchApiMock(
     if (pathname === "/api/v1/pipeline" && method === "PATCH") {
       const body = readJsonBody<{
         project_id?: string;
-        model_type?: "llm" | "asr" | "tts" | "vision";
+        model_type?:
+          | "llm"
+          | "asr"
+          | "tts"
+          | "vision"
+          | "realtime"
+          | "realtime_asr"
+          | "realtime_tts";
         model_id?: string;
         config_json?: Record<string, unknown>;
       }>(route);
@@ -747,6 +1349,14 @@ export async function installWorkbenchApiMock(
         current.model_id = body.model_id || current.model_id;
         current.config_json = body.config_json || current.config_json;
         current.updated_at = nowIso();
+        if (modelType === "llm") {
+          const selected = db.modelCatalog.find((item) => item.model_id === current.model_id);
+          const capabilities = new Set((selected?.capabilities || []).map((value) => value.toLowerCase()));
+          const project = db.projects.find((item) => item.id === projectId);
+          if (project && project.default_chat_mode === "synthetic_realtime" && !capabilities.has("vision")) {
+            project.default_chat_mode = "standard";
+          }
+        }
         await fulfillJson(route, current);
         return;
       }
@@ -785,7 +1395,7 @@ export async function installWorkbenchApiMock(
     );
   };
 
-  await Promise.all(API_ORIGINS.map((origin) => page.route(`${origin}/api/v1/**`, handleApiRoute)));
+  await page.route("**/api/v1/**", handleApiRoute);
 
   return {
     workspaceId: db.workspaceId,

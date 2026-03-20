@@ -34,6 +34,7 @@ from app.schemas.memory import (
 )
 from app.services.embedding import embed_and_store, search_similar
 from app.services.memory_file_context import sync_data_item_links_for_memory
+from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 from app.services.memory_visibility import (
     build_private_memory_metadata,
     is_private_memory,
@@ -234,7 +235,7 @@ def _delete_memory_embeddings(db: Session, memory_id: str) -> None:
 
 
 def _sync_memory_embedding(memory: Memory, db: Session) -> None:
-    if not settings.dashscope_api_key or not memory.content.strip():
+    if is_assistant_root_memory(memory) or not settings.dashscope_api_key or not memory.content.strip():
         return
     try:
         _delete_memory_embeddings(db, memory.id)
@@ -263,7 +264,7 @@ def get_memory_graph(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> MemoryGraphOut:
-    _verify_project_ownership(db, project_id, workspace_id)
+    project = _verify_project_ownership(db, project_id, workspace_id)
     if conversation_id:
         _verify_conversation_ownership(
             db,
@@ -273,6 +274,9 @@ def get_memory_graph(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+    _, changed = ensure_project_assistant_root(db, project)
+    if changed:
+        db.commit()
 
     # All permanent nodes for this project
     permanent = (
@@ -392,7 +396,7 @@ def create_memory(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> MemoryOut:
-    _verify_project_ownership(db, payload.project_id, workspace_id)
+    project = _verify_project_ownership(db, payload.project_id, workspace_id)
     if payload.type not in {"permanent", "temporary"}:
         raise ApiError("bad_request", "Invalid memory type", status_code=400)
     if payload.type == "temporary" and not payload.source_conversation_id:
@@ -410,6 +414,7 @@ def create_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+    root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=True)
     if payload.parent_memory_id:
         _verify_parent_memory(
             db,
@@ -419,6 +424,8 @@ def create_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+    else:
+        payload.parent_memory_id = root_memory.id
 
     memory = Memory(
         workspace_id=workspace_id,
@@ -433,6 +440,8 @@ def create_memory(
         metadata_json=payload.metadata_json,
     )
     db.add(memory)
+    if root_changed:
+        db.flush()
     db.commit()
     db.refresh(memory)
     _sync_memory_embedding(memory, db)
@@ -539,6 +548,8 @@ def list_available_memory_files(
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
+    if is_assistant_root_memory(memory):
+        raise ApiError("bad_request", "Assistant root memory cannot attach files", status_code=400)
 
     attached_item_ids = {
         item_id
@@ -591,6 +602,8 @@ def attach_memory_file(
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
+    if is_assistant_root_memory(memory):
+        raise ApiError("bad_request", "Assistant root memory cannot attach files", status_code=400)
     data_item = get_data_item_in_workspace(db, data_item_id=payload.data_item_id, workspace_id=workspace_id)
     if not data_item or not _is_completed_data_item(data_item):
         raise ApiError("not_found", "Data item not found", status_code=404)
@@ -689,6 +702,8 @@ def update_memory(
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
+    if is_assistant_root_memory(memory):
+        raise ApiError("bad_request", "Assistant root memory is system managed", status_code=400)
 
     if payload.content is not None:
         memory.content = payload.content
@@ -743,6 +758,24 @@ def delete_memory(
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
+    if is_assistant_root_memory(memory):
+        raise ApiError("bad_request", "Assistant root memory cannot be deleted", status_code=400)
+
+    project = _verify_project_ownership(db, memory.project_id, workspace_id)
+    root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
+    replacement_parent_id = memory.parent_memory_id or (root_memory.id if root_memory.id != memory.id else None)
+    children = (
+        db.query(Memory)
+        .filter(
+            Memory.project_id == memory.project_id,
+            Memory.workspace_id == workspace_id,
+            Memory.parent_memory_id == memory.id,
+        )
+        .all()
+    )
+    for child in children:
+        child.parent_memory_id = replacement_parent_id
+        child.updated_at = datetime.now(timezone.utc)
 
     _delete_memory_embeddings(db, memory.id)
     db.delete(memory)
@@ -788,6 +821,10 @@ def promote_memory(
     metadata["promoted_by"] = "user"
     memory.metadata_json = build_private_memory_metadata(metadata, owner_user_id=owner_user_id)
     memory.source_conversation_id = None
+    if memory.parent_memory_id is None:
+        project = _verify_project_ownership(db, memory.project_id, workspace_id)
+        root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
+        memory.parent_memory_id = root_memory.id
     memory.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(memory)
@@ -802,7 +839,10 @@ async def search_memory(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[MemorySearchResult]:
-    _verify_project_ownership(db, payload.project_id, workspace_id)
+    project = _verify_project_ownership(db, payload.project_id, workspace_id)
+    root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=False)
+    if root_changed:
+        db.commit()
 
     try:
         results = await search_similar(
@@ -818,6 +858,7 @@ async def search_memory(
             .filter(
                 Memory.workspace_id == workspace_id,
                 Memory.project_id == payload.project_id,
+                Memory.id != root_memory.id,
                 Memory.content.contains(payload.query),
             )
             .order_by(Memory.updated_at.desc())
@@ -872,6 +913,8 @@ async def search_memory(
         memory = memories_by_id.get(memory_id)
         if not memory:
             continue
+        if memory.id == root_memory.id:
+            continue
         if memory.id not in accessible_memory_ids:
             continue
         if payload.category and memory.category != payload.category:
@@ -919,6 +962,8 @@ def create_edge(
         raise ApiError("bad_request", "Cannot connect memories across projects", status_code=400)
     if source.id == target.id:
         raise ApiError("bad_request", "Cannot connect a memory to itself", status_code=400)
+    if is_assistant_root_memory(source) or is_assistant_root_memory(target):
+        raise ApiError("bad_request", "Assistant root memory cannot create manual edges", status_code=400)
 
     # Check for duplicate
     existing = (

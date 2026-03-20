@@ -65,7 +65,7 @@ services:
       COOKIE_SECURE: "false"
       COOKIE_SAMESITE: lax
       CSRF_TTL_SECONDS: 3600
-      ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      ALLOWED_HOSTS: localhost,127.0.0.1,testserver,api
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_MODEL: ${DASHSCOPE_MODEL:-qwen-plus}
       DASHSCOPE_EMBEDDING_MODEL: ${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v3}
@@ -126,6 +126,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.web
     environment:
+      INTERNAL_API_BASE_URL: http://api:8000
       QIHANG_LOCAL_STACK: "true"
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_PUBLIC_ASSET_ORIGIN: http://localhost:9000

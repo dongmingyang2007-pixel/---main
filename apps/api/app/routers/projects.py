@@ -14,6 +14,9 @@ from app.core.errors import ApiError
 from app.models import PipelineConfig, Project, User
 from app.schemas.project import PaginatedProjects, ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.audit import write_audit_log
+from app.services.chat_modes import normalize_chat_mode
+from app.services.memory_roots import ensure_project_assistant_root
+from app.services.pipeline_models import DEFAULT_PIPELINE_MODELS, PIPELINE_SLOT_ORDER
 from app.tasks.worker_tasks import cleanup_deleted_project
 
 
@@ -44,36 +47,26 @@ def create_project(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> ProjectOut:
-    project = Project(workspace_id=workspace_id, name=payload.name, description=payload.description)
+    project = Project(
+        workspace_id=workspace_id,
+        name=payload.name,
+        description=payload.description,
+        default_chat_mode=normalize_chat_mode(payload.default_chat_mode),
+    )
     db.add(project)
     db.flush()
+    root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
+    project.assistant_root_memory_id = root_memory.id
 
     db.add_all(
         [
             PipelineConfig(
                 project_id=project.id,
-                model_type="llm",
-                model_id="qwen3.5-plus",
+                model_type=model_type,
+                model_id=DEFAULT_PIPELINE_MODELS[model_type],
                 config_json={},
-            ),
-            PipelineConfig(
-                project_id=project.id,
-                model_type="asr",
-                model_id="paraformer-v2",
-                config_json={},
-            ),
-            PipelineConfig(
-                project_id=project.id,
-                model_type="tts",
-                model_id="cosyvoice-v1",
-                config_json={},
-            ),
-            PipelineConfig(
-                project_id=project.id,
-                model_type="vision",
-                model_id="qwen-vl-plus",
-                config_json={},
-            ),
+            )
+            for model_type in PIPELINE_SLOT_ORDER
         ]
     )
     write_audit_log(
@@ -127,7 +120,10 @@ def update_project(
         project.name = payload.name
     if payload.description is not None:
         project.description = payload.description
+    if payload.default_chat_mode is not None:
+        project.default_chat_mode = normalize_chat_mode(payload.default_chat_mode)
     project.updated_at = datetime.now(timezone.utc)
+    ensure_project_assistant_root(db, project, reparent_orphans=False)
 
     write_audit_log(
         db,

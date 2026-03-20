@@ -26,7 +26,13 @@ from app.services.storage import (
     object_exists,
     put_object_bytes,
 )
-from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
+from app.services.upload_validation import (
+    buffer_upload_body,
+    ensure_uploaded_object_matches,
+    ensure_uploaded_object_signature_matches,
+    validate_workspace_upload_declaration,
+    validate_workspace_upload_signature,
+)
 from app.tasks.worker_tasks import cleanup_pending_upload_session, index_data_item, process_data_item
 
 
@@ -95,6 +101,7 @@ def presign_upload(
     project = get_project_in_workspace(db, project_id=dataset.project_id, workspace_id=workspace_id)
     if not project:
         raise ApiError("not_found", "Project not found", status_code=404)
+    normalized_media_type = validate_workspace_upload_declaration(payload.filename, payload.media_type)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
     if payload.size_bytes > max_bytes:
@@ -118,12 +125,12 @@ def presign_upload(
     upload_method = "PUT"
     if settings.should_use_proxy_uploads():
         put_url = f"{str(request.base_url).rstrip('/')}/api/v1/uploads/proxy/{upload_id}"
-        headers = {"Content-Type": payload.media_type}
+        headers = {"Content-Type": normalized_media_type}
     else:
         put_url, fields, headers = create_presigned_post(
             bucket_name=settings.s3_private_bucket,
             object_key=object_key,
-            media_type=payload.media_type,
+            media_type=normalized_media_type,
             max_bytes=payload.size_bytes,
         )
         upload_method = "POST"
@@ -140,7 +147,7 @@ def presign_upload(
             "workspace_id": workspace_id,
             "object_key": object_key,
             "filename": payload.filename,
-            "media_type": payload.media_type,
+            "media_type": normalized_media_type,
             "size_bytes": payload.size_bytes,
             "uploaded": False,
             "created_at": now.isoformat(),
@@ -197,18 +204,29 @@ async def proxy_upload_put(
         raise ApiError("content_type_mismatch", "Content-Type does not match upload session", status_code=400)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
-    payload = await read_upload_body(request, expected_size=upload["size_bytes"], max_bytes=max_bytes)
+    buffered_upload = await buffer_upload_body(
+        request,
+        expected_size=upload["size_bytes"],
+        max_bytes=max_bytes,
+    )
+    try:
+        validate_workspace_upload_signature(
+            prefix=buffered_upload.peek_prefix(),
+            media_type=upload["media_type"],
+        )
 
-    if settings.env != "test":
-        try:
-            put_object_bytes(
-                bucket_name=settings.s3_private_bucket,
-                object_key=upload["object_key"],
-                payload=payload,
-                media_type=upload["media_type"],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+        if settings.env != "test":
+            try:
+                put_object_bytes(
+                    bucket_name=settings.s3_private_bucket,
+                    object_key=upload["object_key"],
+                    payload=buffered_upload.file,
+                    media_type=upload["media_type"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+    finally:
+        buffered_upload.close()
 
     upload["uploaded"] = True
     runtime_state.set_json(
@@ -259,6 +277,12 @@ def complete_upload(
             expected_media_type=upload["media_type"],
             missing_message="Uploaded object not found",
             mismatch_message="Uploaded object metadata does not match declared file",
+        )
+        ensure_uploaded_object_signature_matches(
+            bucket_name=settings.s3_private_bucket,
+            object_key=upload["object_key"],
+            media_type=upload["media_type"],
+            mismatch_message="Uploaded object contents do not match declared file type",
         )
 
     if not item:

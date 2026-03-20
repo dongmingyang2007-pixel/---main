@@ -2,6 +2,7 @@
 
 import atexit
 import asyncio
+import base64
 import hashlib
 import importlib
 import os
@@ -12,6 +13,7 @@ import tempfile
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 TEST_TEMP_DIR = Path(tempfile.mkdtemp(prefix="qihang-api-tests-"))
 atexit.register(lambda: shutil.rmtree(TEST_TEMP_DIR, ignore_errors=True))
@@ -38,10 +40,12 @@ importlib.reload(main_module)
 import app.routers.auth as auth_router
 import app.routers.chat as chat_router
 import app.routers.memory as memory_router
+import app.routers.realtime as realtime_router
 import app.routers.uploads as uploads_router
 import app.services.memory_file_context as memory_file_context_service
 import app.services.orchestrator as orchestrator_service
 from app.core.config import settings
+from app.core.deps import revoke_user_tokens
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import (
@@ -49,10 +53,13 @@ from app.models import (
     Conversation,
     DataItem,
     Dataset,
+    Memory,
+    Message,
     Membership,
     MemoryFile,
     ModelVersion,
     PipelineConfig,
+    Project,
     User,
     Workspace,
 )
@@ -147,7 +154,7 @@ def register_user(client: TestClient, email: str, display_name: str = "User") ->
 def create_project(client: TestClient, name: str = "P1") -> dict:
     resp = client.post(
         "/api/v1/projects",
-        json={"name": name, "description": "demo"},
+        json={"name": name, "description": "demo", "default_chat_mode": "standard"},
         headers=csrf_headers(client),
     )
     assert resp.status_code == 200
@@ -164,14 +171,31 @@ def create_dataset(client: TestClient, project_id: str, name: str = "D1") -> dic
     return resp.json()
 
 
+def upload_fixture(filename: str) -> tuple[bytes, str]:
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return (b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00", "image/jpeg")
+    if suffix == ".png":
+        return (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "image/png")
+    if suffix == ".pdf":
+        return (b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n", "application/pdf")
+    if suffix == ".txt":
+        return (b"hello from qihang\n", "text/plain")
+    if suffix == ".md":
+        return (b"# qihang\n", "text/markdown")
+    if suffix == ".docx":
+        return (b"PK\x03\x04\x14\x00\x00\x00\x08\x00", _DOCX_MEDIA_TYPE)
+    raise AssertionError(f"Unsupported test fixture for {filename}")
+
+
 def upload_item(client: TestClient, dataset_id: str, filename: str) -> str:
-    payload_bytes = b"fake-image-content"
+    payload_bytes, media_type = upload_fixture(filename)
     presign = client.post(
         "/api/v1/uploads/presign",
         json={
             "dataset_id": dataset_id,
             "filename": filename,
-            "media_type": "image/jpeg",
+            "media_type": media_type,
             "size_bytes": len(payload_bytes),
         },
         headers=csrf_headers(client),
@@ -232,6 +256,60 @@ def upload_model_artifact(client: TestClient, model_id: str, filename: str) -> s
     )
     assert put_resp.status_code == 200
     return payload["artifact_upload_id"]
+
+
+_DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+class DummyRealtimeUpstream:
+    def __init__(self, *, close_immediately: bool = False):
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        if close_immediately:
+            self._queue.put_nowait(None)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        message = await self._queue.get()
+        if message is None:
+            raise StopAsyncIteration
+        return message
+
+    async def close(self) -> None:
+        await self._queue.put(None)
+
+    async def send(self, _message: str) -> None:
+        return None
+
+
+def stub_realtime_upstream(
+    monkeypatch,
+    *,
+    close_immediately: bool = False,
+    connect_delay_seconds: float = 0.0,
+    session_update_delay_seconds: float = 0.0,
+    prompt_sink: list[str] | None = None,
+    model_sink: list[str] | None = None,
+) -> None:
+    from app.services.realtime_bridge import SessionState
+
+    async def fake_connect_upstream(self) -> None:
+        if connect_delay_seconds:
+            await asyncio.sleep(connect_delay_seconds)
+        if model_sink is not None:
+            model_sink.append(getattr(self, "upstream_model", ""))
+        self._upstream_ws = DummyRealtimeUpstream(close_immediately=close_immediately)
+
+    async def fake_send_session_update(self, _system_prompt: str) -> None:
+        if prompt_sink is not None:
+            prompt_sink.append(_system_prompt)
+        if session_update_delay_seconds:
+            await asyncio.sleep(session_update_delay_seconds)
+        self.state = SessionState.READY
+
+    monkeypatch.setattr("app.services.realtime_bridge.RealtimeSession.connect_upstream", fake_connect_upstream)
+    monkeypatch.setattr("app.services.realtime_bridge.RealtimeSession.send_session_update", fake_send_session_update)
 
 
 def test_auth_cookie_and_me() -> None:
@@ -303,6 +381,477 @@ def test_reset_password_revokes_existing_sessions() -> None:
         headers=public_headers(),
     )
     assert login.status_code == 200
+
+
+def test_realtime_websocket_auth_uses_cookie_and_rejects_revoked_token() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "realtime-revoked@example.com", "Realtime Revoked")
+
+    access_token = client.cookies.get(config_module.settings.access_cookie_name)
+    assert access_token
+
+    shadow = TestClient(main_module.app)
+    shadow.cookies.set(config_module.settings.access_cookie_name, access_token)
+
+    logout = client.post("/api/v1/auth/logout", headers=csrf_headers(client))
+    assert logout.status_code == 200
+
+    with shadow.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        message = websocket.receive_json()
+        assert message["type"] == "error"
+        assert message["code"] == "unauthorized"
+
+
+def test_realtime_websocket_enforces_conversation_access(monkeypatch) -> None:
+    stub_realtime_upstream(monkeypatch)
+
+    owner = TestClient(main_module.app)
+    owner_info = register_user(owner, "realtime-owner@example.com", "Realtime Owner")
+    workspace_id = owner_info["workspace"]["id"]
+    owner_user_id = owner_info["user"]["id"]
+    project = create_project(owner, "Realtime Project")
+    conversation_id = create_conversation_record(workspace_id, project["id"], owner_user_id, "Owner Voice")
+
+    viewer = TestClient(main_module.app)
+    register_user(viewer, "realtime-viewer@example.com", "Realtime Viewer")
+    add_workspace_membership(workspace_id, "realtime-viewer@example.com", "viewer")
+
+    with owner.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+                "workspace_id": "ignored-by-server",
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+        websocket.send_json({"type": "session.end"})
+
+    with viewer.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+                "workspace_id": workspace_id,
+            }
+        )
+        denied = websocket.receive_json()
+        assert denied["type"] == "error"
+        assert denied["code"] == "forbidden"
+
+
+def test_realtime_websocket_ends_after_token_revocation(monkeypatch) -> None:
+    stub_realtime_upstream(monkeypatch)
+    monkeypatch.setattr(realtime_router, "SESSION_MONITOR_INTERVAL_SECONDS", 0.01)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-live-revoke@example.com", "Realtime Live Revoke")
+    project = create_project(client, "Realtime Revoke Project")
+    conversation_id = create_conversation_record(
+        user_info["workspace"]["id"],
+        project["id"],
+        user_info["user"]["id"],
+        "Live Revoke",
+    )
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+                "workspace_id": user_info["workspace"]["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        revoke_user_tokens(user_info["user"]["id"])
+
+        ended = websocket.receive_json()
+        assert ended["type"] == "session.end"
+        assert ended["reason"] == "auth_revoked"
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_realtime_websocket_closes_when_upstream_disconnects(monkeypatch) -> None:
+    stub_realtime_upstream(monkeypatch, close_immediately=True)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-upstream-drop@example.com", "Realtime Upstream Drop")
+    project = create_project(client, "Realtime Upstream Project")
+    conversation_id = create_conversation_record(
+        user_info["workspace"]["id"],
+        project["id"],
+        user_info["user"]["id"],
+        "Upstream Drop",
+    )
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "upstream_disconnected"
+
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_realtime_websocket_times_out_during_upstream_setup(monkeypatch) -> None:
+    stub_realtime_upstream(monkeypatch, connect_delay_seconds=0.05)
+    monkeypatch.setattr(realtime_router, "UPSTREAM_CONNECT_TIMEOUT_SECONDS", 0.01)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-timeout@example.com", "Realtime Timeout")
+    project = create_project(client, "Realtime Timeout Project")
+    conversation_id = create_conversation_record(
+        user_info["workspace"]["id"],
+        project["id"],
+        user_info["user"]["id"],
+        "Timeout",
+    )
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "upstream_timeout"
+
+
+def test_realtime_websocket_initial_prompt_includes_recent_history(monkeypatch) -> None:
+    prompt_sink: list[str] = []
+    stub_realtime_upstream(monkeypatch, prompt_sink=prompt_sink)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-history@example.com", "Realtime History")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Realtime History Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "History Conversation",
+    )
+
+    with SessionLocal() as db:
+        db.add(Message(conversation_id=conversation_id, role="user", content="第一条历史消息"))
+        db.add(Message(conversation_id=conversation_id, role="assistant", content="第一条历史回复"))
+        db.commit()
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+        websocket.send_json({"type": "session.end"})
+
+    assert prompt_sink
+    assert "最近对话历史" in prompt_sink[0]
+    assert "第一条历史消息" in prompt_sink[0]
+    assert "第一条历史回复" in prompt_sink[0]
+
+
+def test_realtime_websocket_prefers_project_realtime_model_when_configured(monkeypatch) -> None:
+    model_sink: list[str] = []
+    stub_realtime_upstream(monkeypatch, model_sink=model_sink)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-omni@example.com", "Realtime Omni")
+    project = create_project(client, "Realtime Omni Project")
+
+    update = client.patch(
+        "/api/v1/pipeline",
+        json={
+            "project_id": project["id"],
+            "model_type": "realtime",
+            "model_id": "qwen3-omni-flash-realtime",
+            "config_json": {},
+        },
+        headers=csrf_headers(client),
+    )
+    assert update.status_code == 200
+
+    conversation_id = create_conversation_record(
+        user_info["workspace"]["id"],
+        project["id"],
+        user_info["user"]["id"],
+        "Realtime Omni Conversation",
+    )
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+        websocket.send_json({"type": "session.end"})
+
+    assert model_sink == ["qwen3-omni-flash-realtime"]
+
+
+def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> None:
+    persisted_turns: list[tuple[str, str]] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        audio_bytes: bytes,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert audio_bytes == b"pcm-turn"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "你好，我在。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "你好，我在。"
+        return b"fake-mp3"
+
+    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+        persisted_turns.append((user_text, ai_text))
+
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-realtime@example.com", "Synthetic Realtime")
+    project = create_project(client, "Synthetic Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "你好"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "你好，我在。"}
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
+
+    assert persisted_turns == [("你好", "你好，我在。")]
+
+
+def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        audio_bytes: bytes,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert audio_bytes == b"pcm-turn"
+        assert image_bytes is not None
+        assert image_mime_type == "image/jpeg"
+        assert video_bytes is None
+        _ = video_mime_type
+        return {"text_input": "看图", "text_response": "已看到图片。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "已看到图片。"
+        return b"fake-mp3"
+
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-clear@example.com", "Synthetic Clear")
+    project = create_project(client, "Synthetic Clear Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+    image_bytes, _ = upload_fixture("frame.jpg")
+    image_payload = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_json({"type": "media.set", "data_url": image_payload, "filename": "frame.jpg"})
+        attached = websocket.receive_json()
+        assert attached["type"] == "media.attached"
+
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        cleared = websocket.receive_json()
+        assert cleared == {"type": "media.cleared"}
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "看图"}
+
+
+def test_composed_realtime_media_set_rejects_oversized_payload(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "realtime_media_max_mb", 0)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-large@example.com", "Synthetic Large")
+    project = create_project(client, "Synthetic Large Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    image_bytes, _ = upload_fixture("frame.jpg")
+    image_payload = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation.json()["id"],
+            }
+        )
+        assert websocket.receive_json()["type"] == "session.ready"
+
+        websocket.send_json({"type": "media.set", "data_url": image_payload, "filename": "frame.jpg"})
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "payload_too_large"
+
+
+def test_composed_realtime_media_set_rejects_signature_mismatch() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-mismatch@example.com", "Synthetic Mismatch")
+    project = create_project(client, "Synthetic Mismatch Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    bad_payload = f"data:image/jpeg;base64,{base64.b64encode(b'<html>not-a-jpeg</html>').decode()}"
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation.json()["id"],
+            }
+        )
+        assert websocket.receive_json()["type"] == "session.ready"
+
+        websocket.send_json({"type": "media.set", "data_url": bad_payload, "filename": "frame.jpg"})
+        error = websocket.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "upload_mismatch"
+
+
+def test_pipeline_patch_downgrades_synthetic_default_when_llm_loses_vision() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "pipeline-vision-downgrade@example.com", "Pipeline Vision Downgrade")
+    project = create_project(client, "Pipeline Vision Downgrade Project")
+
+    set_mode = client.patch(
+        f"/api/v1/projects/{project['id']}",
+        json={"default_chat_mode": "synthetic_realtime"},
+        headers=csrf_headers(client),
+    )
+    assert set_mode.status_code == 200
+    assert set_mode.json()["default_chat_mode"] == "synthetic_realtime"
+
+    update_llm = client.patch(
+        "/api/v1/pipeline",
+        json={
+          "project_id": project["id"],
+          "model_type": "llm",
+          "model_id": "deepseek-r1",
+          "config_json": {},
+        },
+        headers=csrf_headers(client),
+    )
+    assert update_llm.status_code == 200
+
+    refreshed = client.get(f"/api/v1/projects/{project['id']}")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["default_chat_mode"] == "standard"
 
 
 def test_reset_code_survives_incorrect_attempt() -> None:
@@ -621,6 +1170,100 @@ def test_upload_complete_triggers_processing() -> None:
     assert "thumbnail_object_key" not in item["meta_json"]
 
 
+def test_upload_presign_rejects_unsafe_active_content_types() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "unsafe-upload@example.com", "Unsafe Upload")
+    project = create_project(client, "Unsafe Upload Project")
+    dataset = create_dataset(client, project["id"], "Unsafe Upload Dataset")
+
+    presign = client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "dataset_id": dataset["id"],
+            "filename": "payload.svg",
+            "media_type": "image/svg+xml",
+            "size_bytes": 128,
+        },
+        headers=csrf_headers(client),
+    )
+    assert presign.status_code == 415
+    assert presign.json()["error"]["code"] == "unsupported_media_type"
+
+
+def test_upload_proxy_rejects_mismatched_image_payload() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "mismatch-upload@example.com", "Mismatch Upload")
+    project = create_project(client, "Mismatch Project")
+    dataset = create_dataset(client, project["id"], "Mismatch Dataset")
+    payload_bytes = b"<html><body>not-an-image</body></html>"
+
+    presign = client.post(
+        "/api/v1/uploads/presign",
+        json={
+            "dataset_id": dataset["id"],
+            "filename": "spoofed.jpg",
+            "media_type": "image/jpeg",
+            "size_bytes": len(payload_bytes),
+        },
+        headers=csrf_headers(client),
+    )
+    assert presign.status_code == 200
+    payload = presign.json()
+
+    put_resp = client.put(
+        payload["put_url"],
+        content=payload_bytes,
+        headers={**payload["headers"], **csrf_headers(client)},
+    )
+    assert put_resp.status_code == 400
+    assert put_resp.json()["error"]["code"] == "upload_mismatch"
+
+
+def test_buffer_upload_body_spools_large_payloads_to_disk() -> None:
+    from app.services.upload_validation import (
+        UPLOAD_SPOOL_MAX_MEMORY_BYTES,
+        buffer_upload_body,
+    )
+
+    class DummyUploadRequest:
+        def __init__(self, payload: bytes) -> None:
+            self.headers = {"content-length": str(len(payload))}
+            self._payload = payload
+
+        async def stream(self):
+            midpoint = len(self._payload) // 2
+            yield self._payload[:midpoint]
+            yield self._payload[midpoint:]
+
+    payload = b"x" * (UPLOAD_SPOOL_MAX_MEMORY_BYTES + 1)
+    buffered_upload = asyncio.run(
+        buffer_upload_body(
+            DummyUploadRequest(payload),
+            expected_size=len(payload),
+            max_bytes=len(payload) + 1024,
+        )
+    )
+    try:
+        assert getattr(buffered_upload.file, "_rolled", False) is True
+    finally:
+        buffered_upload.close()
+
+
+def test_non_previewable_uploads_do_not_get_preview_url() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "preview-safe@example.com", "Preview Safe")
+    project = create_project(client, "Preview Project")
+    dataset = create_dataset(client, project["id"], "Preview Dataset")
+
+    data_item_id = upload_item(client, dataset["id"], "notes.txt")
+
+    item_resp = client.get(f"/api/v1/data-items/{data_item_id}")
+    assert item_resp.status_code == 200
+    item = item_resp.json()
+    assert item["preview_url"] is None
+    assert item["download_url"]
+
+
 def test_upload_complete_triggers_processing_and_indexing_followups(monkeypatch) -> None:
     class FakeTask:
         def __init__(self) -> None:
@@ -660,7 +1303,7 @@ def test_upload_is_hidden_until_complete() -> None:
     project = create_project(client, "Ghost Project")
     dataset = create_dataset(client, project["id"], "Ghost Dataset")
 
-    payload_bytes = b"fake-image-content"
+    payload_bytes, _ = upload_fixture("ghost.jpg")
     presign = client.post(
         "/api/v1/uploads/presign",
         json={
@@ -868,7 +1511,7 @@ def test_audit_log_redacts_object_keys() -> None:
     project = create_project(client, "Audit Project")
     dataset = create_dataset(client, project["id"], "Audit Dataset")
 
-    payload_bytes = b"fake-image-content"
+    payload_bytes, _ = upload_fixture("audit.jpg")
     presign = client.post(
         "/api/v1/uploads/presign",
         json={
@@ -1166,7 +1809,7 @@ def test_refresh_csrf_reuses_existing_valid_token() -> None:
 
 def test_demo_upload_and_infer_flow() -> None:
     client = TestClient(main_module.app)
-    payload_bytes = b"fake-demo-png"
+    payload_bytes, _ = upload_fixture("demo.png")
     presign = client.post(
         "/api/v1/demo/presign",
         json={"filename": "demo.png", "media_type": "image/png", "size_bytes": len(payload_bytes)},
@@ -1205,7 +1848,7 @@ def test_demo_upload_and_infer_flow() -> None:
 
 def test_demo_slot_is_released_after_successful_infer() -> None:
     client = TestClient(main_module.app)
-    payload_bytes = b"fake-demo-png"
+    payload_bytes, _ = upload_fixture("demo.png")
 
     for index in range(settings.demo_max_concurrent_sessions_per_ip + 1):
         presign = client.post(
@@ -1314,6 +1957,50 @@ def test_project_creation_seeds_default_pipeline() -> None:
     assert items["asr"] == "paraformer-v2"
     assert items["tts"] == "cosyvoice-v1"
     assert items["vision"] == "qwen-vl-plus"
+    assert items["realtime"] == "qwen3-omni-flash-realtime"
+    assert items["realtime_asr"] == "qwen3-asr-flash-realtime"
+    assert items["realtime_tts"] == "qwen3-tts-flash-realtime"
+    assert project["default_chat_mode"] == "standard"
+
+
+def test_pipeline_patch_rejects_realtime_model_in_chat_slot() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "pipeline-chat-guard@example.com", "Pipeline Chat Guard")
+    project = create_project(client, "Pipeline Chat Guard Project")
+
+    resp = client.patch(
+        "/api/v1/pipeline",
+        json={
+            "project_id": project["id"],
+            "model_type": "llm",
+            "model_id": "qwen3-omni-flash-realtime",
+            "config_json": {},
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_model_type"
+
+
+def test_pipeline_patch_rejects_non_realtime_model_in_realtime_slot() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "pipeline-realtime-guard@example.com", "Pipeline Realtime Guard")
+    project = create_project(client, "Pipeline Realtime Guard Project")
+
+    resp = client.patch(
+        "/api/v1/pipeline",
+        json={
+            "project_id": project["id"],
+            "model_type": "realtime",
+            "model_id": "qwen3.5-plus",
+            "config_json": {},
+        },
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_model_type"
 
 
 def test_send_message_does_not_duplicate_current_user_message(monkeypatch) -> None:
@@ -1347,6 +2034,120 @@ def test_send_message_does_not_duplicate_current_user_message(monkeypatch) -> No
     assert resp.status_code == 200
     assert captured["user_message"] == "hello world"
     assert captured["recent_messages"] == []
+
+
+def test_dictate_voice_input_transcribes_audio_without_creating_messages(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-dictate@example.com", "Chat Dictate")
+    project = create_project(client, "Chat Dictate Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_transcribe_audio_input_for_project(*args, **kwargs):
+        assert kwargs["project_id"] == project["id"]
+        assert kwargs["audio_bytes"] == b"voice-audio"
+        return "这是听写结果"
+
+    monkeypatch.setattr(
+        chat_router,
+        "transcribe_audio_input_for_project",
+        fake_transcribe_audio_input_for_project,
+    )
+
+    dictated = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/dictate",
+        files={"audio": ("recording.webm", b"voice-audio", "audio/webm")},
+        headers=csrf_headers(client),
+    )
+    assert dictated.status_code == 200
+    assert dictated.json()["text_input"] == "这是听写结果"
+
+    messages = client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json() == []
+
+
+def test_speech_endpoint_synthesizes_audio_without_creating_messages(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-speech@example.com", "Chat Speech")
+    project = create_project(client, "Chat Speech Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_synthesize_speech_for_project(*args, **kwargs):
+        assert kwargs["project_id"] == project["id"]
+        assert kwargs["text"] == "请朗读这段回复"
+        return b"\x01\x02\x03"
+
+    monkeypatch.setattr(
+        chat_router,
+        "synthesize_speech_for_project",
+        fake_synthesize_speech_for_project,
+    )
+
+    spoken = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/speech",
+        json={"content": "请朗读这段回复"},
+        headers=csrf_headers(client),
+    )
+    assert spoken.status_code == 200
+    assert spoken.json()["audio_response"] == "AQID"
+
+    messages = client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json() == []
+
+
+def test_image_endpoint_uses_prompt_and_preserves_image_mime_type(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-image@example.com", "Chat Image")
+    project = create_project(client, "Chat Image Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_voice_inference(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "text_input": "帮我看看这个图",
+            "text_response": "这是一张测试图片。",
+            "audio_response": b"\x01\x02\x03",
+        }
+
+    monkeypatch.setattr(chat_router, "orchestrate_voice_inference", fake_orchestrate_voice_inference)
+
+    image_bytes, media_type = upload_fixture("example.png")
+    response = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/image",
+        data={"prompt": "帮我看看这个图"},
+        files={"image": ("example.png", image_bytes, media_type)},
+        headers=csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert captured["project_id"] == project["id"]
+    assert captured["conversation_id"] == conversation_id
+    assert captured["image_bytes"] == image_bytes
+    assert captured["image_mime_type"] == "image/png"
+    assert captured["text_input"] == "帮我看看这个图"
+    assert response.json()["message"]["content"] == "这是一张测试图片。"
+    assert response.json()["audio_response"] == "AQID"
 
 
 def test_memory_routes_return_204_and_search_falls_back_without_embeddings() -> None:
@@ -1401,6 +2202,109 @@ def test_memory_routes_return_204_and_search_falls_back_without_embeddings() -> 
     )
     assert delete_memory.status_code == 204
     assert delete_memory.content == b""
+
+
+def test_project_creation_initializes_assistant_root_memory() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-root@example.com", "Memory Root")
+    project = create_project(client, "医生助手")
+
+    assert project["assistant_root_memory_id"]
+
+    graph = client.get(f"/api/v1/memory?project_id={project['id']}")
+    assert graph.status_code == 200
+    root = next(
+        node
+        for node in graph.json()["nodes"]
+        if node["id"] == project["assistant_root_memory_id"]
+    )
+    assert root["metadata_json"]["node_kind"] == "assistant-root"
+    assert root["content"] == "医生助手"
+    assert root["parent_memory_id"] is None
+
+
+def test_memory_creation_defaults_to_project_root_and_root_is_protected() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-default-parent@example.com", "Memory Default Parent")
+    project = create_project(client, "默认根记忆项目")
+    root_id = project["assistant_root_memory_id"]
+
+    memory = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "用户喜欢晨间沟通", "category": "偏好", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert memory.status_code == 200
+    assert memory.json()["parent_memory_id"] == root_id
+
+    search = client.post(
+        "/api/v1/memory/search",
+        json={"project_id": project["id"], "query": "默认根记忆项目", "top_k": 5},
+        headers=csrf_headers(client),
+    )
+    assert search.status_code == 200
+    assert search.json() == []
+
+    update_root = client.patch(
+        f"/api/v1/memory/{root_id}",
+        json={"content": "不允许修改"},
+        headers=csrf_headers(client),
+    )
+    assert update_root.status_code == 400
+    assert update_root.json()["error"]["code"] == "bad_request"
+
+    delete_root = client.delete(
+        f"/api/v1/memory/{root_id}",
+        headers=csrf_headers(client),
+    )
+    assert delete_root.status_code == 400
+    assert delete_root.json()["error"]["code"] == "bad_request"
+
+
+def test_memory_graph_backfills_legacy_project_root() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-legacy@example.com", "Memory Legacy")
+    workspace_id = user_info["workspace"]["id"]
+
+    with SessionLocal() as db:
+        project = Project(workspace_id=workspace_id, name="Legacy Assistant", description="demo")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+
+        orphan = Memory(
+            workspace_id=workspace_id,
+            project_id=project.id,
+            content="历史记忆事实",
+            category="事实",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={},
+        )
+        db.add(orphan)
+        db.commit()
+        db.refresh(orphan)
+        project_id = project.id
+        orphan_id = orphan.id
+
+    graph = client.get(f"/api/v1/memory?project_id={project_id}")
+    assert graph.status_code == 200
+    body = graph.json()
+
+    root = next(
+        node
+        for node in body["nodes"]
+        if node.get("metadata_json", {}).get("node_kind") == "assistant-root"
+    )
+    orphan = next(node for node in body["nodes"] if node["id"] == orphan_id)
+
+    assert root["content"] == "Legacy Assistant"
+    assert orphan["parent_memory_id"] == root["id"]
+
+    with SessionLocal() as db:
+        project = db.get(Project, project_id)
+        assert project is not None
+        assert project.assistant_root_memory_id == root["id"]
 
 
 def test_temporary_memory_requires_conversation_and_graph_includes_file_nodes() -> None:
@@ -1785,13 +2689,117 @@ def test_model_catalog_detail_exposes_modalities_and_support_flags() -> None:
 
     payload = detail.json()
     assert payload["provider_display"] == "千问 · 阿里云"
-    assert payload["input_modalities"] == ["text", "image"]
+    assert payload["canonical_model_id"] == "qwen3.5-plus"
+    assert payload["model_id"] == "qwen3.5-plus"
+    assert payload["id"] == "00000000-0000-0000-0000-000000000002"
+    assert payload["official_category"] == "文本生成"
+    assert payload["official_category_key"] == "text_generation"
+    assert payload["input_modalities"] == ["text", "image", "video"]
     assert payload["output_modalities"] == ["text"]
     assert payload["supports_function_calling"] is True
     assert payload["supports_web_search"] is True
-    assert payload["supports_structured_output"] is True
-    assert payload["supports_cache"] is True
+    assert payload["supports_structured_output"] is False
+    assert payload["supports_cache"] is False
+    assert payload["supported_tools"] == ["function_calling", "web_search"]
     assert payload["price_unit"] == "tokens"
+
+
+def test_model_catalog_list_includes_qwen3_vl_plus_and_hides_qwen3_plus() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-list@example.com", "Catalog List")
+
+    resp = client.get("/api/v1/models/catalog")
+    assert resp.status_code == 200
+
+    model_ids = {item["model_id"] for item in resp.json()}
+    assert "qwen3-vl-plus" in model_ids
+    assert "qwen3-plus" not in model_ids
+
+
+def test_model_catalog_detail_supports_legacy_aliases() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-alias@example.com", "Catalog Alias")
+
+    legacy_plus = client.get("/api/v1/models/catalog/qwen3-plus")
+    assert legacy_plus.status_code == 200
+    assert legacy_plus.json()["model_id"] == "qwen3.5-plus"
+    assert legacy_plus.json()["canonical_model_id"] == "qwen3.5-plus"
+
+    legacy_vl = client.get("/api/v1/models/catalog/qwen3-vl-plus")
+    assert legacy_vl.status_code == 200
+    assert legacy_vl.json()["model_id"] in {"qwen3-vl-plus", "qwen-vl-plus"}
+
+
+def test_model_catalog_discover_view_returns_official_taxonomy_and_qwen_items() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-discover@example.com", "Catalog Discover")
+
+    resp = client.get("/api/v1/models/catalog?view=discover")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    assert "taxonomy" in payload
+    assert "items" in payload
+    assert any(item["key"] == "text_generation" for item in payload["taxonomy"])
+
+    model_ids = {item["model_id"] for item in payload["items"]}
+    assert "qwen3.5-plus" in model_ids
+    assert "deepseek-v3.2" not in model_ids
+
+
+def test_model_catalog_separates_chat_and_realtime_slots() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-slots@example.com", "Catalog Slots")
+
+    llm = client.get("/api/v1/models/catalog?category=llm")
+    assert llm.status_code == 200
+    llm_ids = {item["model_id"] for item in llm.json()}
+    assert "qwen3.5-plus" in llm_ids
+    assert "qwen3-omni-flash-realtime" not in llm_ids
+
+    realtime = client.get("/api/v1/models/catalog?category=realtime")
+    assert realtime.status_code == 200
+    realtime_items = realtime.json()
+    realtime_ids = {item["model_id"] for item in realtime_items}
+    assert "qwen3-omni-flash-realtime" in realtime_ids
+    assert all(item["category"] == "realtime" for item in realtime_items)
+
+    realtime_asr = client.get("/api/v1/models/catalog?category=realtime_asr")
+    assert realtime_asr.status_code == 200
+    realtime_asr_items = realtime_asr.json()
+    assert "qwen3-asr-flash-realtime" in {item["model_id"] for item in realtime_asr_items}
+    assert all(item["category"] == "realtime_asr" for item in realtime_asr_items)
+
+    realtime_tts = client.get("/api/v1/models/catalog?category=realtime_tts")
+    assert realtime_tts.status_code == 200
+    realtime_tts_items = realtime_tts.json()
+    assert "qwen3-tts-flash-realtime" in {item["model_id"] for item in realtime_tts_items}
+    assert all(item["category"] == "realtime_tts" for item in realtime_tts_items)
+
+
+def test_model_catalog_detail_supports_db_id_lookup_and_preserves_runtime_fields() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-db-id@example.com", "Catalog DB ID")
+
+    detail = client.get("/api/v1/models/catalog/00000000-0000-0000-0000-000000000002")
+    assert detail.status_code == 200
+
+    payload = detail.json()
+    assert payload["id"] == "00000000-0000-0000-0000-000000000002"
+    assert payload["model_id"] == "qwen3.5-plus"
+    assert payload["canonical_model_id"] == "qwen3.5-plus"
+    assert payload["input_price"] == 0.0008
+    assert payload["output_price"] == 0.0048
+    assert payload["context_window"] == 1000000
+
+
+def test_model_catalog_unknown_category_returns_empty_list() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "catalog-empty-category@example.com", "Catalog Empty Category")
+
+    resp = client.get("/api/v1/models/catalog?category=unknown-slot")
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 def test_send_message_maps_upstream_failures_to_502_and_503(monkeypatch) -> None:
@@ -1920,7 +2928,7 @@ def test_cleanup_pending_upload_session_skips_completed_items_when_task_replays(
     project = create_project(client, "Upload Replay Project")
     dataset = create_dataset(client, project["id"], "Upload Replay Dataset")
 
-    payload_bytes = b"fake-image-content"
+    payload_bytes, _ = upload_fixture("replay.jpg")
     presign = client.post(
         "/api/v1/uploads/presign",
         json={
@@ -2044,7 +3052,7 @@ def test_eval_run_requires_workspace_bound_resources() -> None:
     assert isinstance(success.json()["eval_id"], str)
 
 
-def test_pipeline_get_does_not_persist_missing_defaults() -> None:
+def test_pipeline_get_backfills_missing_defaults_and_migrates_legacy_realtime_llm() -> None:
     client = TestClient(main_module.app)
     register_user(client, "pipeline-get@example.com", "Pipeline Get")
     project = create_project(client, "Pipeline Get Project")
@@ -2057,15 +3065,49 @@ def test_pipeline_get_does_not_persist_missing_defaults() -> None:
         )
         assert vision is not None
         db.delete(vision)
+        llm = (
+            db.query(PipelineConfig)
+            .filter(PipelineConfig.project_id == project["id"], PipelineConfig.model_type == "llm")
+            .first()
+        )
+        assert llm is not None
+        llm.model_id = "qwen3-omni-flash-realtime"
+        realtime = (
+            db.query(PipelineConfig)
+            .filter(PipelineConfig.project_id == project["id"], PipelineConfig.model_type == "realtime")
+            .first()
+        )
+        assert realtime is not None
+        db.delete(realtime)
+        realtime_asr = (
+            db.query(PipelineConfig)
+            .filter(PipelineConfig.project_id == project["id"], PipelineConfig.model_type == "realtime_asr")
+            .first()
+        )
+        assert realtime_asr is not None
+        db.delete(realtime_asr)
+        realtime_tts = (
+            db.query(PipelineConfig)
+            .filter(PipelineConfig.project_id == project["id"], PipelineConfig.model_type == "realtime_tts")
+            .first()
+        )
+        assert realtime_tts is not None
+        db.delete(realtime_tts)
         db.commit()
         assert db.query(PipelineConfig).filter(PipelineConfig.project_id == project["id"]).count() == 3
 
     current = client.get(f"/api/v1/pipeline?project_id={project['id']}")
     assert current.status_code == 200
-    assert len(current.json()["items"]) == 4
+    items = {item["model_type"]: item["model_id"] for item in current.json()["items"]}
+    assert len(items) == 7
+    assert items["llm"] == "qwen3.5-plus"
+    assert items["vision"] == "qwen-vl-plus"
+    assert items["realtime"] == "qwen3-omni-flash-realtime"
+    assert items["realtime_asr"] == "qwen3-asr-flash-realtime"
+    assert items["realtime_tts"] == "qwen3-tts-flash-realtime"
 
     with SessionLocal() as db:
-        assert db.query(PipelineConfig).filter(PipelineConfig.project_id == project["id"]).count() == 3
+        assert db.query(PipelineConfig).filter(PipelineConfig.project_id == project["id"]).count() == 7
 
 
 def test_deleted_project_invalidates_conversation_and_memory_handles() -> None:

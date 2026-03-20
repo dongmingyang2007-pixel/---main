@@ -19,7 +19,9 @@ from app.core.request_id import RequestIDMiddleware
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.routers import auth, chat, datasets, demo, eval, memory, memory_stream, model_catalog, models, pipeline, projects, realtime, train, uploads, waitlist
+from app.services.chat_modes import ensure_project_chat_mode_schema
 from app.services.model_catalog_seed import seed_model_catalog
+from app.services.memory_roots import ensure_project_memory_root_schema
 from app.services.runtime_state import runtime_state
 
 
@@ -28,6 +30,8 @@ async def lifespan(_: FastAPI):
     settings.validate_runtime_configuration()
     runtime_state.ensure_available()
     Base.metadata.create_all(bind=engine)
+    ensure_project_chat_mode_schema(engine)
+    ensure_project_memory_root_schema(engine)
     db = SessionLocal()
     try:
         seed_model_catalog(db)

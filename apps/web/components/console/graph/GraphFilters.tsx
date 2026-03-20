@@ -2,7 +2,11 @@
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import type { MemoryNode } from "@/hooks/useGraphData";
+import {
+  type MemoryNode,
+  isAssistantRootMemoryNode,
+  isFileMemoryNode,
+} from "@/hooks/useGraphData";
 
 export interface GraphFilterState {
   types: string[];
@@ -22,12 +26,8 @@ interface GraphFiltersProps {
 const TYPE_OPTIONS = ["permanent", "temporary", "file"] as const;
 const SOURCE_OPTIONS = ["conversation", "manual", "promoted", "file_upload"] as const;
 
-function isFileNode(node: MemoryNode): boolean {
-  return node.category === "file" || node.category === "文件" || node.metadata_json?.node_kind === "file";
-}
-
 function getNodeSources(node: MemoryNode): string[] {
-  if (isFileNode(node)) {
+  if (isFileMemoryNode(node)) {
     return ["file_upload"];
   }
   const metadata = (node.metadata_json || {}) as Record<string, unknown>;
@@ -51,14 +51,20 @@ export default function GraphFilters({
   const categories = useMemo(() => {
     const cats = new Set<string>();
     nodes.forEach((n) => {
-      if (n.category && !isFileNode(n)) cats.add(n.category);
+      if (n.category && !isFileMemoryNode(n) && !isAssistantRootMemoryNode(n)) {
+        cats.add(n.category);
+      }
     });
     return Array.from(cats).sort();
   }, [nodes]);
   const sourceOptions = useMemo(
     () =>
       SOURCE_OPTIONS.filter((source) =>
-        nodes.some((node) => getNodeSources(node).includes(source)),
+        nodes.some(
+          (node) =>
+            !isAssistantRootMemoryNode(node) &&
+            getNodeSources(node).includes(source),
+        ),
       ),
     [nodes],
   );

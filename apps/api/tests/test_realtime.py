@@ -69,6 +69,21 @@ def test_build_system_prompt_with_knowledge():
     assert "降噪技术文档片段" in prompt
 
 
+def test_build_system_prompt_with_recent_messages():
+    prompt = build_system_prompt(
+        personality="你是助手",
+        memories=[],
+        knowledge_chunks=[],
+        recent_messages=[
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好，请说"},
+        ],
+    )
+    assert "最近对话历史" in prompt
+    assert "用户: 你好" in prompt
+    assert "助手: 你好，请说" in prompt
+
+
 import asyncio
 import pytest
 from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
@@ -169,6 +184,80 @@ def test_session_get_turn_texts():
     # Should be cleared after retrieval
     assert session._current_transcript == ""
     assert session._current_response_text == ""
+
+
+def test_session_maps_audio_transcript_delta_to_response_text():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    outgoing = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.delta",
+                "delta": "你好",
+            }
+        )
+    )
+
+    assert outgoing == [{"type": "response.text", "text": "你好"}]
+    assert session._current_response_text == "你好"
+
+
+def test_session_backfills_audio_transcript_done_when_delta_was_missing():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    outgoing = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.done",
+                "transcript": "你好，世界",
+            }
+        )
+    )
+
+    assert outgoing == [{"type": "response.text", "text": "你好，世界"}]
+    assert session._current_response_text == "你好，世界"
+
+
+class _DummyUpstream:
+    def __init__(self) -> None:
+        self.sent_messages: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.sent_messages.append(message)
+
+    async def close(self) -> None:
+        return None
+
+
+def test_session_update_confirmation_is_resolved_by_listener():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+
+    async def scenario() -> None:
+        task = asyncio.create_task(session.send_session_update("你是助手"))
+        await asyncio.sleep(0)
+        assert session._upstream_ws.sent_messages
+        await session.handle_upstream_event({"type": "session.updated"})
+        await task
+
+    asyncio.run(scenario())
+    assert session.state == SessionState.READY
+
+
+def test_ai_output_activity_refreshes_idle_timer():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._last_activity = 0
+
+    asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好",
+            }
+        )
+    )
+
+    assert session._last_activity > 0
 
 
 import json

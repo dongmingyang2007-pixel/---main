@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 DASHSCOPE_REALTIME_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 OMNI_MODEL = "qwen3-omni-flash-realtime"
+INPUT_AUDIO_TRANSCRIPTION_MODEL = "gummy-realtime-v1"
+DEFAULT_REALTIME_VOICE = "Cherry"
 
 
 class SessionState(enum.Enum):
@@ -58,6 +60,7 @@ class RealtimeSession:
     project_id: str
     conversation_id: str
     user_id: str
+    upstream_model: str = OMNI_MODEL
 
     state: SessionState = SessionState.CONNECTING
     turn_count: int = 0
@@ -70,6 +73,8 @@ class RealtimeSession:
     _current_response_text: str = ""
     _upstream_ws: websockets.ClientConnection | None = None
     _last_activity: float = field(default_factory=time.time)
+    _session_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _pending_session_update: asyncio.Future[None] | None = None
 
     @property
     def is_ai_speaking(self) -> bool:
@@ -91,7 +96,7 @@ class RealtimeSession:
 
     async def connect_upstream(self) -> None:
         """Establish WebSocket to DashScope Omni Realtime."""
-        url = f"{DASHSCOPE_REALTIME_URL}?model={OMNI_MODEL}"
+        url = f"{DASHSCOPE_REALTIME_URL}?model={self.upstream_model or OMNI_MODEL}"
         headers = {
             "Authorization": f"Bearer {settings.dashscope_api_key}",
             "OpenAI-Beta": "realtime=v1",
@@ -107,33 +112,39 @@ class RealtimeSession:
         if not self._upstream_ws:
             raise UpstreamServiceError("Upstream not connected")
 
-        config = {
-            "type": "session.update",
-            "session": {
-                "modalities": ["audio", "text"],
-                "instructions": system_prompt,
-                "input_audio_format": "pcm",
-                "sample_rate": 16000,
-                "output_audio_format": "pcm",
-                "output_sample_rate": 24000,
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.0,
-                    "silence_duration_ms": 400,
-                },
-            },
-        }
-        await self._upstream_ws.send(json.dumps(config))
-        # Wait for session.updated confirmation
-        while True:
-            msg = await self._upstream_ws.recv()
-            data = json.loads(msg)
-            if data.get("type") == "session.updated":
-                break
-            if data.get("type") == "error":
-                raise UpstreamServiceError(f"DashScope session error: {data}")
+        async with self._session_update_lock:
+            loop = asyncio.get_running_loop()
+            pending = loop.create_future()
+            self._pending_session_update = pending
 
-        self.state = SessionState.READY
+            config = {
+                "type": "session.update",
+                "session": {
+                    "modalities": ["audio", "text"],
+                    "instructions": system_prompt,
+                    "voice": DEFAULT_REALTIME_VOICE,
+                    "input_audio_format": "pcm",
+                    "input_audio_transcription": {
+                        "model": INPUT_AUDIO_TRANSCRIPTION_MODEL,
+                    },
+                    "output_audio_format": "pcm",
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.0,
+                        "silence_duration_ms": 400,
+                        "create_response": True,
+                        "interrupt_response": True,
+                    },
+                },
+            }
+            await self._upstream_ws.send(json.dumps(config))
+            try:
+                await pending
+            finally:
+                if self._pending_session_update is pending:
+                    self._pending_session_update = None
+
+            self.state = SessionState.READY
 
     async def relay_audio_to_upstream(self, audio_bytes: bytes) -> None:
         """Forward PCM audio chunk from client to DashScope."""
@@ -154,6 +165,7 @@ class RealtimeSession:
         if event_type == "conversation.item.input_audio_transcription.delta":
             partial = event.get("delta", "")
             outgoing.append({"type": "transcript.partial", "text": partial})
+            self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "")
@@ -162,17 +174,35 @@ class RealtimeSession:
             self.state = SessionState.LISTENING
             self.touch()
 
+        elif event_type == "conversation.item.input_audio_transcription.failed":
+            self._current_transcript = ""
+            self.touch()
+
         elif event_type == "response.audio.delta":
             self._ai_speaking = True
             self.state = SessionState.AI_SPEAKING
             audio_b64 = event.get("delta", "")
             if audio_b64:
                 outgoing.append(base64.b64decode(audio_b64))
+            self.touch()
 
-        elif event_type == "response.text.delta":
+        elif event_type in {"response.text.delta", "response.audio_transcript.delta"}:
             delta = event.get("delta", "")
             self._current_response_text += delta
             outgoing.append({"type": "response.text", "text": delta})
+            self.touch()
+
+        elif event_type == "response.audio_transcript.done":
+            transcript = event.get("transcript", "")
+            if transcript:
+                if transcript.startswith(self._current_response_text):
+                    delta = transcript[len(self._current_response_text):]
+                else:
+                    delta = transcript
+                self._current_response_text = transcript
+                if delta:
+                    outgoing.append({"type": "response.text", "text": delta})
+            self.touch()
 
         elif event_type == "response.done":
             self._ai_speaking = False
@@ -181,13 +211,26 @@ class RealtimeSession:
             self.state = SessionState.LISTENING
             self.touch()
 
+        elif event_type == "session.updated":
+            if self._pending_session_update and not self._pending_session_update.done():
+                self._pending_session_update.set_result(None)
+            self.state = SessionState.READY
+            self.touch()
+
         elif event_type == "input_audio_buffer.speech_started":
             self._speech_start_time = time.time()
+            self.touch()
 
         elif event_type == "input_audio_buffer.speech_stopped":
             self._speech_start_time = None
+            self.touch()
 
         elif event_type == "error":
+            if self._pending_session_update and not self._pending_session_update.done():
+                self._pending_session_update.set_exception(
+                    UpstreamServiceError(f"DashScope session error: {event}")
+                )
+                self._pending_session_update = None
             outgoing.append({
                 "type": "error",
                 "code": "upstream_error",
@@ -215,6 +258,11 @@ class RealtimeSession:
     async def close(self) -> None:
         """Gracefully close upstream connection."""
         self.state = SessionState.CLOSING
+        if self._pending_session_update and not self._pending_session_update.done():
+            self._pending_session_update.set_exception(
+                UpstreamServiceError("Upstream connection closed")
+            )
+            self._pending_session_update = None
         if self._upstream_ws:
             try:
                 await self._upstream_ws.close()

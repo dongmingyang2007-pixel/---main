@@ -10,7 +10,14 @@ interface CatalogModel {
   model_id: string;
   display_name: string;
   provider: string;
-  category: "llm" | "asr" | "tts" | "vision";
+  category:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   description: string;
   capabilities: string[];
   input_price: number;
@@ -22,7 +29,14 @@ interface CatalogModel {
 interface ModelPickerModalProps {
   open: boolean;
   onClose: () => void;
-  category: "llm" | "asr" | "tts" | "vision";
+  category:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   currentModelId?: string;
   onSelect: (modelId: string, displayName: string) => void;
 }
@@ -62,12 +76,22 @@ const CATEGORY_LABEL_KEYS: Record<string, string> = {
   asr: "pipelineAsr",
   tts: "pipelineTts",
   vision: "pipelineVision",
+  realtime: "pipelineRealtime",
+  realtime_asr: "pipelineRealtimeAsr",
+  realtime_tts: "pipelineRealtimeTts",
 };
 const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
 
 interface PendingModelSelection {
   from: string;
-  category: "llm" | "asr" | "tts" | "vision";
+  category:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   modelId: string;
   displayName: string;
 }

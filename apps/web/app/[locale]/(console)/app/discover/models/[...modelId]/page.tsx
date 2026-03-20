@@ -1,77 +1,40 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { Link } from "@/i18n/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
+import { Link, useRouter } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
 import { getProviderStyle } from "@/lib/model-utils";
 
-/* ── Types (mirrors ModelCatalogDetailOut) ── */
+const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
 
 interface ModelDetail {
   id: string;
   model_id: string;
+  canonical_model_id?: string | null;
   display_name: string;
   provider: string;
   provider_display: string;
-  category: "llm" | "asr" | "tts" | "vision";
+  official_group_key?: string | null;
+  official_group?: string | null;
+  official_category_key?: string | null;
+  official_category?: string | null;
   description: string;
-  capabilities: string[];
-  input_price: number;
-  output_price: number;
-  context_window: number;
-  max_output: number;
   input_modalities: string[];
   output_modalities: string[];
-  supports_function_calling: boolean;
-  supports_web_search: boolean;
-  supports_structured_output: boolean;
-  supports_cache: boolean;
-  price_unit: string;
-  price_note: string | null;
+  supported_tools: string[];
+  supported_features: string[];
+  official_url?: string | null;
+  aliases: string[];
+  pipeline_slot?: string | null;
+  is_selectable_in_console?: boolean | null;
 }
-
-/* ── Capability tag mapping (same consumer language as discover page) ── */
-
-function buildTags(
-  model: ModelDetail,
-  t: (key: string) => string,
-): { text: string; highlight: boolean }[] {
-  const tags: { text: string; highlight: boolean }[] = [];
-  const catMap: Record<string, string> = {
-    llm: "discover.category.llm",
-    asr: "discover.category.asr",
-    tts: "discover.category.tts",
-    vision: "discover.category.vision",
-  };
-  if (catMap[model.category]) {
-    tags.push({ text: t(catMap[model.category]), highlight: true });
-  }
-  if (model.capabilities?.includes("function_calling")) {
-    tags.push({ text: t("modelDetail.cap.functionCalling"), highlight: false });
-  }
-  if (model.capabilities?.includes("thinking")) {
-    tags.push({ text: t("modelDetail.cap.thinking"), highlight: false });
-  }
-  return tags;
-}
-
-/* ── Inline SVG icons ── */
 
 function CheckIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-function XIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
@@ -85,33 +48,140 @@ function ArrowLeftIcon() {
   );
 }
 
-/* ── Component ── */
+function labelForToken(token: string, t: (key: string) => string): string {
+  const modalityMap: Record<string, string> = {
+    text: "modelDetail.text",
+    image: "modelDetail.image",
+    audio: "modelDetail.audio",
+    video: "modelDetail.video",
+  };
+  const capabilityMap: Record<string, string> = {
+    function_calling: "modelDetail.tool.functionCalling",
+    web_search: "modelDetail.tool.webSearch",
+    deep_thinking: "modelDetail.feature.deepThinking",
+    streaming: "modelDetail.feature.streaming",
+    structured_output: "modelDetail.feature.structuredOutput",
+    cache: "modelDetail.feature.cache",
+    ranking: "modelDetail.feature.ranking",
+  };
+  if (modalityMap[token]) {
+    return t(modalityMap[token]);
+  }
+  if (capabilityMap[token]) {
+    return t(capabilityMap[token]);
+  }
+  return token;
+}
+
+function providerDisplayLabel(
+  provider: string,
+  fallback: string,
+  locale: string,
+  t: (key: string) => string,
+): string {
+  if (!locale.startsWith("en")) {
+    return fallback || provider;
+  }
+  if (provider.includes("qwen") || provider.includes("alibaba")) {
+    return t("discover.provider.qwen");
+  }
+  if (provider.includes("deepseek")) {
+    return "DeepSeek";
+  }
+  return fallback || provider;
+}
+
+function categoryLabel(
+  categoryKey: string | null | undefined,
+  fallback: string | null | undefined,
+  locale: string,
+  t: (key: string) => string,
+): string {
+  if (!locale.startsWith("en")) {
+    return fallback || "";
+  }
+  const map: Record<string, string> = {
+    omni: "discover.taxonomy.omni",
+    deep_thinking: "discover.taxonomy.deepThinking",
+    text_generation: "discover.taxonomy.textGeneration",
+    vision: "discover.taxonomy.vision",
+    image_generation: "discover.taxonomy.imageGeneration",
+    video_generation: "discover.taxonomy.videoGeneration",
+    speech_recognition: "discover.taxonomy.speechRecognition",
+    speech_synthesis: "discover.taxonomy.speechSynthesis",
+    multimodal_embedding: "discover.taxonomy.multimodalEmbedding",
+    text_embedding: "discover.taxonomy.textEmbedding",
+    realtime_omni: "discover.taxonomy.realtimeOmni",
+    realtime_tts: "discover.taxonomy.realtimeTts",
+    realtime_asr: "discover.taxonomy.realtimeAsr",
+    realtime_translate: "discover.taxonomy.realtimeTranslate",
+    rerank: "discover.taxonomy.rerank",
+  };
+  return categoryKey && map[categoryKey] ? t(map[categoryKey]) : (fallback || "");
+}
+
+function groupLabel(
+  groupKey: string | null | undefined,
+  fallback: string | null | undefined,
+  locale: string,
+  t: (key: string) => string,
+): string {
+  if (!locale.startsWith("en")) {
+    return fallback || "";
+  }
+  const map: Record<string, string> = {
+    multimodal: "discover.group.multimodal",
+    text: "discover.group.text",
+    vision: "discover.group.vision",
+    speech: "discover.group.speech",
+    embedding: "discover.group.embedding",
+    realtime: "discover.group.realtime",
+  };
+  return groupKey && map[groupKey] ? t(map[groupKey]) : (fallback || "");
+}
 
 export default function ModelDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const locale = useLocale();
   const rawId = params.modelId;
-  const modelId = Array.isArray(rawId) ? rawId.join(".") : (rawId as string);
+  const modelId = decodeURIComponent(
+    Array.isArray(rawId)
+      ? rawId.filter((segment): segment is string => typeof segment === "string").join("/")
+      : (rawId as string),
+  );
   const t = useTranslations("console");
 
+  const pickerMode = searchParams.get("picker") === "1";
+  const pickerCategory = searchParams.get("category");
+  const from = searchParams.get("from") || "/app/discover";
+
   const [model, setModel] = useState<ModelDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedModelId, setLoadedModelId] = useState(modelId);
+  const [loading, setLoading] = useState(Boolean(modelId));
   const [error, setError] = useState(false);
 
   useEffect(() => {
     if (!modelId) return;
     let cancelled = false;
-    setLoading(true);
-    setError(false);
 
-    apiGet<ModelDetail>(`/api/v1/models/catalog/${modelId}`)
+    apiGet<ModelDetail>(`/api/v1/models/catalog/${encodeURIComponent(modelId)}`)
       .then((data) => {
-        if (!cancelled) setModel(data);
+        if (!cancelled) {
+          setModel(data);
+          setLoadedModelId(modelId);
+          setError(false);
+          setLoading(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setModel(null);
+          setLoadedModelId(modelId);
+          setError(true);
+          setLoading(false);
+        }
       });
 
     return () => {
@@ -119,11 +189,34 @@ export default function ModelDetailPage() {
     };
   }, [modelId]);
 
-  /* ── Loading state ── */
-  if (loading) {
+  const sections = useMemo(() => {
+    if (!model) {
+      return [];
+    }
+    return [
+      {
+        title: t("modelDetail.inputModalities"),
+        items: model.input_modalities ?? [],
+      },
+      {
+        title: t("modelDetail.outputModalities"),
+        items: model.output_modalities ?? [],
+      },
+      {
+        title: t("modelDetail.supportedTools"),
+        items: model.supported_tools ?? [],
+      },
+      {
+        title: t("modelDetail.supportedFeatures"),
+        items: model.supported_features ?? [],
+      },
+    ];
+  }, [model, t]);
+
+  if (loading || loadedModelId !== modelId) {
     return (
       <div className="model-detail">
-        <Link href="/app/discover" className="model-detail-back">
+        <Link href={from} className="model-detail-back">
           <ArrowLeftIcon />
           {t("modelDetail.backToDiscover")}
         </Link>
@@ -136,139 +229,136 @@ export default function ModelDetailPage() {
     );
   }
 
-  /* ── Error state ── */
   if (error || !model) {
     return (
       <div className="model-detail">
-        <Link href="/app/discover" className="model-detail-back">
+        <Link href={from} className="model-detail-back">
           <ArrowLeftIcon />
           {t("modelDetail.backToDiscover")}
         </Link>
         <p style={{ color: "var(--text-secondary)", marginTop: 24 }}>
-          Model not found.
+          {t("modelDetail.notFound")}
         </p>
       </div>
     );
   }
 
-  const prov = getProviderStyle(model.provider);
-  const tags = buildTags(model, t);
+  const currentModel = model;
+  const providerStyle = getProviderStyle(currentModel.provider);
+  const selectableInConsole = currentModel.is_selectable_in_console !== false;
+  const actionable = pickerMode && selectableInConsole;
 
-  /* ── Modality helpers ── */
-  const allModalities = ["text", "image", "audio", "video"] as const;
-  const modalityLabelMap: Record<string, string> = {
-    text: t("modelDetail.text"),
-    image: t("modelDetail.image"),
-    audio: t("modelDetail.audio"),
-    video: t("modelDetail.video"),
-  };
-
-  const inputSet = new Set(model.input_modalities ?? []);
-  const outputSet = new Set(model.output_modalities ?? []);
-
-  /* ── Core capability list ── */
-  const coreCapabilities: { key: string; label: string; supported: boolean }[] = [
-    { key: "function_calling", label: t("modelDetail.cap.functionCalling"), supported: model.supports_function_calling },
-    { key: "thinking", label: t("modelDetail.cap.thinking"), supported: (model.capabilities ?? []).includes("thinking") },
-    { key: "web_search", label: t("modelDetail.cap.webSearch"), supported: model.supports_web_search },
-    { key: "streaming", label: t("modelDetail.cap.streaming"), supported: true },
-    { key: "cache", label: t("modelDetail.cap.cache"), supported: model.supports_cache },
-  ];
+  function handleUseModel() {
+    if (!actionable || typeof window === "undefined" || !pickerCategory) {
+      return;
+    }
+    window.sessionStorage.setItem(
+      MODEL_PICKER_SELECTION_KEY,
+      JSON.stringify({
+        from,
+        category: pickerCategory,
+        modelId: currentModel.model_id,
+        displayName: currentModel.display_name,
+      }),
+    );
+    router.push(from);
+  }
 
   return (
     <div className="model-detail">
-      {/* ── Back link ── */}
-      <Link href="/app/discover" className="model-detail-back">
+      <Link href={from} className="model-detail-back">
         <ArrowLeftIcon />
         {t("modelDetail.backToDiscover")}
       </Link>
 
-      {/* ── Header ── */}
       <div className="model-detail-header">
         <div
           className="model-detail-logo"
-          style={{ background: prov.bg, color: "white" }}
+          style={{ background: providerStyle.bg, color: "white" }}
         >
-          {prov.label}
+          {providerStyle.label}
         </div>
         <div>
-          <h1 className="model-detail-name">{model.display_name}</h1>
-          <div className="model-detail-provider">{model.provider_display}</div>
+          <h1 className="model-detail-name">{currentModel.display_name}</h1>
+          <div className="model-detail-provider">
+            {providerDisplayLabel(currentModel.provider, currentModel.provider_display, locale, t)}
+          </div>
           <div className="model-detail-tags">
-            {tags.map((tag) => (
-              <span
-                key={tag.text}
-                className={`model-card-tag${tag.highlight ? " highlight" : ""}`}
-              >
-                {tag.text}
+            {currentModel.official_category ? (
+              <span className="model-card-tag highlight">
+                {categoryLabel(currentModel.official_category_key, currentModel.official_category, locale, t)}
               </span>
-            ))}
+            ) : null}
+            {currentModel.official_group ? (
+              <span className="model-card-tag">
+                {groupLabel(currentModel.official_group_key, currentModel.official_group, locale, t)}
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
 
-      {/* ── CTA button ── */}
-      <button className="model-detail-cta">
-        {t("modelDetail.useModel")}
+      <button
+        className={`model-detail-cta${actionable ? "" : " is-disabled"}`}
+        disabled={!actionable}
+        onClick={handleUseModel}
+      >
+        {selectableInConsole ? t("modelDetail.useModel") : t("modelDetail.browseOnly")}
       </button>
 
-      {/* ── Description section ── */}
-      {model.description && (
+      {currentModel.description ? (
         <div className="model-detail-section">
           <div className="model-detail-section-title">{t("modelDetail.description")}</div>
-          <div className="model-detail-desc">{model.description}</div>
+          <div className="model-detail-desc">{currentModel.description}</div>
         </div>
-      )}
+      ) : null}
 
-      {/* ── Capability matrix ── */}
       <div className="model-detail-section">
         <div className="model-detail-section-title">{t("modelDetail.capabilities")}</div>
 
-        {/* Modality grid */}
-        <div className="model-modality-grid" style={{ marginBottom: 16 }}>
-          {/* Input modalities */}
-          <div className="model-modality-card">
-            <div className="model-modality-label">{t("modelDetail.inputModalities")}</div>
-            <div className="model-modality-items">
-              {allModalities.map((mod) => {
-                const supported = inputSet.has(mod);
-                return (
-                  <span key={mod} className={`model-modality-item ${supported ? "supported" : "unsupported"}`}>
-                    {supported ? <CheckIcon /> : <XIcon />}
-                    {modalityLabelMap[mod]}
+        <div className="model-modality-grid">
+          {sections.map((section) => (
+            <div key={section.title} className="model-modality-card">
+              <div className="model-modality-label">{section.title}</div>
+              <div className="model-modality-items">
+                {section.items.length > 0 ? section.items.map((item) => (
+                  <span key={item} className="model-modality-item supported">
+                    <CheckIcon />
+                    {labelForToken(item, t)}
                   </span>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Output modalities */}
-          <div className="model-modality-card">
-            <div className="model-modality-label">{t("modelDetail.outputModalities")}</div>
-            <div className="model-modality-items">
-              {allModalities.map((mod) => {
-                const supported = outputSet.has(mod);
-                return (
-                  <span key={mod} className={`model-modality-item ${supported ? "supported" : "unsupported"}`}>
-                    {supported ? <CheckIcon /> : <XIcon />}
-                    {modalityLabelMap[mod]}
+                )) : (
+                  <span className="model-modality-item unsupported">
+                    {t("modelDetail.notDeclared")}
                   </span>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Core capabilities checklist */}
-        <div className="model-capability-list">
-          {coreCapabilities.map((cap) => (
-            <div key={cap.key} className={`model-capability-item ${cap.supported ? "supported" : "unsupported"}`}>
-              {cap.supported ? <CheckIcon /> : <XIcon />}
-              {cap.label}
+                )}
+              </div>
             </div>
           ))}
         </div>
       </div>
+
+      {currentModel.aliases?.length ? (
+        <div className="model-detail-section">
+          <div className="model-detail-section-title">{t("modelDetail.aliases")}</div>
+          <div className="model-modality-items">
+            {currentModel.aliases.map((alias) => (
+              <span key={alias} className="model-modality-item supported">
+                <CheckIcon />
+                {alias}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {currentModel.official_url ? (
+        <div className="model-detail-section">
+          <div className="model-detail-section-title">{t("modelDetail.officialSource")}</div>
+          <a className="model-detail-source" href={currentModel.official_url} target="_blank" rel="noreferrer">
+            {t("modelDetail.openOfficialSource")}
+          </a>
+        </div>
+      ) : null}
     </div>
   );
 }

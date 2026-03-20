@@ -7,7 +7,14 @@ import { apiGet, apiPatch } from "@/lib/api";
 export interface PipelineConfigItem {
   id: string;
   project_id: string;
-  model_type: "llm" | "asr" | "tts" | "vision";
+  model_type:
+    | "llm"
+    | "asr"
+    | "tts"
+    | "vision"
+    | "realtime"
+    | "realtime_asr"
+    | "realtime_tts";
   model_id: string;
   config_json: Record<string, unknown>;
   created_at: string;

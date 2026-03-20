@@ -9,7 +9,13 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import * as d3 from "d3";
-import type { MemoryNode, MemoryEdge } from "@/hooks/useGraphData";
+import {
+  type MemoryNode,
+  type MemoryEdge,
+  isAssistantRootMemoryNode,
+  isFileMemoryNode,
+  isOrdinaryMemoryNode,
+} from "@/hooks/useGraphData";
 import { apiPost } from "@/lib/api";
 import { useModal } from "@/components/ui/modal-dialog";
 import {
@@ -42,6 +48,7 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
 interface MemoryGraphProps {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
+  assistantName?: string;
   onNodeSelect: (node: MemoryNode | null) => void;
   onCenterNodeClick?: () => void;
   onCreateMemory: (content: string, category?: string) => Promise<void>;
@@ -73,12 +80,8 @@ const COLORS = {
 
 /* ── Helpers ───────────────────────────────────── */
 
-function isFileNode(node: MemoryNode): boolean {
-  return node.category === "file" || node.category === "文件";
-}
-
 function getNodeSourceKinds(node: MemoryNode): string[] {
-  if (isFileNode(node)) {
+  if (isFileMemoryNode(node)) {
     return ["file_upload"];
   }
   const metadata = (node.metadata_json || {}) as Record<string, unknown>;
@@ -93,12 +96,12 @@ function getNodeSourceKinds(node: MemoryNode): string[] {
 
 function nodeRadius(node: MemoryNode, isCenter: boolean): number {
   if (isCenter) return CENTER_NODE_RADIUS;
-  if (isFileNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
+  if (isFileMemoryNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
   return MEMORY_NODE_RADIUS;
 }
 
 function getLabel(node: MemoryNode): string {
-  if (isFileNode(node)) {
+  if (isFileMemoryNode(node)) {
     const filename =
       typeof node.metadata_json?.filename === "string"
         ? node.metadata_json.filename
@@ -111,12 +114,32 @@ function getLabel(node: MemoryNode): string {
     : node.content;
 }
 
+function truncateCenterLabel(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return "AI";
+  }
+  return trimmed.length > 18 ? `${trimmed.slice(0, 18)}...` : trimmed;
+}
+
+function getCenterNodeMonogram(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return "AI";
+  }
+  const compact = trimmed.replace(/\s+/g, "");
+  if (/[\u4e00-\u9fff]/.test(compact)) {
+    return compact.slice(0, 2);
+  }
+  return compact.slice(0, 2).toUpperCase();
+}
+
 function inferDroppedCategory(
   node: SimNode,
   allNodes: SimNode[],
   centerNodeId: string,
 ): string | null {
-  if (node.id === centerNodeId || isFileNode(node)) {
+  if (node.id === centerNodeId || isFileMemoryNode(node)) {
     return null;
   }
 
@@ -125,7 +148,7 @@ function inferDroppedCategory(
       (candidate) =>
         candidate.id !== node.id &&
         candidate.id !== centerNodeId &&
-        !isFileNode(candidate) &&
+        !isFileMemoryNode(candidate) &&
         Boolean(candidate.category.trim()),
     )
     .map((candidate) => ({
@@ -155,6 +178,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const {
     nodes,
     edges,
+    assistantName,
     onNodeSelect,
     onCenterNodeClick,
     onCreateMemory,
@@ -204,7 +228,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
   const searchQuery = externalSearchQuery ?? localSearch;
   const addMemoryTitle = t("graph.addMemory");
-  const centerNodeShortLabel = t("graph.centerNodeShort");
+  const centerNodeLabel = assistantName?.trim() || t("graph.centerNodeLabel");
+  const centerNodeShortLabel = getCenterNodeMonogram(
+    assistantName?.trim() || t("graph.centerNodeShort"),
+  );
   const addMemoryPrompt = t("graph.addMemoryPrompt");
   const confirmDeleteMessage = t("graph.confirmDelete");
 
@@ -241,7 +268,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
-    const projectId = nodes.find((node) => !isFileNode(node))?.project_id;
+    const projectId = nodes.find((node) => !isFileMemoryNode(node))?.project_id;
 
     if (!trimmedQuery || !projectId) {
       setSemanticMatchIds(null);
@@ -263,7 +290,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             if (!memoryId) return;
             ids.add(memoryId);
             nodes.forEach((candidate) => {
-              if (candidate.parent_memory_id === memoryId && isFileNode(candidate)) {
+              if (candidate.parent_memory_id === memoryId && isFileMemoryNode(candidate)) {
                 ids.add(candidate.id);
               }
             });
@@ -301,39 +328,45 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   /* ── Derive sim data ────────────────────────── */
 
   const { simNodes, simLinks, centerNodeId } = useMemo(() => {
-    const seedNode = nodes.find((node) => !isFileNode(node)) ?? nodes[0] ?? null;
+    const rootNode = nodes.find((node) => isAssistantRootMemoryNode(node)) ?? null;
+    const seedNode =
+      nodes.find((node) => isOrdinaryMemoryNode(node)) ?? rootNode ?? nodes[0] ?? null;
     const now = new Date().toISOString();
-    const cId = ASSISTANT_CENTER_ID;
-    const assistantNode: SimNode = {
-      id: cId,
-      workspace_id: seedNode?.workspace_id ?? "",
-      project_id: seedNode?.project_id ?? "",
-      content: "AI Assistant",
-      category: "assistant",
-      type: "permanent",
-      source_conversation_id: null,
-      parent_memory_id: null,
-      position_x: 0,
-      position_y: 0,
-      metadata_json: { node_kind: "assistant-center" },
-      created_at: seedNode?.created_at ?? now,
-      updated_at: seedNode?.updated_at ?? now,
-      x: 0,
-      y: 0,
-      fx: 0,
-      fy: 0,
-    };
+    const cId = rootNode?.id ?? ASSISTANT_CENTER_ID;
+    const assistantNode: SimNode | null = rootNode
+      ? null
+      : {
+          id: cId,
+          workspace_id: seedNode?.workspace_id ?? "",
+          project_id: seedNode?.project_id ?? "",
+          content: centerNodeLabel,
+          category: "assistant",
+          type: "permanent",
+          source_conversation_id: null,
+          parent_memory_id: null,
+          position_x: 0,
+          position_y: 0,
+          metadata_json: { node_kind: "assistant-center" },
+          created_at: seedNode?.created_at ?? now,
+          updated_at: seedNode?.updated_at ?? now,
+          x: 0,
+          y: 0,
+          fx: 0,
+          fy: 0,
+        };
 
-    const sn: SimNode[] = [
-      assistantNode,
-      ...nodes.map((n) => ({
-        ...n,
-        x: n.position_x ?? (Math.random() - 0.5) * 400,
-        y: n.position_y ?? (Math.random() - 0.5) * 400,
-        fx: null,
-        fy: null,
-      })),
-    ];
+    const memoryNodes: SimNode[] = nodes.map((node) => {
+      const isRoot = isAssistantRootMemoryNode(node);
+      return {
+        ...node,
+        x: isRoot ? 0 : (node.position_x ?? (Math.random() - 0.5) * 400),
+        y: isRoot ? 0 : (node.position_y ?? (Math.random() - 0.5) * 400),
+        fx: isRoot ? 0 : null,
+        fy: isRoot ? 0 : null,
+      };
+    });
+
+    const sn: SimNode[] = assistantNode ? [assistantNode, ...memoryNodes] : memoryNodes;
 
     const nodeIdSet = new Set(sn.map((n) => n.id));
     const sl: SimLink[] = edges
@@ -349,7 +382,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }));
 
     nodes
-      .filter((node) => !isFileNode(node) && !node.parent_memory_id)
+      .filter(
+        (node) =>
+          !isFileMemoryNode(node) &&
+          !isAssistantRootMemoryNode(node) &&
+          (node.parent_memory_id === cId || (rootNode === null && !node.parent_memory_id)),
+      )
       .forEach((node) => {
         sl.unshift({
           source: cId,
@@ -361,7 +399,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       });
 
     return { simNodes: sn, simLinks: sl, centerNodeId: cId };
-  }, [nodes, edges]);
+  }, [centerNodeLabel, nodes, edges]);
 
   /* ── Filtering ──────────────────────────────── */
 
@@ -379,7 +417,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
       // Type filter
       if (activeTypes.length > 0) {
-        const nodeType = isFileNode(n) ? "file" : n.type;
+        const nodeType = isFileMemoryNode(n) ? "file" : n.type;
         if (!activeTypes.includes(nodeType)) return;
       }
       // Category filter
@@ -556,7 +594,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(centerNodeShortLabel, node.x, node.y);
-      } else if (isFileNode(node)) {
+      } else if (isFileMemoryNode(node)) {
         /* file node: rounded rect */
         const rx = node.x - FILE_NODE_W / 2;
         const ry = node.y - FILE_NODE_H / 2;
@@ -605,10 +643,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
 
       /* label below node */
-      const label = getLabel(node);
+      const label = isCenter ? truncateCenterLabel(centerNodeLabel) : getLabel(node);
       const labelY = isCenter
         ? node.y + CENTER_NODE_RADIUS + 14
-        : isFileNode(node)
+        : isFileMemoryNode(node)
         ? node.y + FILE_NODE_H / 2 + 12
         : node.y + MEMORY_NODE_RADIUS + 14;
 
@@ -624,7 +662,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     });
 
     ctx.restore();
-  }, [centerNodeId, centerNodeShortLabel, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
+  }, [centerNodeId, centerNodeLabel, centerNodeShortLabel, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
 
   /* ── Simulation setup ───────────────────────── */
 
@@ -680,7 +718,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
     const dragStarted = (x: number, y: number) => {
       const node = hitTestDirect(x, y);
-      if (!node || node.id === centerNodeId || isFileNode(node)) return;
+      if (!node || node.id === centerNodeId || isFileMemoryNode(node)) return;
       dragNode = node;
       sim.alphaTarget(0.3).restart();
       node.fx = node.x;
@@ -739,7 +777,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
-      if (e.shiftKey && node && node.id !== centerNodeId && !isFileNode(node)) {
+      if (e.shiftKey && node && node.id !== centerNodeId && !isFileMemoryNode(node)) {
         const t = transformRef.current;
         connectStartRef.current = node;
         connectPointerRef.current = {
@@ -752,7 +790,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         e.stopPropagation();
         return;
       }
-      if (node && node.id !== centerNodeId && !isFileNode(node)) {
+      if (node && node.id !== centerNodeId && !isFileMemoryNode(node)) {
         isDragging = true;
         dragStartPos = { x: e.clientX, y: e.clientY };
         dragStarted(mx, my);
@@ -796,7 +834,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           targetNode &&
           sourceNode.id !== targetNode.id &&
           targetNode.id !== centerNodeId &&
-          !isFileNode(targetNode)
+          !isFileMemoryNode(targetNode)
         ) {
           onCreateEdge(sourceNode.id, targetNode.id).catch(() => {});
         }
@@ -1011,7 +1049,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (node) =>
           visibleNodeIds.has(node.id) &&
           (!searchMatchIds || searchMatchIds.has(node.id)) &&
-          isFileNode(node),
+          isFileMemoryNode(node),
       ).length,
     [nodes, searchMatchIds, visibleNodeIds],
   );
@@ -1021,7 +1059,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (node) =>
           visibleNodeIds.has(node.id) &&
           (!searchMatchIds || searchMatchIds.has(node.id)) &&
-          !isFileNode(node),
+          isOrdinaryMemoryNode(node),
       ).length,
     [nodes, searchMatchIds, visibleNodeIds],
   );

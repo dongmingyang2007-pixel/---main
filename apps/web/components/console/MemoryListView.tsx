@@ -2,7 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import type { MemoryNode } from "@/hooks/useGraphData";
+import {
+  type MemoryNode,
+  isAssistantRootMemoryNode,
+  isFileMemoryNode,
+} from "@/hooks/useGraphData";
 import { formatRelativeTime } from "@/lib/format-time";
 
 interface MemoryListViewProps {
@@ -32,10 +36,6 @@ function getTypeClass(node: MemoryNode): string {
   return "temporary";
 }
 
-function isFileNode(node: MemoryNode): boolean {
-  return node.category === "file" || node.category === "文件";
-}
-
 export default function MemoryListView({
   nodes,
   onUpdateMemory,
@@ -48,7 +48,10 @@ export default function MemoryListView({
   const [editingContent, setEditingContent] = useState<string | null>(null);
 
   const memoryNodes = useMemo(
-    () => nodes.filter((n) => !isFileNode(n)),
+    () =>
+      nodes.filter(
+        (node) => !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node),
+      ),
     [nodes],
   );
 

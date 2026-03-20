@@ -12,7 +12,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault(
             "Permissions-Policy",
-            "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+            "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
         )
         if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")

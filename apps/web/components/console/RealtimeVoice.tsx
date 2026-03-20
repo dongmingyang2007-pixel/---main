@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRealtimeVoice, type RealtimeState } from "@/hooks/useRealtimeVoice";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
+import { useRealtimeVoice } from "@/hooks/useRealtimeVoice";
 
 interface RealtimeVoiceProps {
   conversationId: string;
   projectId: string;
-  workspaceId: string;
+  onTurnComplete?: (payload: { userText: string; assistantText: string }) => void;
+  onError?: (message: string) => void;
+  onStateChange?: (state: string) => void;
 }
 
 function formatTime(seconds: number): string {
@@ -40,10 +43,17 @@ function WaveformBars({ volume, color }: { volume: number; color: string }) {
 export default function RealtimeVoice({
   conversationId,
   projectId,
-  workspaceId,
+  onTurnComplete,
+  onError,
+  onStateChange,
 }: RealtimeVoiceProps) {
+  const t = useTranslations("console-chat");
   const [expanded, setExpanded] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const handleRealtimeError = useCallback((msg: string) => {
+    console.error("[RealtimeVoice]", msg);
+    onError?.(msg);
+  }, [onError]);
 
   const {
     state,
@@ -58,8 +68,8 @@ export default function RealtimeVoice({
   } = useRealtimeVoice({
     conversationId,
     projectId,
-    workspaceId,
-    onError: (msg) => console.error("[RealtimeVoice]", msg),
+    onTurnComplete,
+    onError: handleRealtimeError,
   });
 
   // Auto-scroll transcript
@@ -69,7 +79,10 @@ export default function RealtimeVoice({
     }
   }, [transcript]);
 
-  const isActive = state !== "idle" && state !== "error";
+  useEffect(() => {
+    onStateChange?.(state);
+  }, [onStateChange, state]);
+
   const isListening = state === "listening" || state === "ready";
   const isSpeaking = state === "ai_speaking";
 
@@ -77,15 +90,15 @@ export default function RealtimeVoice({
   const waveColor = isListening ? "#4ade80" : "#818cf8";
   const statusText =
     state === "connecting"
-      ? "正在准备..."
+      ? t("realtimePreparing")
       : state === "reconnecting"
-        ? "重连中..."
+        ? t("realtimeReconnecting")
         : isListening
-          ? "聆听中"
+          ? t("realtimeListening")
           : isSpeaking
-            ? "回复中"
+            ? t("realtimeSpeaking")
             : state === "error"
-              ? "连接失败"
+              ? t("realtimeConnectionFailed")
               : "";
 
   // Idle / error state: entry button
@@ -94,7 +107,7 @@ export default function RealtimeVoice({
       <div className="rt-float rt-entry" onClick={connect}>
         <span className="rt-entry-icon"><svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></span>
         <span className="rt-entry-label">
-          {state === "error" ? "重试对话" : "实时对话"}
+          {state === "error" ? t("realtimeRetry") : t("realtimeEntry")}
         </span>
       </div>
     );
@@ -131,7 +144,7 @@ export default function RealtimeVoice({
       <div className="rt-panel-header">
         <div className="rt-panel-header-left">
           <div className="rt-indicator" style={{ backgroundColor: indicatorColor }} />
-          <span className="rt-panel-title">AI 助手</span>
+          <span className="rt-panel-title">{t("realtimeAssistant")}</span>
           <span className="rt-panel-timer">{formatTime(timer)}</span>
         </div>
         <button className="rt-collapse-btn" onClick={() => setExpanded(false)}>
@@ -143,7 +156,7 @@ export default function RealtimeVoice({
         {transcript.map((entry, i) => (
           <div key={i} className={`rt-transcript-entry rt-transcript-${entry.role}`}>
             <div className="rt-transcript-label">
-              {entry.role === "user" ? "你" : "AI"}
+              {entry.role === "user" ? t("realtimeUser") : t("realtimeAI")}
             </div>
             <div className="rt-transcript-bubble">
               {entry.text}
@@ -157,7 +170,7 @@ export default function RealtimeVoice({
         <button
           className={`rt-control-btn ${isMuted ? "rt-muted" : ""}`}
           onClick={toggleMute}
-          title={isMuted ? "取消静音" : "静音"}
+          title={isMuted ? t("realtimeUnmute") : t("realtimeMute")}
         >
           {isMuted ? (
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .74-.11 1.45-.32 2.12"/></svg>
@@ -168,7 +181,7 @@ export default function RealtimeVoice({
         <button className="rt-hangup" onClick={disconnect}>
           ✕
         </button>
-        <button className="rt-control-btn" title="扬声器">
+        <button className="rt-control-btn" title={t("realtimeSpeaker")}>
           <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
             <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />

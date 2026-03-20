@@ -23,13 +23,11 @@ def get_db_session() -> Generator[Session, None, None]:
     yield from get_db()
 
 
-def get_current_user(
-    request: Request,
-    db: Session = Depends(get_db_session),
-    access_token: str | None = Cookie(default=None, alias=settings.access_cookie_name),
-) -> User:
-    if not access_token:
-        raise ApiError("unauthorized", "Authentication required", status_code=401)
+def authenticate_access_token(
+    *,
+    db: Session,
+    access_token: str,
+) -> tuple[User, dict[str, object]]:
     try:
         payload = decode_token(access_token)
     except ValueError as exc:
@@ -42,7 +40,19 @@ def get_current_user(
     user = db.get(User, user_id)
     if not user:
         raise ApiError("unauthorized", "User not found", status_code=401)
+    return user, payload
+
+
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db_session),
+    access_token: str | None = Cookie(default=None, alias=settings.access_cookie_name),
+) -> User:
+    if not access_token:
+        raise ApiError("unauthorized", "Authentication required", status_code=401)
+    user, payload = authenticate_access_token(db=db, access_token=access_token)
     request.state.access_token = access_token
+    request.state.access_token_payload = payload
     request.state.current_user_id = user.id
     return user
 

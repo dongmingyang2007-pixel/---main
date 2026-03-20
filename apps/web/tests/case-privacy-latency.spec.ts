@@ -10,7 +10,7 @@ import {
 } from "./helpers/demo-viewer";
 
 const DEMO_PATH = "/demo";
-const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100";
+const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100";
 
 type ViewerState = {
   camera_power_hw?: boolean;

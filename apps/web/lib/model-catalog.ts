@@ -1,4 +1,12 @@
-const MODEL_CATEGORIES = ["llm", "asr", "tts", "vision"] as const;
+const MODEL_CATEGORIES = [
+  "llm",
+  "asr",
+  "tts",
+  "vision",
+  "realtime",
+  "realtime_asr",
+  "realtime_tts",
+] as const;
 
 export type ModelCategory = (typeof MODEL_CATEGORIES)[number];
 
@@ -62,11 +70,16 @@ function inferCategory(raw: LooseCatalogModel, capabilities: string[]): ModelCat
   const modelId = asString(raw.model_id).toLowerCase();
   const loweredCaps = capabilities.map((cap) => cap.toLowerCase());
 
-  if (
-    loweredCaps.includes("chat")
-    || modelId.includes("qwen")
-    || modelId.includes("deepseek")
-  ) {
+  if (loweredCaps.includes("realtime") && loweredCaps.includes("audio_input") && loweredCaps.includes("audio_output")) {
+    return "realtime";
+  }
+  if (loweredCaps.includes("realtime_asr")) {
+    return "realtime_asr";
+  }
+  if (loweredCaps.includes("realtime_tts")) {
+    return "realtime_tts";
+  }
+  if (loweredCaps.includes("chat") || modelId.includes("qwen") || modelId.includes("deepseek")) {
     return "llm";
   }
   if (
@@ -118,8 +131,20 @@ function deriveModalities(category: ModelCategory, capabilities: string[]) {
     return { input_modalities: ["audio"], output_modalities: ["text"] };
   }
 
+  if (category === "realtime_asr") {
+    return { input_modalities: ["audio"], output_modalities: ["text"] };
+  }
+
   if (category === "tts") {
     return { input_modalities: ["text"], output_modalities: ["audio"] };
+  }
+
+  if (category === "realtime_tts") {
+    return { input_modalities: ["text"], output_modalities: ["audio"] };
+  }
+
+  if (category === "realtime") {
+    return { input_modalities: ["text", "image", "audio"], output_modalities: ["text", "audio"] };
   }
 
   const input_modalities = ["image"];
@@ -172,7 +197,15 @@ export function normalizeCatalogModelDetail(raw: LooseCatalogModel): CatalogMode
     batch_output_price: asOptionalNumber(raw.batch_output_price),
     cache_read_price: asOptionalNumber(raw.cache_read_price),
     cache_write_price: asOptionalNumber(raw.cache_write_price),
-    price_unit: asString(raw.price_unit) || (category === "asr" ? "audio" : category === "tts" ? "characters" : "tokens"),
+    price_unit:
+      asString(raw.price_unit)
+      || (
+        category === "asr" || category === "realtime_asr"
+          ? "audio"
+          : category === "tts" || category === "realtime_tts"
+            ? "characters"
+            : "tokens"
+      ),
     price_note: asString(raw.price_note) || null,
   };
 }

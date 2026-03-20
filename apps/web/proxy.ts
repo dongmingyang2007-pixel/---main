@@ -4,6 +4,7 @@ const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
 const CSP_LOOPBACK_HOSTS = ["localhost", "127.0.0.1"] as const;
+const LOCAL_BIND_HOSTS = ["0.0.0.0", "::"] as const;
 const DEFAULT_LOCAL_API_PORT = "8000";
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
@@ -27,6 +28,10 @@ function isLoopbackHost(hostname: string): boolean {
   return LOOPBACK_HOSTS.includes(hostname as (typeof LOOPBACK_HOSTS)[number]);
 }
 
+function isLocalBindHost(hostname: string): boolean {
+  return LOCAL_BIND_HOSTS.includes(hostname as (typeof LOCAL_BIND_HOSTS)[number]);
+}
+
 function expandLoopbackOrigins(
   origin: string | null,
   loopbackHosts: readonly string[] = LOOPBACK_HOSTS,
@@ -38,7 +43,7 @@ function expandLoopbackOrigins(
   const origins = [origin];
   try {
     const url = new URL(origin);
-    if (isLoopbackHost(url.hostname)) {
+    if (isLoopbackHost(url.hostname) || isLocalBindHost(url.hostname)) {
       for (const loopbackHost of loopbackHosts) {
         if (loopbackHost === url.hostname) {
           continue;
@@ -52,6 +57,23 @@ function expandLoopbackOrigins(
   }
 
   return Array.from(new Set(origins));
+}
+
+function expandConnectOrigins(origins: string[]): string[] {
+  const expanded = new Set(origins);
+  for (const origin of origins) {
+    try {
+      const url = new URL(origin);
+      if (url.protocol === "http:") {
+        expanded.add(`ws://${url.host}`);
+      } else if (url.protocol === "https:") {
+        expanded.add(`wss://${url.host}`);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return Array.from(expanded);
 }
 
 function isSameOriginEmbeddablePath(pathname: string): boolean {
@@ -97,7 +119,8 @@ function buildCsp(
     normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN),
     CSP_LOOPBACK_HOSTS,
   );
-  const connectSrc = ["'self'", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
+  const connectOrigins = expandConnectOrigins([...apiOrigins, ...assetOrigins]);
+  const connectSrc = ["'self'", "blob:", ...connectOrigins].join(" ");
   const assetSrc = ["'self'", "data:", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
   const frameAncestors = allowSameOriginFrame ? "'self'" : "'none'";
 
@@ -183,7 +206,7 @@ export function proxy(request: NextRequest) {
   response.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+    "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
   );
 
   if (process.env.NODE_ENV === "production") {

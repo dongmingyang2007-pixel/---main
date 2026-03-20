@@ -28,6 +28,7 @@ from app.models import (
     TrainingRun,
 )
 from app.services.audit import write_audit_log
+from app.services.memory_roots import ensure_project_assistant_root
 from app.services.memory_visibility import build_private_memory_metadata
 from app.services.runtime_state import runtime_state
 from app.services.storage import build_run_artifact_object_key, delete_object, put_json_object
@@ -772,6 +773,16 @@ AI：{ai_response}
                 metadata = {"importance": importance, "source": "auto_extraction"}
                 if memory_type == "permanent":
                     metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
+
+                if parent_memory_id is None:
+                    project = db.get(Project, project_id)
+                    if project:
+                        root_memory, _ = ensure_project_assistant_root(
+                            db,
+                            project,
+                            reparent_orphans=False,
+                        )
+                        parent_memory_id = root_memory.id
 
                 memory = Memory(
                     workspace_id=workspace_id,

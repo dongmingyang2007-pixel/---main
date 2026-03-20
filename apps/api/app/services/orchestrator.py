@@ -4,7 +4,6 @@ import re
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.entities import Conversation, DataItem, Dataset, Memory, ModelCatalog, PipelineConfig, Project
 from app.services.context_loader import (
     extract_personality,
@@ -12,10 +11,11 @@ from app.services.context_loader import (
     load_conversation_context,
     load_permanent_memories,
 )
-from app.services.dashscope_client import chat_completion, omni_completion
+from app.services.dashscope_client import chat_completion, chat_completion_multimodal, omni_completion
 from app.services.embedding import search_similar
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
+from app.services.pipeline_models import resolve_pipeline_model_id
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +128,9 @@ async def _build_and_call_llm(
     recent_messages: list[dict[str, str]],
     llm_model_id: str,
     image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+    video_bytes: bytes | None = None,
+    video_mime_type: str = "video/mp4",
 ) -> str:
     """Shared logic used by both text and voice pipelines.
 
@@ -254,11 +257,15 @@ async def _build_and_call_llm(
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})
 
-    if image_bytes:
-        # Multimodal call – pass image directly to a vision-capable LLM
-        from app.services.vision_client import chat_with_image
-
-        return await chat_with_image(image_bytes, messages, model=llm_model_id)
+    if image_bytes or video_bytes:
+        return await chat_completion_multimodal(
+            messages,
+            model=llm_model_id,
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+            video_bytes=video_bytes,
+            video_mime_type=video_mime_type,
+        )
     return await chat_completion(messages, model=llm_model_id)
 
 
@@ -281,14 +288,7 @@ async def orchestrate_inference(
     This is the original entry-point used by the chat endpoint.
     """
     # Resolve per-project LLM model
-    llm_model_id: str = settings.dashscope_model
-    llm_pipeline = (
-        db.query(PipelineConfig)
-        .filter(PipelineConfig.project_id == project_id, PipelineConfig.model_type == "llm")
-        .first()
-    )
-    if llm_pipeline:
-        llm_model_id = llm_pipeline.model_id
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
 
     return await _build_and_call_llm(
         db,
@@ -299,6 +299,114 @@ async def orchestrate_inference(
         recent_messages=recent_messages,
         llm_model_id=llm_model_id,
     )
+
+
+async def transcribe_audio_input_for_project(
+    db: Session,
+    *,
+    project_id: str,
+    audio_bytes: bytes,
+) -> str:
+    from app.services.asr_client import transcribe_audio, transcribe_audio_realtime
+
+    asr_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="asr")
+    asr_model_info = (
+        db.query(ModelCatalog).filter(ModelCatalog.model_id == asr_model_id).first()
+    )
+    asr_is_realtime = asr_model_info is not None and "realtime" in (asr_model_info.capabilities or [])
+
+    if asr_is_realtime:
+        return await transcribe_audio_realtime(audio_bytes, model=asr_model_id)
+    return await transcribe_audio(audio_bytes, model=asr_model_id)
+
+
+async def synthesize_speech_for_project(
+    db: Session,
+    *,
+    project_id: str,
+    text: str,
+) -> bytes:
+    from app.services.tts_client import synthesize_speech, synthesize_speech_realtime
+
+    tts_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="tts")
+    tts_model_info = (
+        db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model_id).first()
+    )
+    tts_is_realtime = tts_model_info is not None and "realtime" in (tts_model_info.capabilities or [])
+
+    if tts_is_realtime:
+        return await synthesize_speech_realtime(text, model=tts_model_id)
+    return await synthesize_speech(text, model=tts_model_id)
+
+
+async def transcribe_realtime_audio_input_for_project(
+    db: Session,
+    *,
+    project_id: str,
+    audio_bytes: bytes,
+) -> str:
+    from app.services.asr_client import transcribe_audio_realtime
+
+    asr_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="realtime_asr")
+    return await transcribe_audio_realtime(audio_bytes, model=asr_model_id)
+
+
+async def synthesize_realtime_speech_for_project(
+    db: Session,
+    *,
+    project_id: str,
+    text: str,
+) -> bytes:
+    from app.services.tts_client import synthesize_speech_realtime
+
+    tts_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="realtime_tts")
+    return await synthesize_speech_realtime(text, model=tts_model_id)
+
+
+async def orchestrate_synthetic_realtime_turn(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    audio_bytes: bytes,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+    video_bytes: bytes | None = None,
+    video_mime_type: str = "video/mp4",
+) -> dict[str, str]:
+    user_text = await transcribe_realtime_audio_input_for_project(
+        db,
+        project_id=project_id,
+        audio_bytes=audio_bytes,
+    )
+
+    if not user_text.strip():
+        return {"text_input": "", "text_response": ""}
+
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
+    recent = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+    text_response = await _build_and_call_llm(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_text,
+        recent_messages=recent_msgs,
+        llm_model_id=llm_model_id,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+        video_bytes=video_bytes,
+        video_mime_type=video_mime_type,
+    )
+    return {"text_input": user_text, "text_response": text_response}
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +422,7 @@ async def orchestrate_voice_inference(
     conversation_id: str,
     audio_bytes: bytes | None = None,
     image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
     text_input: str | None = None,
     return_audio: bool = True,
 ) -> dict:
@@ -327,20 +436,10 @@ async def orchestrate_voice_inference(
         }
     """
     from app.models.entities import Message
-    from app.services.asr_client import transcribe_audio, transcribe_audio_realtime
-    from app.services.tts_client import synthesize_speech, synthesize_speech_realtime
     from app.services.vision_client import describe_image
 
     # ⓪ Check for omni model (handles audio in/out directly)  -------------
-    llm_config = (
-        db.query(PipelineConfig)
-        .filter(
-            PipelineConfig.project_id == project_id,
-            PipelineConfig.model_type == "llm",
-        )
-        .first()
-    )
-    llm_model_id = llm_config.model_id if llm_config else settings.dashscope_model
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
 
     model_info = (
         db.query(ModelCatalog)
@@ -430,6 +529,7 @@ async def orchestrate_voice_inference(
             messages,
             audio_bytes=audio_bytes,
             image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
             model=llm_model_id,
         )
         text_response = omni_result["text"]
@@ -438,28 +538,11 @@ async def orchestrate_voice_inference(
         audio_response: bytes | None = None
         if return_audio and text_response:
             try:
-                tts_config = (
-                    db.query(PipelineConfig)
-                    .filter(
-                        PipelineConfig.project_id == project_id,
-                        PipelineConfig.model_type == "tts",
-                    )
-                    .first()
+                audio_response = await synthesize_speech_for_project(
+                    db,
+                    project_id=project_id,
+                    text=text_response,
                 )
-                tts_model = tts_config.model_id if tts_config else "qwen3-tts-flash"
-                tts_model_info = (
-                    db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
-                )
-                tts_is_realtime = tts_model_info and "realtime" in (
-                    tts_model_info.capabilities or []
-                )
-
-                if tts_is_realtime:
-                    audio_response = await synthesize_speech_realtime(
-                        text_response, model=tts_model
-                    )
-                else:
-                    audio_response = await synthesize_speech(text_response, model=tts_model)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -472,38 +555,17 @@ async def orchestrate_voice_inference(
     # ① ASR: audio → text  ------------------------------------------------
     user_text = text_input or ""
     if audio_bytes and not text_input:
-        asr_config = (
-            db.query(PipelineConfig)
-            .filter(
-                PipelineConfig.project_id == project_id,
-                PipelineConfig.model_type == "asr",
-            )
-            .first()
+        user_text = await transcribe_audio_input_for_project(
+            db,
+            project_id=project_id,
+            audio_bytes=audio_bytes,
         )
-        asr_model = asr_config.model_id if asr_config else "qwen3-asr-flash"
-        asr_model_info = (
-            db.query(ModelCatalog).filter(ModelCatalog.model_id == asr_model).first()
-        )
-        asr_is_realtime = asr_model_info and "realtime" in (asr_model_info.capabilities or [])
-
-        if asr_is_realtime:
-            user_text = await transcribe_audio_realtime(audio_bytes, model=asr_model)
-        else:
-            user_text = await transcribe_audio(audio_bytes, model=asr_model)
 
     if not user_text.strip():
         return {"text_input": "", "text_response": "未检测到语音内容", "audio_response": None}
 
     # ② Get LLM config and capabilities  ----------------------------------
-    llm_config = (
-        db.query(PipelineConfig)
-        .filter(
-            PipelineConfig.project_id == project_id,
-            PipelineConfig.model_type == "llm",
-        )
-        .first()
-    )
-    llm_model_id = llm_config.model_id if llm_config else settings.dashscope_model
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
 
     model_info = (
         db.query(ModelCatalog)
@@ -558,34 +620,18 @@ async def orchestrate_voice_inference(
         recent_messages=recent_msgs,
         llm_model_id=llm_model_id,
         image_bytes=image_bytes if use_multimodal_llm else None,
+        image_mime_type=image_mime_type,
     )
 
     # ⑥ TTS: text → audio  ------------------------------------------------
     audio_response: bytes | None = None
     if return_audio and text_response:
         try:
-            tts_config = (
-                db.query(PipelineConfig)
-                .filter(
-                    PipelineConfig.project_id == project_id,
-                    PipelineConfig.model_type == "tts",
-                )
-                .first()
+            audio_response = await synthesize_speech_for_project(
+                db,
+                project_id=project_id,
+                text=text_response,
             )
-            tts_model = tts_config.model_id if tts_config else "qwen3-tts-flash"
-            tts_model_info = (
-                db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model).first()
-            )
-            tts_is_realtime = tts_model_info and "realtime" in (
-                tts_model_info.capabilities or []
-            )
-
-            if tts_is_realtime:
-                audio_response = await synthesize_speech_realtime(
-                    text_response, model=tts_model
-                )
-            else:
-                audio_response = await synthesize_speech(text_response, model=tts_model)
         except Exception:  # noqa: BLE001
             pass  # TTS failure is non-fatal
 

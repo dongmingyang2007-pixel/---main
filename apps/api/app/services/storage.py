@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import BinaryIO
 import json
 import os
 import re
@@ -145,7 +146,13 @@ def create_presigned_get(
     )
 
 
-def put_object_bytes(*, bucket_name: str, object_key: str, payload: bytes, media_type: str) -> None:
+def put_object_bytes(
+    *,
+    bucket_name: str,
+    object_key: str,
+    payload: bytes | BinaryIO,
+    media_type: str,
+) -> None:
     client = get_s3_client()
     client.put_object(
         Bucket=bucket_name,
@@ -186,6 +193,27 @@ def get_object_metadata(*, bucket_name: str, object_key: str) -> dict[str, int |
         "size_bytes": int(response.get("ContentLength", 0)),
         "media_type": normalize_media_type(response.get("ContentType", "application/octet-stream")),
     }
+
+
+def read_object_prefix(*, bucket_name: str, object_key: str, max_bytes: int) -> bytes | None:
+    if settings.env == "test":
+        return None
+
+    client = get_s3_client()
+    try:
+        response = client.get_object(
+            Bucket=bucket_name,
+            Key=object_key,
+            Range=f"bytes=0-{max_bytes - 1}",
+        )
+    except ClientError as exc:
+        if _is_missing_object_error(exc):
+            return None
+        raise
+    body = response.get("Body")
+    if body is None:
+        return b""
+    return body.read(max_bytes)
 
 
 def uploaded_object_matches(

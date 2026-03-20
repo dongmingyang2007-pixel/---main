@@ -90,6 +90,18 @@ def load_permanent_memories(
         .order_by(desc(Memory.updated_at))
     )
 
+    project_root_id = (
+        db.query(Project.assistant_root_memory_id)
+        .filter(
+            Project.id == project_id,
+            Project.workspace_id == workspace_id,
+            Project.deleted_at.is_(None),
+        )
+        .scalar()
+    )
+    if project_root_id:
+        query = query.filter(Memory.id != project_root_id)
+
     memories = query.limit(limit).all()
 
     visible = []
@@ -182,6 +194,7 @@ def build_system_prompt(
     personality: str,
     memories: list[str],
     knowledge_chunks: list[str],
+    recent_messages: list[dict[str, str]] | None = None,
 ) -> str:
     """Assemble the system prompt from personality, memories, and knowledge."""
     parts = []
@@ -196,5 +209,15 @@ def build_system_prompt(
     if knowledge_chunks:
         knowledge_block = "\n---\n".join(knowledge_chunks)
         parts.append(f"\n相关知识：\n{knowledge_block}")
+
+    if recent_messages:
+        history_lines = []
+        for message in recent_messages:
+            role = "用户" if message.get("role") == "user" else "助手"
+            content = str(message.get("content") or "").strip()
+            if content:
+                history_lines.append(f"{role}: {content}")
+        if history_lines:
+            parts.append(f"\n最近对话历史：\n" + "\n".join(history_lines))
 
     return "\n\n".join(parts)

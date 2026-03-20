@@ -2,7 +2,7 @@ import base64
 import random
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -21,7 +21,16 @@ from app.core.errors import ApiError
 from app.models import Conversation, Memory, Message, Project, User
 from app.schemas.conversation import ConversationCreate, ConversationOut, MessageCreate, MessageOut
 from app.services.dashscope_client import InferenceTimeoutError, UpstreamServiceError
-from app.services.orchestrator import orchestrate_inference, orchestrate_voice_inference
+from app.services.orchestrator import (
+    orchestrate_inference,
+    orchestrate_voice_inference,
+    synthesize_speech_for_project,
+    transcribe_audio_input_for_project,
+)
+from app.services.upload_validation import (
+    UPLOAD_SIGNATURE_READ_BYTES,
+    validate_workspace_upload_signature,
+)
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -68,6 +77,12 @@ async def _read_validated_upload(upload: UploadFile, *, kind: str) -> bytes:
             "payload_too_large",
             f"{kind.capitalize()} exceeds {settings.upload_max_mb}MB limit",
             status_code=413,
+        )
+
+    if kind == "image":
+        validate_workspace_upload_signature(
+            prefix=payload[:UPLOAD_SIGNATURE_READ_BYTES],
+            media_type=content_type,
         )
     return payload
 
@@ -417,12 +432,89 @@ async def send_voice_message(
     return _build_pipeline_response(ai_msg, result)
 
 
+@router.post("/conversations/{conversation_id}/dictate")
+async def dictate_voice_input(
+    conversation_id: str,
+    request: Request,
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
+) -> dict:
+    """Transcribe a recorded utterance into text without sending it to the model."""
+    enforce_rate_limit(
+        request,
+        scope="chat-dictate",
+        identifier=current_user.id,
+        limit=10,
+        window_seconds=60,
+    )
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+
+    audio_bytes = await _read_validated_upload(audio, kind="audio")
+
+    try:
+        text_input = await transcribe_audio_input_for_project(
+            db,
+            project_id=conversation.project_id,
+            audio_bytes=audio_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_inference_api_error(exc)
+
+    return {"text_input": text_input.strip()}
+
+
+@router.post("/conversations/{conversation_id}/speech")
+async def synthesize_message_audio(
+    conversation_id: str,
+    payload: MessageCreate,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
+) -> dict:
+    """Synthesize a text message into audio without creating new chat messages."""
+    enforce_rate_limit(
+        request,
+        scope="chat-speech",
+        identifier=current_user.id,
+        limit=20,
+        window_seconds=60,
+    )
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+
+    text = payload.content.strip()
+    if not text:
+        raise ApiError("bad_request", "Text is required", status_code=400)
+
+    try:
+        audio_response = await synthesize_speech_for_project(
+            db,
+            project_id=conversation.project_id,
+            text=text,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_inference_api_error(exc)
+
+    return {
+        "audio_response": base64.b64encode(audio_response).decode(),
+    }
+
+
 @router.post("/conversations/{conversation_id}/image")
 async def send_image_message(
     conversation_id: str,
     request: Request,
     image: UploadFile = File(...),
     audio: UploadFile | None = File(None),
+    prompt: str | None = Form(None),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_role: str = Depends(get_current_workspace_role),
@@ -443,6 +535,7 @@ async def send_image_message(
 
     image_bytes = await _read_validated_upload(image, kind="image")
     audio_bytes = await _read_validated_upload(audio, kind="audio") if audio else None
+    prompt_text = (prompt or "").strip()
 
     # Run full pipeline with image (and optional voice input)
     try:
@@ -453,7 +546,8 @@ async def send_image_message(
             conversation_id=conversation_id,
             audio_bytes=audio_bytes,
             image_bytes=image_bytes,
-            text_input="请描述这张图片" if not audio_bytes else None,
+            image_mime_type=(image.content_type or "image/jpeg").lower(),
+            text_input=prompt_text if (prompt_text and not audio_bytes) else ("请描述这张图片" if not audio_bytes else None),
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()

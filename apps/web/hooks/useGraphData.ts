@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
-import { getApiBaseUrl } from "@/lib/env";
+import { getApiHttpBaseUrl } from "@/lib/env";
 
 export interface MemoryNode {
   id: string;
@@ -23,6 +23,22 @@ export interface MemoryNode {
   y?: number;
   fx?: number | null;
   fy?: number | null;
+}
+
+export function isFileMemoryNode(node: MemoryNode): boolean {
+  return (
+    node.category === "file" ||
+    node.category === "文件" ||
+    node.metadata_json?.node_kind === "file"
+  );
+}
+
+export function isAssistantRootMemoryNode(node: MemoryNode): boolean {
+  return node.metadata_json?.node_kind === "assistant-root";
+}
+
+export function isOrdinaryMemoryNode(node: MemoryNode): boolean {
+  return !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node);
 }
 
 export interface MemoryEdge {
@@ -124,7 +140,7 @@ export function useGraphData(projectId: string, conversationId?: string) {
     let retryTimeout: ReturnType<typeof setTimeout>;
 
     function connect() {
-      const apiBase = getApiBaseUrl();
+      const apiBase = getApiHttpBaseUrl();
       const streamPath = conversationId
         ? `/api/v1/chat/conversations/${conversationId}/memory-stream`
         : `/api/v1/memory/${projectId}/stream`;

@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "@/lib/env";
+import { getApiBaseUrl, getApiHttpBaseUrl } from "@/lib/env";
 import { clearAuthState, setAuthState } from "@/lib/auth-state";
 import { buildClientCookieAttributes } from "@/lib/security";
 
@@ -32,6 +32,31 @@ export class ApiRequestError extends Error {
 
 export function isApiRequestError(error: unknown): error is ApiRequestError {
   return error instanceof ApiRequestError;
+}
+
+function isEnglishLocale(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.location.pathname === "/en" || window.location.pathname.startsWith("/en/");
+}
+
+function buildNetworkUnavailableMessage(apiBaseUrl: string): string {
+  if (isEnglishLocale()) {
+    return `Cannot reach the API service at ${apiBaseUrl}. Make sure apps/api is running.`;
+  }
+  return `无法连接到 API 服务 ${apiBaseUrl}。请确认 apps/api 已启动。`;
+}
+
+function toApiRequestError(error: unknown, apiBaseUrl: string): ApiRequestError {
+  if (error instanceof ApiRequestError) {
+    return error;
+  }
+  return new ApiRequestError(buildNetworkUnavailableMessage(apiBaseUrl), {
+    status: 0,
+    code: "network_unreachable",
+    details: { apiBaseUrl },
+  });
 }
 
 function readCookie(name: string): string | null {
@@ -87,10 +112,17 @@ async function ensureCsrfToken(): Promise<string> {
   if (cachedCsrfToken) {
     return cachedCsrfToken;
   }
-  const res = await fetch(`${getApiBaseUrl()}/api/v1/auth/csrf`, {
-    credentials: "include",
-    cache: "no-store",
-  });
+  const apiBaseUrl = getApiBaseUrl();
+  const apiHttpBaseUrl = getApiHttpBaseUrl();
+  let res: Response;
+  try {
+    res = await fetch(`${apiHttpBaseUrl}/api/v1/auth/csrf`, {
+      credentials: "include",
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw toApiRequestError(error, apiBaseUrl);
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     handleUnauthorizedSession();
@@ -207,16 +239,22 @@ async function apiRequest<T>(
   options: { requireCsrf?: boolean; contentType?: string } = {},
 ): Promise<T> {
   const apiBaseUrl = getApiBaseUrl();
+  const apiHttpBaseUrl = getApiHttpBaseUrl();
   const method = (init.method || "GET").toUpperCase();
   const requireCsrf =
     options.requireCsrf ?? (!isPublicMutation(path) && ["POST", "PUT", "PATCH", "DELETE"].includes(method));
   const csrfToken = requireCsrf ? await ensureCsrfToken() : undefined;
-  const res = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    credentials: "include",
-    headers: buildHeaders(path, method, init.headers, options.contentType, csrfToken),
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiHttpBaseUrl}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: buildHeaders(path, method, init.headers, options.contentType, csrfToken),
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw toApiRequestError(error, apiBaseUrl);
+  }
   return parseResponse<T>(res);
 }
 

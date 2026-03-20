@@ -1,5 +1,6 @@
 const DEFAULT_LOCAL_API_PORT = "8000";
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const LOCAL_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -24,6 +25,10 @@ export function getApiBaseUrl(): string {
 
   try {
     const configuredUrl = new URL(configured);
+    if (LOCAL_BIND_HOSTS.has(configuredUrl.hostname)) {
+      configuredUrl.hostname = isLoopbackHost(current.hostname) ? current.hostname : "localhost";
+      return trimTrailingSlash(configuredUrl.toString());
+    }
     if (isLoopbackHost(current.hostname) && isLoopbackHost(configuredUrl.hostname) && current.hostname !== configuredUrl.hostname) {
       configuredUrl.hostname = current.hostname;
       return trimTrailingSlash(configuredUrl.toString());
@@ -33,6 +38,13 @@ export function getApiBaseUrl(): string {
   }
 
   return trimTrailingSlash(configured);
+}
+
+export function getApiHttpBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return "";
+  }
+  return getApiBaseUrl();
 }
 
 export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "铭润科技";

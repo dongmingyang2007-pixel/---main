@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { motion } from "framer-motion";
 import { useProjectContext } from "@/lib/ProjectContext";
-import { useGraphData } from "@/hooks/useGraphData";
+import { isOrdinaryMemoryNode, useGraphData } from "@/hooks/useGraphData";
 import MemoryGraph from "@/components/console/graph/MemoryGraph";
 import MemoryListView from "@/components/console/MemoryListView";
 
@@ -12,7 +12,7 @@ type ViewMode = "graph" | "list";
 
 export default function MemoryPage() {
   const t = useTranslations("console");
-  const { projectId } = useProjectContext();
+  const { projectId, projects } = useProjectContext();
   const [view, setView] = useState<ViewMode>("graph");
 
   const {
@@ -28,9 +28,9 @@ export default function MemoryPage() {
     detachFileFromMemory,
   } = useGraphData(projectId);
 
-  const memoryCount = data.nodes.filter(
-    (n) => n.category !== "file" && n.category !== "文件",
-  ).length;
+  const memoryCount = data.nodes.filter((node) => isOrdinaryMemoryNode(node)).length;
+  const assistantName =
+    projects.find((project) => project.id === projectId)?.name || t("memory.title");
 
   if (!projectId) {
     return (
@@ -53,9 +53,7 @@ export default function MemoryPage() {
 
   const handleExport = () => {
     const exportData = {
-      memories: data.nodes.filter(
-        (n) => n.category !== "file" && n.category !== "文件",
-      ),
+      memories: data.nodes.filter((node) => isOrdinaryMemoryNode(node)),
       edges: data.edges,
       exported_at: new Date().toISOString(),
     };
@@ -257,6 +255,7 @@ export default function MemoryPage() {
           <MemoryGraph
             nodes={data.nodes}
             edges={data.edges}
+            assistantName={assistantName}
             onNodeSelect={() => {}}
             onCreateMemory={handleCreateMemoryFromGraph}
             onUpdateMemory={updateMemory}

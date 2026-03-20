@@ -10,47 +10,129 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.deps import (
+    authenticate_access_token,
+    can_access_workspace_conversation,
+    is_token_revoked_for_user,
+)
+from app.core.errors import ApiError
 from app.db.session import SessionLocal
-from app.models import Conversation, Message, User
-from app.core.security import decode_token
+from app.models import Conversation, Membership, Message, ModelCatalog, Project, User
 from app.services.context_loader import (
     build_system_prompt,
     extract_personality,
     filter_knowledge_chunks,
     load_conversation_context,
     load_permanent_memories,
+    load_recent_messages,
     search_rag_knowledge,
 )
+from app.services.composed_realtime import ComposedRealtimeSession, decode_pending_media
 from app.services.realtime_bridge import (
     RealtimeSession,
     register_session,
     unregister_session,
 )
+from app.services.dashscope_client import UpstreamServiceError
+from app.services.pipeline_models import DEFAULT_PIPELINE_MODELS, resolve_pipeline_model_id
+from app.services.qwen_official_catalog import find_model
 from app.tasks.worker_tasks import extract_memories
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
+SESSION_MONITOR_INTERVAL_SECONDS = 5.0
+UPSTREAM_CONNECT_TIMEOUT_SECONDS = 10.0
+UPSTREAM_SESSION_UPDATE_TIMEOUT_SECONDS = 10.0
 
 
-async def _authenticate_websocket(ws: WebSocket) -> User | None:
-    """Validate bearer token from query parameter."""
-    token = ws.query_params.get("token")
-    if not token:
-        return None
+async def _authenticate_websocket(ws: WebSocket) -> tuple[User, dict[str, object]]:
+    """Validate same-site cookie auth for the realtime websocket."""
+    origin = ws.headers.get("origin")
+    if not origin or not settings.is_origin_allowed(settings.normalize_origin(origin)):
+        raise ApiError("forbidden_origin", "Origin not allowed", status_code=403)
+
+    access_token = ws.cookies.get(settings.access_cookie_name)
+    if not access_token:
+        raise ApiError("unauthorized", "Authentication required", status_code=401)
+
+    db: Session = SessionLocal()
     try:
-        payload = decode_token(token)
-        user_id = payload.get("sub")
-        if not user_id:
-            return None
-        db: Session = SessionLocal()
-        try:
-            user = db.query(User).filter(User.id == user_id).first()
-            return user
-        finally:
-            db.close()
+        return authenticate_access_token(db=db, access_token=access_token)
+    finally:
+        db.close()
+
+
+def _load_authorized_conversation(
+    db: Session,
+    *,
+    current_user_id: str,
+    project_id: str,
+    conversation_id: str,
+) -> tuple[Conversation, Membership]:
+    row = (
+        db.query(Conversation, Membership)
+        .join(Project, Project.id == Conversation.project_id)
+        .join(Membership, Membership.workspace_id == Project.workspace_id)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.project_id == project_id,
+            Project.id == project_id,
+            Project.deleted_at.is_(None),
+            Conversation.workspace_id == Project.workspace_id,
+            Membership.user_id == current_user_id,
+        )
+        .first()
+    )
+    if not row:
+        raise ApiError("forbidden", "Realtime session access denied", status_code=403)
+
+    conversation, membership = row
+    if not can_access_workspace_conversation(
+        current_user_id=current_user_id,
+        workspace_role=membership.role or "owner",
+        conversation_created_by=conversation.created_by,
+    ):
+        raise ApiError("forbidden", "Realtime session access denied", status_code=403)
+    return conversation, membership
+
+
+def _resolve_realtime_model_id(db: Session, project_id: str) -> str:
+    model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="realtime")
+    return model_id or DEFAULT_PIPELINE_MODELS["realtime"]
+
+
+async def _send_session_end(
+    ws: WebSocket,
+    *,
+    reason: str,
+    close_code: int = 1000,
+) -> None:
+    try:
+        await ws.send_json({"type": "session.end", "reason": reason})
     except Exception:
-        return None
+        pass
+    try:
+        await ws.close(code=close_code, reason=reason)
+    except Exception:
+        pass
+
+
+async def _send_error_and_close(
+    ws: WebSocket,
+    *,
+    code: str,
+    message: str,
+    close_code: int = 1011,
+) -> None:
+    try:
+        await ws.send_json({"type": "error", "code": code, "message": message})
+    except Exception:
+        pass
+    try:
+        await ws.close(code=close_code, reason=message)
+    except Exception:
+        pass
 
 
 async def _load_initial_context(
@@ -74,6 +156,11 @@ async def _load_initial_context(
         conversation_created_by=conversation.created_by,
     )
     memory_texts = [m.content for m in memories if m.content]
+    recent_messages = load_recent_messages(
+        db,
+        conversation_id=session.conversation_id,
+        limit=max(settings.realtime_context_history_turns * 2, 0),
+    )
 
     # Store on session for reuse during RAG context refresh
     session._personality = personality
@@ -83,6 +170,7 @@ async def _load_initial_context(
         personality=personality,
         memories=memory_texts,
         knowledge_chunks=[],
+        recent_messages=recent_messages,
     )
 
 
@@ -152,10 +240,16 @@ async def _post_turn_tasks(
                     chunk_texts = [c["chunk_text"] for c in chunks if c.get("chunk_text")]
                     if chunk_texts:
                         session._knowledge_chunks = chunk_texts
+                        recent_messages = load_recent_messages(
+                            db,
+                            conversation_id=session.conversation_id,
+                            limit=max(settings.realtime_context_history_turns * 2, 0),
+                        )
                         new_prompt = build_system_prompt(
                             personality=session._personality,
                             memories=session._memory_texts,
                             knowledge_chunks=session._knowledge_chunks,
+                            recent_messages=recent_messages,
                         )
                         await session.send_session_update(new_prompt)
             finally:
@@ -164,10 +258,95 @@ async def _post_turn_tasks(
             logger.exception("Failed to refresh RAG context")
 
 
+def _load_llm_capabilities(db: Session, project_id: str) -> tuple[str, set[str]]:
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
+    llm_entry = (
+        db.query(ModelCatalog)
+        .filter(ModelCatalog.model_id == llm_model_id, ModelCatalog.is_active.is_(True))
+        .first()
+    )
+    capabilities = {str(value).lower() for value in (llm_entry.capabilities or [])} if llm_entry else set()
+    official = find_model(llm_model_id)
+    if official:
+        capabilities.update(str(value).lower() for value in official.get("input_modalities", []))
+        capabilities.update(str(value).lower() for value in official.get("output_modalities", []))
+        capabilities.update(str(value).lower() for value in official.get("supported_tools", []))
+        capabilities.update(str(value).lower() for value in official.get("supported_features", []))
+    return llm_model_id, capabilities
+
+
+async def _persist_composed_turn(
+    session: ComposedRealtimeSession,
+    user_text: str,
+    ai_text: str,
+) -> None:
+    if not user_text or not ai_text:
+        return
+
+    db: Session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        db.add(Message(
+            conversation_id=session.conversation_id,
+            role="user",
+            content=user_text,
+            created_at=now,
+        ))
+        db.add(Message(
+            conversation_id=session.conversation_id,
+            role="assistant",
+            content=ai_text,
+            created_at=now,
+        ))
+        db.query(Conversation).filter(
+            Conversation.id == session.conversation_id
+        ).update({"updated_at": now})
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to save composed realtime turn")
+    finally:
+        db.close()
+
+    extract_memories.delay(
+        session.workspace_id,
+        session.project_id,
+        session.conversation_id,
+        user_text,
+        ai_text,
+    )
+
+
+async def _composed_idle_monitor(
+    ws: WebSocket,
+    session: ComposedRealtimeSession,
+    auth_payload: dict[str, object],
+) -> str | None:
+    start_time = asyncio.get_event_loop().time()
+    idle_warned = False
+    while True:
+        await asyncio.sleep(SESSION_MONITOR_INTERVAL_SECONDS)
+        if is_token_revoked_for_user(session.user_id, auth_payload):
+            return "auth_revoked"
+        if session.idle_seconds >= settings.realtime_close_timeout_seconds:
+            return "timeout"
+        if not idle_warned and session.idle_seconds >= settings.realtime_idle_timeout_seconds:
+            idle_warned = True
+            try:
+                await ws.send_json({"type": "session.idle"})
+            except Exception:
+                pass
+        elif session.idle_seconds < settings.realtime_idle_timeout_seconds:
+            idle_warned = False
+        elapsed = asyncio.get_event_loop().time() - start_time
+        if elapsed >= settings.realtime_max_session_seconds:
+            return "max_duration"
+
+
 async def _upstream_listener(
     ws: WebSocket,
     session: RealtimeSession,
-) -> None:
+) -> dict[str, str] | None:
     """Listen for DashScope upstream events and relay to client."""
     try:
         async for raw_msg in session._upstream_ws:
@@ -184,34 +363,34 @@ async def _upstream_listener(
             if event.get("type") == "response.done":
                 user_text, ai_text = session.get_turn_texts()
                 asyncio.create_task(_post_turn_tasks(session, user_text, ai_text))
-
-    except Exception as exc:
-        logger.warning("Upstream listener error: %s", exc)
-        try:
-            await ws.send_json({
-                "type": "error",
+        if session.state not in (session.state.CLOSING, session.state.CLOSED):
+            return {
                 "code": "upstream_disconnected",
                 "message": "AI 暂时无响应",
-            })
-        except Exception:
-            pass
+            }
+        return None
+    except Exception as exc:
+        logger.warning("Upstream listener error: %s", exc)
+        return {
+            "code": "upstream_disconnected",
+            "message": "AI 暂时无响应",
+        }
 
 
 async def _idle_monitor(
     ws: WebSocket,
     session: RealtimeSession,
-) -> None:
+    auth_payload: dict[str, object],
+) -> str | None:
     """Monitor for idle timeout and max session duration."""
     start_time = asyncio.get_event_loop().time()
     idle_warned = False
     while session.state not in (session.state.CLOSING, session.state.CLOSED):
-        await asyncio.sleep(5)
+        await asyncio.sleep(SESSION_MONITOR_INTERVAL_SECONDS)
+        if is_token_revoked_for_user(session.user_id, auth_payload):
+            return "auth_revoked"
         if session.idle_seconds >= settings.realtime_close_timeout_seconds:
-            try:
-                await ws.send_json({"type": "session.end", "reason": "timeout"})
-            except Exception:
-                pass
-            return
+            return "timeout"
         if not idle_warned and session.idle_seconds >= settings.realtime_idle_timeout_seconds:
             idle_warned = True
             try:
@@ -222,21 +401,22 @@ async def _idle_monitor(
             idle_warned = False
         elapsed = asyncio.get_event_loop().time() - start_time
         if elapsed >= settings.realtime_max_session_seconds:
-            try:
-                await ws.send_json({"type": "session.end", "reason": "max_duration"})
-            except Exception:
-                pass
-            return
+            return "max_duration"
+    return None
 
 
 @router.websocket("/voice")
 async def realtime_voice(ws: WebSocket) -> None:
     """Full-duplex voice conversation WebSocket endpoint."""
-    user = await _authenticate_websocket(ws)
-    if not user:
+    user: User | None = None
+    auth_payload: dict[str, object] | None = None
+
+    try:
+        user, auth_payload = await _authenticate_websocket(ws)
+    except ApiError as exc:
         await ws.accept()
-        await ws.send_json({"type": "error", "code": "unauthorized", "message": "Unauthorized"})
-        await ws.close(code=4001, reason="Unauthorized")
+        await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+        await ws.close(code=4001 if exc.status_code == 401 else 4003, reason=exc.message)
         return
 
     await ws.accept()
@@ -252,48 +432,298 @@ async def realtime_voice(ws: WebSocket) -> None:
 
         conversation_id = init_raw.get("conversation_id")
         project_id = init_raw.get("project_id")
-        workspace_id = init_raw.get("workspace_id", "")
 
         if not conversation_id or not project_id:
             await ws.send_json({"type": "error", "code": "bad_request", "message": "Missing conversation_id or project_id"})
             await ws.close()
             return
 
-        session = RealtimeSession(
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            user_id=user.id,
-        )
+        db: Session = SessionLocal()
+        try:
+            conversation, membership = _load_authorized_conversation(
+                db,
+                current_user_id=user.id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+            session = RealtimeSession(
+                workspace_id=conversation.workspace_id,
+                project_id=conversation.project_id,
+                conversation_id=conversation.id,
+                user_id=user.id,
+                upstream_model=_resolve_realtime_model_id(db, conversation.project_id),
+            )
 
-        if not await register_session(user.id, session):
-            await ws.send_json({"type": "error", "code": "concurrent_limit", "message": "您已有一个进行中的对话"})
+            if not await register_session(user.id, session):
+                await ws.send_json({"type": "error", "code": "concurrent_limit", "message": "您已有一个进行中的对话"})
+                await ws.close()
+                return
+
+            _ = membership
+            system_prompt = await _load_initial_context(db, session)
+        except ApiError as exc:
+            await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+            await ws.close(code=4003, reason=exc.message)
+            return
+        finally:
+            db.close()
+
+        try:
+            await asyncio.wait_for(
+                session.connect_upstream(),
+                timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+            )
+            await asyncio.wait_for(
+                session.send_session_update(system_prompt),
+                timeout=UPSTREAM_SESSION_UPDATE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            await _send_error_and_close(
+                ws,
+                code="upstream_timeout",
+                message="AI 暂时无响应",
+                close_code=1013,
+            )
+            return
+        except UpstreamServiceError as exc:
+            logger.warning("Realtime upstream setup failed: %s", exc)
+            await _send_error_and_close(
+                ws,
+                code="upstream_unavailable",
+                message="AI 暂时无响应",
+            )
+            return
+        except Exception as exc:
+            logger.warning("Realtime upstream connection error: %s", exc)
+            await _send_error_and_close(
+                ws,
+                code="upstream_unavailable",
+                message="AI 暂时无响应",
+            )
+            return
+
+        await ws.send_json({"type": "session.ready"})
+
+        upstream_task = asyncio.create_task(_upstream_listener(ws, session))
+        idle_task = asyncio.create_task(_idle_monitor(ws, session, auth_payload or {}))
+        receive_task = asyncio.create_task(ws.receive())
+
+        try:
+            while True:
+                done, _pending = await asyncio.wait(
+                    {receive_task, upstream_task, idle_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if upstream_task in done:
+                    upstream_error = upstream_task.result()
+                    if upstream_error:
+                        await _send_error_and_close(
+                            ws,
+                            code=upstream_error["code"],
+                            message=upstream_error["message"],
+                        )
+                    break
+
+                if idle_task in done:
+                    end_reason = idle_task.result()
+                    if end_reason:
+                        await _send_session_end(
+                            ws,
+                            reason=end_reason,
+                            close_code=4001 if end_reason == "auth_revoked" else 1000,
+                        )
+                    break
+
+                if receive_task in done:
+                    try:
+                        message = receive_task.result()
+                    except WebSocketDisconnect:
+                        break
+
+                    if message["type"] == "websocket.disconnect":
+                        break
+
+                    if "bytes" in message and message["bytes"]:
+                        await session.relay_audio_to_upstream(message["bytes"])
+
+                    elif "text" in message and message["text"]:
+                        data = json.loads(message["text"])
+                        msg_type = data.get("type")
+
+                        if msg_type == "session.end":
+                            break
+                        if msg_type == "audio.stop" and session._upstream_ws:
+                            await session._upstream_ws.send(
+                                json.dumps({"type": "input_audio_buffer.commit"})
+                            )
+
+                    receive_task = asyncio.create_task(ws.receive())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if not receive_task.done():
+                receive_task.cancel()
+            upstream_task.cancel()
+            idle_task.cancel()
+
+    except Exception as exc:
+        logger.exception("Realtime voice error: %s", exc)
+        try:
+            await ws.send_json({"type": "error", "code": "internal", "message": "Internal server error"})
+        except Exception:
+            pass
+    finally:
+        if session:
+            await session.close()
+            await unregister_session(user.id if user else "")
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+@router.websocket("/composed-voice")
+async def composed_realtime_voice(ws: WebSocket) -> None:
+    user: User | None = None
+    auth_payload: dict[str, object] | None = None
+
+    try:
+        user, auth_payload = await _authenticate_websocket(ws)
+    except ApiError as exc:
+        await ws.accept()
+        await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+        await ws.close(code=4001 if exc.status_code == 401 else 4003, reason=exc.message)
+        return
+
+    await ws.accept()
+
+    session: ComposedRealtimeSession | None = None
+    llm_capabilities: set[str] = set()
+    receive_task: asyncio.Task | None = None
+    turn_task: asyncio.Task[dict[str, str] | None] | None = None
+    idle_task: asyncio.Task[str | None] | None = None
+    last_processing_error: dict[str, str] | None = None
+
+    try:
+        init_raw = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        if init_raw.get("type") != "session.start":
+            await ws.send_json({"type": "error", "code": "bad_request", "message": "Expected session.start"})
+            await ws.close()
+            return
+
+        conversation_id = init_raw.get("conversation_id")
+        project_id = init_raw.get("project_id")
+        if not conversation_id or not project_id:
+            await ws.send_json({"type": "error", "code": "bad_request", "message": "Missing conversation_id or project_id"})
             await ws.close()
             return
 
         db: Session = SessionLocal()
         try:
-            system_prompt = await _load_initial_context(db, session)
+            conversation, membership = _load_authorized_conversation(
+                db,
+                current_user_id=user.id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+            llm_model_id, llm_capabilities = _load_llm_capabilities(db, conversation.project_id)
+            if "vision" not in llm_capabilities and "image" not in llm_capabilities:
+                await _send_error_and_close(
+                    ws,
+                    code="unsupported_model",
+                    message="Synthetic realtime requires a vision-capable chat model",
+                )
+                return
+
+            session = ComposedRealtimeSession(
+                workspace_id=conversation.workspace_id,
+                project_id=conversation.project_id,
+                conversation_id=conversation.id,
+                user_id=user.id,
+            )
+            if not await register_session(user.id, session):  # type: ignore[arg-type]
+                await ws.send_json({"type": "error", "code": "concurrent_limit", "message": "您已有一个进行中的对话"})
+                await ws.close()
+                return
+            _ = membership
+        except ApiError as exc:
+            await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+            await ws.close(code=4003, reason=exc.message)
+            return
         finally:
             db.close()
 
-        await session.connect_upstream()
-        await session.send_session_update(system_prompt)
-
         await ws.send_json({"type": "session.ready"})
 
-        upstream_task = asyncio.create_task(_upstream_listener(ws, session))
-        idle_task = asyncio.create_task(_idle_monitor(ws, session))
+        idle_task = asyncio.create_task(_composed_idle_monitor(ws, session, auth_payload or {}))
+        receive_task = asyncio.create_task(ws.receive())
 
-        try:
-            while True:
-                message = await ws.receive()
+        while True:
+            wait_set: set[asyncio.Task] = {receive_task, idle_task}
+            if turn_task is not None:
+                wait_set.add(turn_task)
+
+            done, _pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+
+            if idle_task in done:
+                end_reason = idle_task.result()
+                if end_reason:
+                    await _send_session_end(
+                        ws,
+                        reason=end_reason,
+                        close_code=4001 if end_reason == "auth_revoked" else 1000,
+                    )
+                break
+
+            if turn_task is not None and turn_task in done:
+                try:
+                    turn_result = turn_task.result()
+                except asyncio.CancelledError:
+                    turn_result = None
+                except UpstreamServiceError:
+                    last_processing_error = {"code": "upstream_unavailable", "message": "AI 暂时无响应"}
+                    turn_result = None
+                except Exception:
+                    logger.exception("Composed realtime turn failed")
+                    last_processing_error = {"code": "upstream_unavailable", "message": "AI 暂时无响应"}
+                    turn_result = None
+
+                if last_processing_error:
+                    await _send_error_and_close(
+                        ws,
+                        code=last_processing_error["code"],
+                        message=last_processing_error["message"],
+                    )
+                    break
+
+                if turn_result:
+                    asyncio.create_task(
+                        _persist_composed_turn(
+                            session,
+                            turn_result.get("user_text", "").strip(),
+                            turn_result.get("assistant_text", "").strip(),
+                        )
+                    )
+                turn_task = None
+
+            if receive_task in done:
+                try:
+                    message = receive_task.result()
+                except WebSocketDisconnect:
+                    break
 
                 if message["type"] == "websocket.disconnect":
                     break
 
                 if "bytes" in message and message["bytes"]:
-                    await session.relay_audio_to_upstream(message["bytes"])
+                    is_new_utterance = not session.has_buffered_audio
+                    if is_new_utterance and session.is_processing:
+                        interrupted = await session.interrupt()
+                        if interrupted:
+                            await ws.send_json({"type": "interrupt.ack"})
+                            turn_task = None
+                    session.append_audio_chunk(message["bytes"])
 
                 elif "text" in message and message["text"]:
                     data = json.loads(message["text"])
@@ -301,25 +731,49 @@ async def realtime_voice(ws: WebSocket) -> None:
 
                     if msg_type == "session.end":
                         break
-                    elif msg_type == "audio.stop":
-                        if session._upstream_ws:
-                            await session._upstream_ws.send(
-                                json.dumps({"type": "input_audio_buffer.commit"})
-                            )
-        except WebSocketDisconnect:
-            pass
-        finally:
-            upstream_task.cancel()
-            idle_task.cancel()
+                    if msg_type == "audio.stop":
+                        maybe_task, consumed_media = await session.start_turn(ws)
+                        if consumed_media:
+                            await ws.send_json({"type": "media.cleared"})
+                        if maybe_task is not None:
+                            turn_task = maybe_task
+                    elif msg_type == "media.set":
+                        data_url = str(data.get("data_url") or "")
+                        filename = str(data.get("filename") or "")
+                        if not data_url:
+                            await ws.send_json({"type": "error", "code": "bad_request", "message": "Missing media payload"})
+                        else:
+                            try:
+                                pending_media = decode_pending_media(data_url=data_url, filename=filename)
+                                if pending_media.kind == "video" and "video" not in llm_capabilities:
+                                    await ws.send_json({
+                                        "type": "error",
+                                        "code": "unsupported_video",
+                                        "message": "Current chat model does not support video input",
+                                    })
+                                else:
+                                    await ws.send_json(session.replace_pending_media(pending_media))
+                            except ApiError as exc:
+                                await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+                            except ValueError as exc:
+                                await ws.send_json({"type": "error", "code": "bad_media", "message": str(exc)})
+                    elif msg_type == "media.clear":
+                        await ws.send_json(session.clear_pending_media())
+
+                receive_task = asyncio.create_task(ws.receive())
 
     except Exception as exc:
-        logger.exception("Realtime voice error: %s", exc)
+        logger.exception("Composed realtime voice error: %s", exc)
         try:
-            await ws.send_json({"type": "error", "code": "internal", "message": str(exc)})
+            await ws.send_json({"type": "error", "code": "internal", "message": "Internal server error"})
         except Exception:
             pass
     finally:
-        if session:
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+        if idle_task is not None:
+            idle_task.cancel()
+        if session is not None:
             await session.close()
             await unregister_session(user.id if user else "")
         try:

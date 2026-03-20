@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     realtime_context_history_turns: int = 10
     realtime_rag_refresh_turns: int = 5
     realtime_reconnect_max_attempts: int = 3
+    realtime_media_max_mb: int = 12
 
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

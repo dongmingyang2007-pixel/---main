@@ -24,7 +24,12 @@ from app.services.storage import (
     create_presigned_post,
     put_object_bytes,
 )
-from app.services.upload_validation import ensure_uploaded_object_matches, read_upload_body
+from app.services.upload_validation import (
+    buffer_upload_body,
+    ensure_uploaded_object_matches,
+    ensure_uploaded_object_signature_matches,
+    validate_workspace_upload_signature,
+)
 from app.tasks.worker_tasks import cleanup_pending_demo_request
 
 
@@ -163,18 +168,29 @@ async def demo_upload(upload_id: str, request: Request) -> dict[str, bool]:
         raise ApiError("content_type_mismatch", "Content-Type does not match upload session", status_code=400)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
-    payload = await read_upload_body(request, expected_size=upload["size_bytes"], max_bytes=max_bytes)
+    buffered_upload = await buffer_upload_body(
+        request,
+        expected_size=upload["size_bytes"],
+        max_bytes=max_bytes,
+    )
+    try:
+        validate_workspace_upload_signature(
+            prefix=buffered_upload.peek_prefix(),
+            media_type=upload["media_type"],
+        )
 
-    if settings.env != "test":
-        try:
-            put_object_bytes(
-                bucket_name=settings.s3_demo_bucket,
-                object_key=upload["object_key"],
-                payload=payload,
-                media_type=upload["media_type"],
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+        if settings.env != "test":
+            try:
+                put_object_bytes(
+                    bucket_name=settings.s3_demo_bucket,
+                    object_key=upload["object_key"],
+                    payload=buffered_upload.file,
+                    media_type=upload["media_type"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise ApiError("storage_error", "Object upload failed", status_code=502) from exc
+    finally:
+        buffered_upload.close()
 
     request_session = runtime_state.get_json(_demo_request_scope(upload["request_id"]), "session")
     if request_session:
@@ -219,6 +235,12 @@ async def demo_infer(
             expected_media_type=session["media_type"],
             missing_message="Demo upload is not complete",
             mismatch_message="Demo upload metadata does not match declared file",
+        )
+        ensure_uploaded_object_signature_matches(
+            bucket_name=settings.s3_demo_bucket,
+            object_key=session["object_key"],
+            media_type=session["media_type"],
+            mismatch_message="Demo upload contents do not match declared file type",
         )
         session["uploaded"] = True
         runtime_state.set_json(
