@@ -4,8 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
-import RealtimeVoice from "./RealtimeVoice";
-import SyntheticRealtimeVoice from "./SyntheticRealtimeVoice";
+import RealtimeVoicePanel from "./RealtimeVoicePanel";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
 import { ChatModePanel } from "./ChatModePanel";
@@ -594,29 +593,19 @@ export function ChatInterface({
         <div className="chat-voice-indicator is-error">{voiceNotice}</div>
       )}
 
-      {conversationId && projectId && chatMode === "omni_realtime" && (
-        <RealtimeVoice
-          key={`omni:${projectId}:${conversationId}:${chatMode}`}
+      {conversationId && projectId && (chatMode === "omni_realtime" || (chatMode === "synthetic_realtime" && syntheticModeAvailable)) && (
+        <RealtimeVoicePanel
+          key={`voice:${projectId}:${conversationId}:${chatMode}`}
+          chatMode={chatMode}
           conversationId={conversationId}
           projectId={projectId}
+          allowVideoInput={syntheticVideoAvailable}
           onTurnComplete={handleRealtimeTurnComplete}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
           onError={setVoiceNotice}
           onStateChange={setVoiceSessionState}
         />
       )}
-      {conversationId && projectId && chatMode === "synthetic_realtime" && syntheticModeAvailable ? (
-        <SyntheticRealtimeVoice
-          key={`synthetic:${projectId}:${conversationId}:${chatMode}`}
-          conversationId={conversationId}
-          projectId={projectId}
-          onTurnComplete={handleRealtimeTurnComplete}
-          onTranscriptUpdate={handleLiveTranscriptUpdate}
-          onError={setVoiceNotice}
-          onStateChange={setVoiceSessionState}
-          allowVideoInput={syntheticVideoAvailable}
-        />
-      ) : null}
     </div>
   );
 }
