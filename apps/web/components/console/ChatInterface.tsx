@@ -7,12 +7,12 @@ import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import RealtimeVoice from "./RealtimeVoice";
 import SyntheticRealtimeVoice from "./SyntheticRealtimeVoice";
+import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import {
   type ChatMode,
   type Message,
   type ApiMessage,
   type DictationResponse,
-  type SpeechResponse,
   type ImageMessageResponse,
   type ProjectChatSettings,
   type PipelineConfigItem,
@@ -20,7 +20,6 @@ import {
   type CatalogModelItem,
   type LiveTranscriptUpdate,
   VOICE_ACTIVE_STATES,
-  createAudioPlayer,
   getPipelineModelId,
   modelSupportsCapability,
   toMessage,
@@ -34,57 +33,6 @@ interface ChatInterfaceProps {
     conversationId: string;
     previewText: string;
   }) => void;
-}
-
-function AnimatedMessageText({
-  text,
-  animate,
-  streaming = false,
-}: {
-  text: string;
-  animate: boolean;
-  streaming?: boolean;
-}) {
-  const segments = Array.from(text);
-  const shouldAnimate = animate && !streaming;
-  const [visibleCount, setVisibleCount] = useState(() =>
-    shouldAnimate ? 0 : segments.length,
-  );
-
-  useEffect(() => {
-    if (!shouldAnimate || segments.length === 0) {
-      return;
-    }
-
-    const msPerChar = segments.length > 240 ? 6 : segments.length > 120 ? 12 : 22;
-    let rafId = 0;
-    const start = performance.now();
-
-    const tick = (now: number) => {
-      const nextCount = Math.min(
-        segments.length,
-        Math.max(1, Math.floor((now - start) / msPerChar)),
-      );
-      setVisibleCount(nextCount);
-      if (nextCount < segments.length) {
-        rafId = window.requestAnimationFrame(tick);
-      }
-    };
-
-    rafId = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(rafId);
-  }, [segments.length, shouldAnimate, text]);
-
-  const displayCount = shouldAnimate ? visibleCount : segments.length;
-  const visibleText = segments.slice(0, displayCount).join("");
-  const showCursor = streaming || (shouldAnimate && displayCount < segments.length);
-
-  return (
-    <>
-      {visibleText}
-      {showCursor ? <span className="chat-inline-cursor">▊</span> : null}
-    </>
-  );
 }
 
 export function ChatInterface({
@@ -102,8 +50,6 @@ export function ChatInterface({
   >("idle");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
-  const [loadingReadAloudId, setLoadingReadAloudId] = useState<string | null>(null);
-  const [readingMessageId, setReadingMessageId] = useState<string | null>(null);
   const [searchState, setSearchState] = useState<"auto" | "on" | "off">("auto");
   const [thinkState, setThinkState] = useState<"auto" | "on" | "off">("auto");
   const [projectDefaultMode, setProjectDefaultMode] = useState<ChatMode>("standard");
@@ -113,12 +59,10 @@ export function ChatInterface({
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioUrlRef = useRef<string | null>(null);
+  const messageListRef = useRef<ChatMessageListHandle>(null);
   const runtimeMessageCounterRef = useRef(0);
   const liveTurnIdsRef = useRef<{
     userId: string | null;
@@ -142,69 +86,6 @@ export function ChatInterface({
     runtimeMessageCounterRef.current += 1;
     return `${prefix}-${Date.now()}-${runtimeMessageCounterRef.current}`;
   }, []);
-
-  const releaseAudioPlayer = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-    }
-    audioRef.current = null;
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-    }
-    setReadingMessageId(null);
-  }, []);
-
-  const stopReadAloud = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    releaseAudioPlayer();
-  }, [releaseAudioPlayer]);
-
-  const playMessageAudio = useCallback(
-    (base64Audio: string, messageId: string) => {
-      stopReadAloud();
-      try {
-        const { audio, url } = createAudioPlayer(base64Audio);
-        audioRef.current = audio;
-        audioUrlRef.current = url;
-        setReadingMessageId(messageId);
-        audio.onended = () => {
-          releaseAudioPlayer();
-        };
-        audio.onerror = () => {
-          releaseAudioPlayer();
-          setVoiceNotice(t("errors.readAloudFailed"));
-        };
-        void audio.play().catch(() => {
-          releaseAudioPlayer();
-          setVoiceNotice(t("errors.readAloudFailed"));
-        });
-      } catch {
-        releaseAudioPlayer();
-        setVoiceNotice(t("errors.readAloudFailed"));
-      }
-    },
-    [releaseAudioPlayer, stopReadAloud, t],
-  );
-
-  const cacheMessageAudio = useCallback((messageId: string, audioBase64: string) => {
-    setMessages((prev) =>
-      prev.map((message) =>
-        message.id === messageId ? { ...message, audioBase64 } : message,
-      ),
-    );
-  }, []);
-
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
-
-  useEffect(() => () => stopReadAloud(), [stopReadAloud]);
 
   useEffect(() => {
     if (!projectId) {
@@ -269,7 +150,6 @@ export function ChatInterface({
 
   // Load messages when conversationId changes
   useEffect(() => {
-    stopReadAloud();
     setVoiceNotice(null);
     if (!conversationId) {
       setMessages([]);
@@ -298,63 +178,7 @@ export function ChatInterface({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, stopReadAloud]);
-
-  const handleReadAloud = useCallback(
-    async (message: Message) => {
-      const text = message.content.trim();
-      if (!conversationId || !text) {
-        return;
-      }
-
-      setVoiceNotice(null);
-
-      if (readingMessageId === message.id) {
-        stopReadAloud();
-        return;
-      }
-
-      if (message.audioBase64) {
-        playMessageAudio(message.audioBase64, message.id);
-        return;
-      }
-
-      setLoadingReadAloudId(message.id);
-      try {
-        const data = await apiPost<SpeechResponse>(
-          `/api/v1/chat/conversations/${conversationId}/speech`,
-          { content: text },
-        );
-        if (!data.audio_response) {
-          throw new Error("missing audio response");
-        }
-        cacheMessageAudio(message.id, data.audio_response);
-        playMessageAudio(data.audio_response, message.id);
-      } catch (error) {
-        let content = t("errors.readAloudFailed");
-        if (isApiRequestError(error)) {
-          if (error.code === "inference_timeout") {
-            content = t("errors.inferenceTimeout");
-          } else if (error.code === "model_api_unconfigured") {
-            content = t("errors.modelUnconfigured");
-          }
-        }
-        setVoiceNotice(content);
-      } finally {
-        setLoadingReadAloudId((current) =>
-          current === message.id ? null : current,
-        );
-      }
-    },
-    [
-      cacheMessageAudio,
-      conversationId,
-      playMessageAudio,
-      readingMessageId,
-      stopReadAloud,
-      t,
-    ],
-  );
+  }, [conversationId]);
 
   const handleImageFileSelected = useCallback((file: File | null) => {
     if (!file) {
@@ -423,10 +247,6 @@ export function ChatInterface({
         isStreaming: false,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      if (autoReadEnabled && assistantMessage.content.trim() && response.audio_response) {
-        cacheMessageAudio(assistantMessage.id, response.audio_response);
-        playMessageAudio(response.audio_response, assistantMessage.id);
-      }
     } catch (error) {
       let content = t("errors.imageUploadFailed");
       if (isApiRequestError(error)) {
@@ -450,14 +270,11 @@ export function ChatInterface({
       setIsTyping(false);
     }
   }, [
-    autoReadEnabled,
-    cacheMessageAudio,
     conversationId,
     input,
     isTyping,
     onConversationActivity,
     pendingImageFile,
-    playMessageAudio,
     thinkState,
     t,
   ]);
@@ -501,9 +318,6 @@ export function ChatInterface({
         isStreaming: false,
       };
       setMessages((prev) => [...prev, aiMessage]);
-      if (autoReadEnabled && aiMessage.content.trim()) {
-        void handleReadAloud(aiMessage);
-      }
     } catch (error) {
       let content = t("errors.generic");
       if (isApiRequestError(error)) {
@@ -527,9 +341,7 @@ export function ChatInterface({
       setIsTyping(false);
     }
   }, [
-    autoReadEnabled,
     conversationId,
-    handleReadAloud,
     handleSendImage,
     input,
     isTyping,
@@ -865,93 +677,22 @@ export function ChatInterface({
         ))}
       </div>
 
-      <div className="chat-messages">
-        {loadingMessages && <div className="chat-empty">...</div>}
+      {loadingMessages && (
+        <div className="chat-messages">
+          <div className="chat-empty">...</div>
+        </div>
+      )}
 
-        {!loadingMessages && messages.length === 0 && !isTyping && (
-          <div className="chat-empty">
-            {noConversation ? t("emptyHint") : t("emptyConversationHint")}
-          </div>
-        )}
-
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
-          >
-            <div className="chat-message-stack">
-              {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
-                <div className="chat-reasoning" aria-label={t("reasoningLabel")}>
-                  <div className="chat-reasoning-label">{t("reasoningLabel")}</div>
-                  <div className="chat-reasoning-content">
-                    <AnimatedMessageText
-                      text={msg.reasoningContent.trim()}
-                      animate={Boolean(msg.animateOnMount)}
-                    />
-                  </div>
-                </div>
-              ) : null}
-              <div className="chat-bubble">
-                <AnimatedMessageText
-                  text={msg.content}
-                  animate={msg.role === "assistant" && Boolean(msg.animateOnMount)}
-                  streaming={Boolean(msg.isStreaming)}
-                />
-              </div>
-              {msg.role === "assistant" && (
-                <div className="chat-message-actions">
-                  <button
-                    className={`chat-audio-btn ${readingMessageId === msg.id ? "is-active" : ""}`}
-                    onClick={() => void handleReadAloud(msg)}
-                    title={
-                      readingMessageId === msg.id
-                        ? t("voiceStop")
-                        : t("voicePlay")
-                    }
-                    disabled={loadingReadAloudId === msg.id}
-                    type="button"
-                  >
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    </svg>
-                    <span>
-                      {loadingReadAloudId === msg.id
-                        ? t("voicePreparing")
-                        : readingMessageId === msg.id
-                          ? t("voiceStop")
-                          : t("voicePlay")}
-                    </span>
-                  </button>
-                </div>
-              )}
-              {msg.role === "assistant" && msg.memories_extracted && (
-                <div className="chat-memory-indicator">
-                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-                    <circle cx={12} cy={12} r={3} />
-                    <path d="M12 2v4m0 12v4" />
-                  </svg>
-                  {t("memory.remembered")}：{msg.memories_extracted}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {isTyping && (
-          <div className="chat-message is-assistant">
-            <div className="chat-message-stack">
-              <div className="chat-bubble is-typing">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
+      {!loadingMessages && (
+        <ChatMessageList
+          ref={messageListRef}
+          messages={messages}
+          onMessagesChange={setMessages}
+          isTyping={isTyping}
+          conversationId={conversationId}
+          noConversation={noConversation}
+        />
+      )}
 
       <div className="chat-input-bar-voice">
         {isStandardMode ? (
