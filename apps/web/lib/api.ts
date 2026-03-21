@@ -258,6 +258,22 @@ async function apiRequest<T>(
   return parseResponse<T>(res);
 }
 
+/**
+ * Build authenticated headers for a streaming POST request.
+ * Acquires CSRF token and workspace ID, matching the same logic used by apiPost.
+ */
+export async function buildStreamPostHeaders(path: string): Promise<Headers> {
+  const csrfToken = !isPublicMutation(path) ? await ensureCsrfToken() : undefined;
+  return buildHeaders(path, "POST", undefined, "application/json", csrfToken);
+}
+
+/**
+ * Handle a 401 response received during a streaming request.
+ */
+export function handleStreamUnauthorized(): void {
+  handleUnauthorizedSession();
+}
+
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   return apiRequest<T>(path, init, { requireCsrf: false });
 }
