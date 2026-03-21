@@ -134,6 +134,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
   const playbackQueueRef = useRef<string[]>([]);
   const activePlaybackUrlRef = useRef<string | null>(null);
   const aiVolumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPlaybackActiveRef = useRef(false);
   const pumpPlaybackQueueRef = useRef<() => void>(() => undefined);
   const audioMimeRef = useRef<string>("audio/mpeg");
@@ -365,6 +366,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
 
   const resetBlobPlaybackQueue = useCallback(() => {
     clearAiPulse();
+    if (playbackTimeoutRef.current) {
+      clearTimeout(playbackTimeoutRef.current);
+      playbackTimeoutRef.current = null;
+    }
     const player = audioPlayerRef.current;
     if (player) {
       player.pause();
@@ -402,6 +407,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     const player = new Audio();
     player.preload = "auto";
     player.onended = () => {
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
       clearAiPulse();
       setAiVolume(0);
       if (activePlaybackUrlRef.current) {
@@ -412,6 +421,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       pumpPlaybackQueueRef.current();
     };
     player.onerror = () => {
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
       clearAiPulse();
       setAiVolume(0);
       if (activePlaybackUrlRef.current) {
@@ -435,7 +448,20 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     activePlaybackUrlRef.current = nextUrl;
     player.src = nextUrl;
     pulseAiVolume();
+    playbackTimeoutRef.current = setTimeout(() => {
+      playbackTimeoutRef.current = null;
+      URL.revokeObjectURL(nextUrl);
+      if (activePlaybackUrlRef.current === nextUrl) {
+        activePlaybackUrlRef.current = null;
+      }
+      isPlaybackActiveRef.current = false;
+      pumpPlaybackQueueRef.current();
+    }, 15_000);
     void player.play().catch(() => {
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
       clearAiPulse();
       setAiVolume(0);
       if (activePlaybackUrlRef.current === nextUrl) {
