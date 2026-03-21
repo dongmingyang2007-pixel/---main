@@ -1,0 +1,1144 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getApiBaseUrl } from "@/lib/env";
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export type RealtimeState =
+  | "idle"
+  | "connecting"
+  | "ready"
+  | "listening"
+  | "ai_speaking"
+  | "error"
+  | "reconnecting";
+
+export interface TranscriptEntry {
+  role: "user" | "assistant";
+  text: string;
+  final: boolean;
+}
+
+export interface RealtimeVoiceBaseConfig {
+  conversationId: string;
+  projectId: string;
+  /** WebSocket path appended to the API host. */
+  wsPath: string;
+  /** Extra fields merged into the session.start payload. */
+  sessionStartPayload?: Record<string, unknown>;
+  /** "continuous" sends all PCM; "vad-gated" sends only during speech. */
+  audioSendMode: "continuous" | "vad-gated";
+  vadConfig: {
+    speechThreshold: number | "auto";
+    interruptThresholdMs?: number;
+    silenceCommitMs?: number;
+    speechCooldownMs?: number;
+  };
+  enableInterrupt: boolean;
+  onError?: (msg: string) => void;
+  onTurnComplete?: (payload: { userText: string; assistantText: string }) => void;
+  onTranscriptUpdate?: (payload: {
+    role: "user" | "assistant";
+    text: string;
+    final: boolean;
+    action?: "upsert" | "discard";
+  }) => void;
+  onStateChange?: (state: RealtimeState) => void;
+  /** Called for WS message types not handled by the base. */
+  onCustomMessage?: (data: Record<string, unknown>, ws: WebSocket) => void;
+  /** Called after session.ready and before startCapture. */
+  onSessionReady?: (ws: WebSocket) => void;
+}
+
+export interface RealtimeVoiceBaseReturn {
+  state: RealtimeState;
+  transcript: TranscriptEntry[];
+  timer: number;
+  connect: () => Promise<void>;
+  disconnect: () => void;
+  toggleMute: () => void;
+  isMuted: boolean;
+  userVolume: number;
+  aiVolume: number;
+  sendJson: (data: Record<string, unknown>) => void;
+  sendBinary: (data: ArrayBuffer) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MAX_RECONNECT_ATTEMPTS = 3;
+const CALIBRATION_DURATION_MS = 2000;
+const CALIBRATION_MIN_THRESHOLD = 0.008;
+const CALIBRATION_P75_MULTIPLIER = 2.5;
+
+// ---------------------------------------------------------------------------
+// Playback strategy types (PCM via AudioContext  vs  Blob URL queue)
+// ---------------------------------------------------------------------------
+
+/** Detect whether the composed-voice (Blob/HTMLAudioElement) path should be used.
+ *  Heuristic: composed-voice endpoint returns encoded audio (mp3), while the
+ *  native realtime endpoint returns raw PCM at 24 kHz. The wsPath decides. */
+function useBlobPlayback(wsPath: string): boolean {
+  return wsPath.includes("composed");
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeVoiceBaseReturn {
+  // -- Keep a ref so WS callbacks always read the latest config ---------------
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  const {
+    conversationId,
+    projectId,
+    wsPath,
+    audioSendMode,
+    vadConfig,
+  } = config;
+
+  const blobPlayback = useBlobPlayback(wsPath);
+
+  // -- React state ------------------------------------------------------------
+  const [state, setState] = useState<RealtimeState>("idle");
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [timer, setTimer] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(false);
+  const [userVolume, setUserVolume] = useState(0);
+  const [aiVolume, setAiVolume] = useState(0);
+
+  // -- Refs (WebSocket / audio / reconnect / state tracking) ------------------
+  const wsRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const monitorGainRef = useRef<GainNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
+
+  // PCM playback refs (native realtime)
+  const playbackCtxRef = useRef<AudioContext | null>(null);
+  const nextPlayTimeRef = useRef<number>(0);
+  const playbackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+
+  // Blob/HTMLAudioElement playback refs (composed realtime)
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const playbackQueueRef = useRef<string[]>([]);
+  const activePlaybackUrlRef = useRef<string | null>(null);
+  const aiVolumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPlaybackActiveRef = useRef(false);
+  const pumpPlaybackQueueRef = useRef<() => void>(() => undefined);
+  const audioMimeRef = useRef<string>("audio/mpeg");
+
+  // Reconnect / session
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const manualDisconnectRef = useRef(false);
+  const terminalErrorMessageRef = useRef<string | null>(null);
+  const sessionEndReasonRef = useRef<string | null>(null);
+  const currentUserTextRef = useRef("");
+  const currentAssistantTextRef = useRef("");
+  const openConnectionRef = useRef<(mode: "connect" | "reconnect") => void>(() => undefined);
+  const sessionContextRef = useRef(`${projectId}:${conversationId}`);
+
+  // VAD refs (used in vad-gated mode)
+  const speechActiveRef = useRef(false);
+  const lastSpeechAtRef = useRef(0);
+  const hasSegmentAudioRef = useRef(false);
+
+  // Interrupt tracking
+  const interruptStartRef = useRef(0);
+  const stateRef = useRef<RealtimeState>("idle");
+
+  // Calibration refs (when speechThreshold === "auto")
+  const calibratingRef = useRef(false);
+  const calibrationSamplesRef = useRef<number[]>([]);
+  const calibrationStartRef = useRef(0);
+  const calibratedThresholdRef = useRef<number | null>(null);
+  const calibrationBufferRef = useRef<Int16Array[]>([]);
+
+  // ---------------------------------------------------------------------------
+  // Notify onStateChange whenever state changes
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    stateRef.current = state;
+    configRef.current.onStateChange?.(state);
+  }, [state]);
+
+  // ---------------------------------------------------------------------------
+  // Helpers — turn buffers, reconnect timer
+  // ---------------------------------------------------------------------------
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearTurnBuffers = useCallback(() => {
+    currentUserTextRef.current = "";
+    currentAssistantTextRef.current = "";
+  }, []);
+
+  const discardAssistantPartial = useCallback(() => {
+    currentAssistantTextRef.current = "";
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "assistant" && !last.final) {
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
+  }, []);
+
+  const finalizeAssistantPartial = useCallback(() => {
+    const finalText = currentAssistantTextRef.current.trim();
+    if (!finalText) return;
+
+    configRef.current.onTranscriptUpdate?.({
+      role: "assistant",
+      text: finalText,
+      final: true,
+    });
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "assistant" && !last.final) {
+        return [...prev.slice(0, -1), { ...last, text: finalText, final: true }];
+      }
+      return prev;
+    });
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Timer management
+  // ---------------------------------------------------------------------------
+
+  const resetTimerTracking = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    startTimeRef.current = 0;
+    setTimer(0);
+  }, []);
+
+  useEffect(() => {
+    const isActive =
+      state === "connecting" ||
+      state === "ready" ||
+      state === "listening" ||
+      state === "ai_speaking" ||
+      state === "reconnecting";
+
+    if (!isActive) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+
+    if (!startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
+    if (!timerRef.current) {
+      timerRef.current = setInterval(() => {
+        setTimer(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }, 1000);
+    }
+  }, [state]);
+
+  useEffect(() => {
+    return () => {
+      clearReconnectTimer();
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [clearReconnectTimer]);
+
+  // ---------------------------------------------------------------------------
+  // Playback — PCM strategy (native realtime)
+  // ---------------------------------------------------------------------------
+
+  const ensurePlaybackContext = useCallback(async (): Promise<AudioContext> => {
+    if (!playbackCtxRef.current) {
+      playbackCtxRef.current = new AudioContext({ sampleRate: 24000 });
+      nextPlayTimeRef.current = playbackCtxRef.current.currentTime;
+    }
+    const ctx = playbackCtxRef.current;
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
+    return ctx;
+  }, []);
+
+  const resetPcmPlaybackQueue = useCallback(() => {
+    const activeSources = playbackSourcesRef.current.splice(0);
+    for (const source of activeSources) {
+      source.onended = null;
+      try { source.stop(); } catch { /* already ended */ }
+      try { source.disconnect(); } catch { /* race */ }
+    }
+    if (playbackCtxRef.current) {
+      nextPlayTimeRef.current = playbackCtxRef.current.currentTime;
+    }
+    setAiVolume(0);
+  }, []);
+
+  const closePcmPlaybackContext = useCallback(() => {
+    resetPcmPlaybackQueue();
+    if (playbackCtxRef.current) {
+      playbackCtxRef.current.close().catch(() => {});
+      playbackCtxRef.current = null;
+      nextPlayTimeRef.current = 0;
+    }
+    setAiVolume(0);
+  }, [resetPcmPlaybackQueue]);
+
+  const playPcmChunkDirect = useCallback((pcmData: ArrayBuffer) => {
+    let ctx = playbackCtxRef.current;
+    if (!ctx) {
+      ctx = new AudioContext({ sampleRate: 24000 });
+      playbackCtxRef.current = ctx;
+      nextPlayTimeRef.current = ctx.currentTime;
+    }
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+
+    const int16 = new Int16Array(pcmData);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+
+    const buffer = ctx.createBuffer(1, float32.length, 24000);
+    buffer.getChannelData(0).set(float32);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    playbackSourcesRef.current.push(source);
+    source.onended = () => {
+      playbackSourcesRef.current = playbackSourcesRef.current.filter((entry) => entry !== source);
+      try { source.disconnect(); } catch { /* race */ }
+    };
+
+    let sum = 0;
+    for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+    setAiVolume(Math.sqrt(sum / float32.length));
+
+    source.connect(ctx.destination);
+    const playTime = Math.max(ctx.currentTime, nextPlayTimeRef.current);
+    source.start(playTime);
+    nextPlayTimeRef.current = playTime + buffer.duration;
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Playback — Blob URL / HTMLAudioElement strategy (composed realtime)
+  // ---------------------------------------------------------------------------
+
+  const clearAiPulse = useCallback(() => {
+    if (aiVolumeTimeoutRef.current) {
+      clearTimeout(aiVolumeTimeoutRef.current);
+      aiVolumeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const pulseAiVolume = useCallback(() => {
+    clearAiPulse();
+    setAiVolume(0.7);
+    aiVolumeTimeoutRef.current = setTimeout(() => {
+      setAiVolume(0);
+      aiVolumeTimeoutRef.current = null;
+    }, 180);
+  }, [clearAiPulse]);
+
+  const resetBlobPlaybackQueue = useCallback(() => {
+    clearAiPulse();
+    const player = audioPlayerRef.current;
+    if (player) {
+      player.pause();
+      player.removeAttribute("src");
+      player.load();
+    }
+    if (activePlaybackUrlRef.current) {
+      URL.revokeObjectURL(activePlaybackUrlRef.current);
+      activePlaybackUrlRef.current = null;
+    }
+    for (const queuedUrl of playbackQueueRef.current) {
+      URL.revokeObjectURL(queuedUrl);
+    }
+    playbackQueueRef.current = [];
+    isPlaybackActiveRef.current = false;
+    setAiVolume(0);
+  }, [clearAiPulse]);
+
+  const closeBlobPlaybackContext = useCallback(() => {
+    resetBlobPlaybackQueue();
+    clearAiPulse();
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.onended = null;
+      audioPlayerRef.current.onerror = null;
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.removeAttribute("src");
+      audioPlayerRef.current.load();
+      audioPlayerRef.current = null;
+    }
+    setAiVolume(0);
+  }, [clearAiPulse, resetBlobPlaybackQueue]);
+
+  const ensureAudioPlayer = useCallback(() => {
+    if (audioPlayerRef.current) return audioPlayerRef.current;
+    const player = new Audio();
+    player.preload = "auto";
+    player.onended = () => {
+      clearAiPulse();
+      setAiVolume(0);
+      if (activePlaybackUrlRef.current) {
+        URL.revokeObjectURL(activePlaybackUrlRef.current);
+        activePlaybackUrlRef.current = null;
+      }
+      isPlaybackActiveRef.current = false;
+      pumpPlaybackQueueRef.current();
+    };
+    player.onerror = () => {
+      clearAiPulse();
+      setAiVolume(0);
+      if (activePlaybackUrlRef.current) {
+        URL.revokeObjectURL(activePlaybackUrlRef.current);
+        activePlaybackUrlRef.current = null;
+      }
+      isPlaybackActiveRef.current = false;
+      pumpPlaybackQueueRef.current();
+    };
+    audioPlayerRef.current = player;
+    return player;
+  }, [clearAiPulse]);
+
+  const pumpPlaybackQueue = useCallback(() => {
+    if (isPlaybackActiveRef.current) return;
+    const nextUrl = playbackQueueRef.current.shift();
+    if (!nextUrl) return;
+
+    const player = ensureAudioPlayer();
+    isPlaybackActiveRef.current = true;
+    activePlaybackUrlRef.current = nextUrl;
+    player.src = nextUrl;
+    pulseAiVolume();
+    void player.play().catch(() => {
+      clearAiPulse();
+      setAiVolume(0);
+      if (activePlaybackUrlRef.current === nextUrl) {
+        URL.revokeObjectURL(nextUrl);
+        activePlaybackUrlRef.current = null;
+      }
+      isPlaybackActiveRef.current = false;
+      pumpPlaybackQueueRef.current();
+    });
+  }, [clearAiPulse, ensureAudioPlayer, pulseAiVolume]);
+
+  const playBlobChunk = useCallback((audioData: ArrayBuffer) => {
+    const mime = audioMimeRef.current;
+    const blob = new Blob([audioData], { type: mime });
+    const url = URL.createObjectURL(blob);
+    playbackQueueRef.current.push(url);
+    pumpPlaybackQueueRef.current();
+  }, []);
+
+  useEffect(() => {
+    pumpPlaybackQueueRef.current = pumpPlaybackQueue;
+  }, [pumpPlaybackQueue]);
+
+  // ---------------------------------------------------------------------------
+  // Unified playback dispatch
+  // ---------------------------------------------------------------------------
+
+  const resetPlaybackQueue = useCallback(() => {
+    if (blobPlayback) {
+      resetBlobPlaybackQueue();
+    } else {
+      resetPcmPlaybackQueue();
+    }
+  }, [blobPlayback, resetBlobPlaybackQueue, resetPcmPlaybackQueue]);
+
+  const closePlaybackContext = useCallback(() => {
+    if (blobPlayback) {
+      closeBlobPlaybackContext();
+    } else {
+      closePcmPlaybackContext();
+    }
+  }, [blobPlayback, closeBlobPlaybackContext, closePcmPlaybackContext]);
+
+  const playAudioChunk = useCallback(
+    (data: ArrayBuffer) => {
+      if (blobPlayback) {
+        playBlobChunk(data);
+      } else {
+        playPcmChunkDirect(data);
+      }
+    },
+    [blobPlayback, playBlobChunk, playPcmChunkDirect],
+  );
+
+  // ---------------------------------------------------------------------------
+  // Audio capture
+  // ---------------------------------------------------------------------------
+
+  const startCapture = useCallback(async (ws: WebSocket) => {
+    let stream: MediaStream | null = null;
+    let audioCtx: AudioContext | null = null;
+    let processor: ScriptProcessorNode | null = null;
+    let monitorGain: GainNode | null = null;
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Microphone access is not supported");
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true },
+      });
+      streamRef.current = stream;
+
+      audioCtx = new AudioContext({ sampleRate: 16000 });
+      audioCtxRef.current = audioCtx;
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume().catch(() => {});
+      }
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      monitorGain = audioCtx.createGain();
+      monitorGain.gain.value = 0;
+      monitorGainRef.current = monitorGain;
+
+      // Reset VAD state
+      speechActiveRef.current = false;
+      hasSegmentAudioRef.current = false;
+      lastSpeechAtRef.current = 0;
+      interruptStartRef.current = 0;
+
+      // Reset calibration state
+      const needsCalibration = configRef.current.vadConfig.speechThreshold === "auto";
+      calibratingRef.current = needsCalibration;
+      calibrationSamplesRef.current = [];
+      calibrationStartRef.current = needsCalibration ? performance.now() : 0;
+      calibratedThresholdRef.current = null;
+      calibrationBufferRef.current = [];
+
+      processor.onaudioprocess = (e) => {
+        if (isMutedRef.current || ws.readyState !== WebSocket.OPEN) return;
+
+        const input = e.inputBuffer.getChannelData(0);
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+        const rms = Math.sqrt(sum / input.length);
+        setUserVolume(rms);
+
+        // Convert to PCM16
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+
+        const cfg = configRef.current;
+        const mode = cfg.audioSendMode;
+        const vad = cfg.vadConfig;
+
+        // ------ Adaptive calibration phase ------
+        if (calibratingRef.current) {
+          calibrationSamplesRef.current.push(rms);
+          calibrationBufferRef.current.push(pcm);
+
+          const elapsed = performance.now() - calibrationStartRef.current;
+          if (elapsed >= CALIBRATION_DURATION_MS) {
+            // Compute P75 of noise floor
+            const sorted = [...calibrationSamplesRef.current].sort((a, b) => a - b);
+            const p75Index = Math.floor(sorted.length * 0.75);
+            const p75 = sorted[p75Index] ?? 0;
+            calibratedThresholdRef.current = Math.max(
+              p75 * CALIBRATION_P75_MULTIPLIER,
+              CALIBRATION_MIN_THRESHOLD,
+            );
+            calibratingRef.current = false;
+
+            // Flush buffered audio
+            for (const bufferedPcm of calibrationBufferRef.current) {
+              ws.send(bufferedPcm.buffer);
+            }
+            calibrationBufferRef.current = [];
+            calibrationSamplesRef.current = [];
+          }
+          return; // Don't process audio during calibration
+        }
+
+        // ------ Determine speech threshold ------
+        const threshold: number =
+          vad.speechThreshold === "auto"
+            ? (calibratedThresholdRef.current ?? CALIBRATION_MIN_THRESHOLD)
+            : vad.speechThreshold;
+
+        // ------ Continuous mode: send everything ------
+        if (mode === "continuous") {
+          ws.send(pcm.buffer);
+
+          // Interrupt detection during ai_speaking
+          if (cfg.enableInterrupt && stateRef.current === "ai_speaking") {
+            const isSpeech = rms >= threshold;
+            if (isSpeech) {
+              if (!interruptStartRef.current) {
+                interruptStartRef.current = performance.now();
+              }
+              const interruptMs = vad.interruptThresholdMs ?? 400;
+              if (performance.now() - interruptStartRef.current >= interruptMs) {
+                ws.send(JSON.stringify({ type: "input.interrupt" }));
+                interruptStartRef.current = 0;
+              }
+            } else {
+              const cooldown = vad.speechCooldownMs ?? 200;
+              if (interruptStartRef.current && performance.now() - interruptStartRef.current > cooldown) {
+                interruptStartRef.current = 0;
+              }
+            }
+          }
+          return;
+        }
+
+        // ------ VAD-gated mode: send only speech segments ------
+        const now = performance.now();
+        const isSpeech = rms >= threshold;
+        if (isSpeech) {
+          speechActiveRef.current = true;
+          lastSpeechAtRef.current = now;
+        }
+
+        const silenceCommitMs = vad.silenceCommitMs ?? 420;
+        const shouldSendChunk =
+          isSpeech ||
+          (speechActiveRef.current && now - lastSpeechAtRef.current < silenceCommitMs);
+
+        if (!shouldSendChunk) {
+          if (speechActiveRef.current && hasSegmentAudioRef.current) {
+            speechActiveRef.current = false;
+            hasSegmentAudioRef.current = false;
+            setUserVolume(0);
+            ws.send(JSON.stringify({ type: "audio.stop" }));
+          }
+          return;
+        }
+
+        // Interrupt detection during ai_speaking (vad-gated)
+        if (cfg.enableInterrupt && stateRef.current === "ai_speaking" && isSpeech) {
+          if (!interruptStartRef.current) {
+            interruptStartRef.current = now;
+          }
+          const interruptMs = vad.interruptThresholdMs ?? 400;
+          if (now - interruptStartRef.current >= interruptMs) {
+            ws.send(JSON.stringify({ type: "input.interrupt" }));
+            interruptStartRef.current = 0;
+          }
+        } else if (!isSpeech) {
+          interruptStartRef.current = 0;
+        }
+
+        hasSegmentAudioRef.current = true;
+        ws.send(pcm.buffer);
+      };
+
+      source.connect(processor);
+      processor.connect(monitorGain);
+      monitorGain.connect(audioCtx.destination);
+    } catch (error) {
+      processor?.disconnect();
+      monitorGain?.disconnect();
+      if (audioCtx) {
+        await audioCtx.close().catch(() => {});
+      }
+      if (monitorGainRef.current === monitorGain) monitorGainRef.current = null;
+      if (audioCtxRef.current === audioCtx) audioCtxRef.current = null;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (streamRef.current === stream) streamRef.current = null;
+      setUserVolume(0);
+      throw error;
+    }
+  }, []);
+
+  const stopCapture = useCallback(() => {
+    // In vad-gated mode, flush pending segment
+    if (
+      configRef.current.audioSendMode === "vad-gated" &&
+      hasSegmentAudioRef.current &&
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN
+    ) {
+      try {
+        wsRef.current.send(JSON.stringify({ type: "audio.stop" }));
+      } catch {
+        // ignore close races
+      }
+    }
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    monitorGainRef.current?.disconnect();
+    monitorGainRef.current = null;
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    speechActiveRef.current = false;
+    hasSegmentAudioRef.current = false;
+    interruptStartRef.current = 0;
+    calibratingRef.current = false;
+    calibrationBufferRef.current = [];
+    calibrationSamplesRef.current = [];
+    setUserVolume(0);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // teardown / finalize helpers
+  // ---------------------------------------------------------------------------
+
+  const teardownMedia = useCallback(
+    (options?: { closePlayback?: boolean }) => {
+      wsRef.current = null;
+      stopCapture();
+      if (options?.closePlayback === false) {
+        resetPlaybackQueue();
+        return;
+      }
+      closePlaybackContext();
+    },
+    [closePlaybackContext, resetPlaybackQueue, stopCapture],
+  );
+
+  const finalizeConnection = useCallback(
+    (nextState: RealtimeState, options?: { clearTranscript?: boolean; message?: string }) => {
+      clearReconnectTimer();
+      teardownMedia();
+      clearTurnBuffers();
+      resetTimerTracking();
+      if (options?.clearTranscript) {
+        setTranscript([]);
+      }
+      setState(nextState);
+      if (options?.message) {
+        configRef.current.onError?.(options.message);
+      }
+    },
+    [clearReconnectTimer, clearTurnBuffers, resetTimerTracking, teardownMedia],
+  );
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      finalizeConnection("error", { message: "WebSocket connection failed" });
+      return;
+    }
+
+    teardownMedia({ closePlayback: false });
+    const delayMs = Math.min(500 * 2 ** reconnectAttemptsRef.current, 2000);
+    reconnectAttemptsRef.current += 1;
+    setState("reconnecting");
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = null;
+      openConnectionRef.current("reconnect");
+    }, delayMs);
+  }, [finalizeConnection, teardownMedia]);
+
+  // ---------------------------------------------------------------------------
+  // WS message handler
+  // ---------------------------------------------------------------------------
+
+  const handleWsMessage = useCallback(
+    async (event: MessageEvent, ws: WebSocket) => {
+      if (event.data instanceof ArrayBuffer) {
+        playAudioChunk(event.data);
+        setState("ai_speaking");
+        return;
+      }
+
+      const msg = JSON.parse(event.data);
+      const cfg = configRef.current;
+
+      switch (msg.type) {
+        case "session.ready":
+          reconnectAttemptsRef.current = 0;
+          setState("ready");
+          cfg.onSessionReady?.(ws);
+          try {
+            await startCapture(ws);
+            setState("listening");
+          } catch {
+            terminalErrorMessageRef.current = "Microphone permission is required";
+            ws.close();
+          }
+          break;
+
+        case "transcript.partial":
+          cfg.onTranscriptUpdate?.({
+            role: "user",
+            text: msg.text || "",
+            final: false,
+          });
+          setTranscript((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "user" && !last.final) {
+              return [...prev.slice(0, -1), { role: "user", text: msg.text, final: false }];
+            }
+            return [...prev, { role: "user", text: msg.text, final: false }];
+          });
+          break;
+
+        case "transcript.final":
+          currentUserTextRef.current = msg.text || "";
+          cfg.onTranscriptUpdate?.({
+            role: "user",
+            text: msg.text || "",
+            final: true,
+          });
+          setTranscript((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "user" && !last.final) {
+              return [...prev.slice(0, -1), { role: "user", text: msg.text, final: true }];
+            }
+            return [...prev, { role: "user", text: msg.text, final: true }];
+          });
+          break;
+
+        case "response.text":
+          currentAssistantTextRef.current += msg.text || "";
+          cfg.onTranscriptUpdate?.({
+            role: "assistant",
+            text: currentAssistantTextRef.current,
+            final: false,
+          });
+          setTranscript((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "assistant" && !last.final) {
+              return [
+                ...prev.slice(0, -1),
+                { role: "assistant", text: last.text + msg.text, final: false },
+              ];
+            }
+            return [...prev, { role: "assistant", text: msg.text, final: false }];
+          });
+          break;
+
+        case "response.done":
+          cfg.onTranscriptUpdate?.({
+            role: "assistant",
+            text: currentAssistantTextRef.current,
+            final: true,
+          });
+          setTranscript((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === "assistant") {
+              return [...prev.slice(0, -1), { ...last, final: true }];
+            }
+            return prev;
+          });
+          if (currentUserTextRef.current || currentAssistantTextRef.current) {
+            cfg.onTurnComplete?.({
+              userText: currentUserTextRef.current.trim(),
+              assistantText: currentAssistantTextRef.current.trim(),
+            });
+          }
+          clearTurnBuffers();
+          reconnectAttemptsRef.current = 0;
+          setState("listening");
+          break;
+
+        case "interrupt.ack":
+          resetPlaybackQueue();
+          discardAssistantPartial();
+          cfg.onTranscriptUpdate?.({
+            role: "assistant",
+            text: "",
+            final: false,
+            action: "discard",
+          });
+          setState("listening");
+          break;
+
+        case "audio.meta":
+          audioMimeRef.current = msg.mime || "audio/mpeg";
+          break;
+
+        case "session.idle":
+          break;
+
+        case "session.end":
+          sessionEndReasonRef.current = typeof msg.reason === "string" ? msg.reason : "";
+          ws.close();
+          break;
+
+        case "error":
+          terminalErrorMessageRef.current =
+            msg.code === "model_api_unconfigured"
+              ? "model_api_unconfigured"
+              : msg.message || "Unknown error";
+          ws.close();
+          break;
+
+        case "turn.error":
+          finalizeAssistantPartial();
+          clearTurnBuffers();
+          setState("listening");
+          cfg.onError?.(msg.message || "本轮处理失败，请重试");
+          break;
+
+        case "turn.notice":
+          cfg.onError?.(msg.message || "语音输出暂时不可用");
+          break;
+
+        default:
+          // Pass unrecognized messages to the wrapper
+          cfg.onCustomMessage?.(msg as Record<string, unknown>, ws);
+          break;
+      }
+    },
+    [
+      clearTurnBuffers,
+      discardAssistantPartial,
+      finalizeAssistantPartial,
+      playAudioChunk,
+      resetPlaybackQueue,
+      startCapture,
+    ],
+  );
+
+  // ---------------------------------------------------------------------------
+  // openConnection
+  // ---------------------------------------------------------------------------
+
+  const openConnection = useCallback(
+    (mode: "connect" | "reconnect") => {
+      const existingSocket = wsRef.current;
+      if (
+        existingSocket &&
+        (existingSocket.readyState === WebSocket.OPEN ||
+          existingSocket.readyState === WebSocket.CONNECTING)
+      ) {
+        return;
+      }
+
+      clearReconnectTimer();
+      manualDisconnectRef.current = false;
+      terminalErrorMessageRef.current = null;
+      sessionEndReasonRef.current = null;
+
+      if (mode === "connect") {
+        reconnectAttemptsRef.current = 0;
+        clearTurnBuffers();
+        setTranscript([]);
+        resetTimerTracking();
+      }
+
+      setState(mode === "reconnect" ? "reconnecting" : "connecting");
+      if (!startTimeRef.current) {
+        startTimeRef.current = Date.now();
+      }
+
+      const cfg = configRef.current;
+      const apiBaseUrl = new URL(getApiBaseUrl());
+      const protocol = apiBaseUrl.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${apiBaseUrl.host}${cfg.wsPath}`;
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        ws.send(
+          JSON.stringify({
+            type: "session.start",
+            conversation_id: cfg.conversationId,
+            project_id: cfg.projectId,
+            ...(cfg.sessionStartPayload || {}),
+          }),
+        );
+      };
+
+      ws.onmessage = (event) => {
+        void handleWsMessage(event, ws);
+      };
+
+      ws.onclose = (event) => {
+        const errorMessage = terminalErrorMessageRef.current;
+        const sessionEndReason = sessionEndReasonRef.current;
+        terminalErrorMessageRef.current = null;
+        sessionEndReasonRef.current = null;
+
+        if (manualDisconnectRef.current) {
+          manualDisconnectRef.current = false;
+          finalizeConnection("idle", { clearTranscript: true });
+          return;
+        }
+
+        if (errorMessage) {
+          finalizeConnection("error", { message: errorMessage });
+          return;
+        }
+
+        if (sessionEndReason) {
+          finalizeConnection(
+            sessionEndReason === "auth_revoked" ? "error" : "idle",
+            sessionEndReason === "auth_revoked"
+              ? { message: "Authentication expired" }
+              : undefined,
+          );
+          return;
+        }
+
+        if (event.code === 1000) {
+          finalizeConnection("idle");
+          return;
+        }
+
+        scheduleReconnect();
+      };
+
+      ws.onerror = () => undefined;
+    },
+    [
+      clearReconnectTimer,
+      clearTurnBuffers,
+      finalizeConnection,
+      handleWsMessage,
+      resetTimerTracking,
+      scheduleReconnect,
+    ],
+  );
+
+  // Keep openConnectionRef in sync
+  useEffect(() => {
+    openConnectionRef.current = openConnection;
+  }, [openConnection]);
+
+  // ---------------------------------------------------------------------------
+  // Conversation context change → tear down and notify
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    const nextContextKey = `${projectId}:${conversationId}`;
+    if (sessionContextRef.current === nextContextKey) return;
+    sessionContextRef.current = nextContextKey;
+
+    const hasLiveSession =
+      wsRef.current !== null ||
+      state === "connecting" ||
+      state === "ready" ||
+      state === "listening" ||
+      state === "ai_speaking" ||
+      state === "reconnecting";
+
+    if (!hasLiveSession) return;
+
+    clearReconnectTimer();
+    manualDisconnectRef.current = true;
+    terminalErrorMessageRef.current = null;
+    sessionEndReasonRef.current = null;
+
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "session.end" }));
+      } catch {
+        // ignore close races
+      }
+    }
+    ws?.close();
+    finalizeConnection("idle", {
+      clearTranscript: true,
+      message: "Conversation changed. Please restart voice.",
+    });
+  }, [clearReconnectTimer, conversationId, finalizeConnection, projectId, state]);
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  const disconnect = useCallback(() => {
+    clearReconnectTimer();
+    manualDisconnectRef.current = true;
+    terminalErrorMessageRef.current = null;
+    sessionEndReasonRef.current = null;
+
+    const ws = wsRef.current;
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      finalizeConnection("idle", { clearTranscript: true });
+      return;
+    }
+
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "session.end" }));
+      } catch {
+        // Ignore close races.
+      }
+    }
+    ws.close();
+  }, [clearReconnectTimer, finalizeConnection]);
+
+  const connect = useCallback(async () => {
+    if (state !== "idle" && state !== "error") return;
+    // PCM playback mode needs an AudioContext primed before connect
+    if (!blobPlayback) {
+      await ensurePlaybackContext();
+    }
+    openConnection("connect");
+  }, [blobPlayback, ensurePlaybackContext, openConnection, state]);
+
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      isMutedRef.current = !prev;
+      return !prev;
+    });
+  }, []);
+
+  const sendJson = useCallback((data: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(data));
+    }
+  }, []);
+
+  const sendBinary = useCallback((data: ArrayBuffer) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disconnect();
+    };
+  }, [disconnect]);
+
+  return {
+    state,
+    transcript,
+    timer,
+    connect,
+    disconnect,
+    toggleMute,
+    isMuted,
+    userVolume,
+    aiVolume,
+    sendJson,
+    sendBinary,
+  };
+}
