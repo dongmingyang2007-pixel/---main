@@ -1,9 +1,12 @@
 import base64
-import random
 from datetime import datetime, timezone
+import json
+import logging
+import re
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
+from starlette.responses import StreamingResponse
 
 from app.core.config import settings
 from app.core.deps import (
@@ -23,6 +26,7 @@ from app.schemas.conversation import ConversationCreate, ConversationOut, Messag
 from app.services.dashscope_client import InferenceTimeoutError, UpstreamServiceError
 from app.services.orchestrator import (
     orchestrate_inference,
+    orchestrate_inference_stream,
     orchestrate_voice_inference,
     synthesize_speech_for_project,
     transcribe_audio_input_for_project,
@@ -32,15 +36,9 @@ from app.services.upload_validation import (
     validate_workspace_upload_signature,
 )
 
-router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
-_MOCK_AI_RESPONSES = [
-    "好的，我已经理解了您的需求。让我来帮您分析一下这个问题。",
-    "这是一个很好的问题！根据我的分析，建议您可以从以下几个方面入手。",
-    "收到！我正在处理您的请求，以下是我的初步建议。",
-    "感谢您的提问。根据项目的上下文信息，我认为最佳方案如下。",
-    "明白了。让我结合已有的记忆节点来为您提供更精准的回答。",
-]
+router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 _ALLOWED_AUDIO_MEDIA_TYPES = {
     "audio/wav",
@@ -55,9 +53,101 @@ _ALLOWED_AUDIO_MEDIA_TYPES = {
     "audio/m4a",
 }
 
+_MODEL_API_UNCONFIGURED_MESSAGE = (
+    "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
+)
+
+_SOCIAL_MESSAGES = {
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "ok",
+    "okay",
+    "thanks",
+    "thankyou",
+    "test",
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "早上好",
+    "中午好",
+    "下午好",
+    "晚上好",
+    "在吗",
+    "谢谢",
+    "收到",
+    "好的",
+    "测试",
+}
+_SOCIAL_HINTS = ("你好", "您好", "嗨", "哈喽", "在吗", "谢谢", "收到", "好的")
+_REASONING_HINTS = (
+    "分析",
+    "解释",
+    "原因",
+    "为什么",
+    "如何",
+    "怎么",
+    "步骤",
+    "方案",
+    "计划",
+    "设计",
+    "比较",
+    "对比",
+    "优缺点",
+    "排查",
+    "调试",
+    "修复",
+    "推导",
+    "总结",
+    "归纳",
+    "reason",
+    "analy",
+    "debug",
+    "compare",
+    "tradeoff",
+    "plan",
+    "strategy",
+    "explain",
+)
+
+
+def _normalize_inference_result(result: str | dict) -> tuple[str, str | None]:
+    if isinstance(result, str):
+        return result, None
+    return result.get("content", "") or "", result.get("reasoning_content")
+
+
+def _normalize_media_type(content_type: str | None) -> str:
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def _resolve_enable_thinking(preference: bool | None, text: str) -> bool:
+    if preference is not None:
+        return preference
+
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    lowered = stripped.casefold()
+    normalized = re.sub(r"[\W_]+", "", lowered)
+    if normalized in _SOCIAL_MESSAGES:
+        return False
+    if len(stripped) <= 12 and any(hint in stripped for hint in _SOCIAL_HINTS):
+        return False
+    if len(stripped) <= 24 and not any(hint in lowered for hint in _REASONING_HINTS):
+        return False
+    if any(hint in lowered for hint in _REASONING_HINTS):
+        return True
+    if "\n" in stripped or len(stripped) >= 80:
+        return True
+    return False
+
 
 async def _read_validated_upload(upload: UploadFile, *, kind: str) -> bytes:
-    content_type = (upload.content_type or "").lower()
+    content_type = _normalize_media_type(upload.content_type)
     if kind == "image":
         if content_type not in settings.demo_allowed_media_types:
             raise ApiError("unsupported_media_type", "Unsupported image upload type", status_code=415)
@@ -109,6 +199,16 @@ def _raise_inference_api_error(exc: Exception) -> None:
             details={"retry_after": 5},
         ) from exc
     raise exc
+
+
+def _ensure_model_api_configured() -> None:
+    if settings.dashscope_api_key:
+        return
+    raise ApiError(
+        "model_api_unconfigured",
+        _MODEL_API_UNCONFIGURED_MESSAGE,
+        status_code=503,
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationOut])
@@ -219,6 +319,7 @@ async def send_message(
         window_seconds=60,
     )
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
 
     # Save user message
     user_message = Message(
@@ -229,43 +330,42 @@ async def send_message(
     db.add(user_message)
     db.flush()
 
-    # Generate AI response
-    if not settings.dashscope_api_key:
-        # Fallback to mock responses when no API key configured (local dev)
-        ai_response_text = random.choice(_MOCK_AI_RESPONSES)  # noqa: S311
-    else:
-        # Load recent messages for context
-        recent = (
-            db.query(Message)
-            .filter(
-                Message.conversation_id == conversation_id,
-                Message.id != user_message.id,
-            )
-            .order_by(Message.created_at.desc())
-            .limit(20)
-            .all()
+    # Load recent messages for context
+    recent = (
+        db.query(Message)
+        .filter(
+            Message.conversation_id == conversation_id,
+            Message.id != user_message.id,
         )
-        recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+        .order_by(Message.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+    enable_thinking = _resolve_enable_thinking(payload.enable_thinking, payload.content)
 
-        # Real inference
-        try:
-            ai_response_text = await orchestrate_inference(
-                db,
-                workspace_id=workspace_id,
-                project_id=conversation.project_id,
-                conversation_id=conversation_id,
-                user_message=payload.content,
-                recent_messages=recent_msgs,
-            )
-        except Exception as exc:  # noqa: BLE001
-            db.rollback()
-            _raise_inference_api_error(exc)
+    # Real inference
+    try:
+        inference_result = await orchestrate_inference(
+            db,
+            workspace_id=workspace_id,
+            project_id=conversation.project_id,
+            conversation_id=conversation_id,
+            user_message=payload.content,
+            recent_messages=recent_msgs,
+            enable_thinking=enable_thinking,
+        )
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        _raise_inference_api_error(exc)
+    ai_response_text, ai_reasoning_content = _normalize_inference_result(inference_result)
 
     # Save AI response
     ai_message = Message(
         conversation_id=conversation_id,
         role="assistant",
         content=ai_response_text,
+        reasoning_content=ai_reasoning_content,
     )
     db.add(ai_message)
 
@@ -291,6 +391,128 @@ async def send_message(
             pass  # Celery failure is non-fatal
 
     return MessageOut.model_validate(ai_message, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Streaming SSE endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/conversations/{conversation_id}/stream")
+async def stream_message(
+    conversation_id: str,
+    payload: MessageCreate,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _csrf_guard: None = Depends(require_csrf_protection),
+) -> StreamingResponse:
+    """Stream the AI response as Server-Sent Events.
+
+    The endpoint saves the user message immediately, streams tokens as they
+    arrive from the model, then persists the complete assistant message and
+    triggers async memory extraction when the stream finishes.
+    """
+    enforce_rate_limit(
+        request,
+        scope="chat-send",
+        identifier=current_user.id,
+        limit=10,
+        window_seconds=60,
+    )
+    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
+
+    # Save user message immediately
+    user_message = Message(
+        conversation_id=conversation_id,
+        role="user",
+        content=payload.content,
+    )
+    db.add(user_message)
+    db.flush()
+
+    # Load recent messages for context
+    recent = (
+        db.query(Message)
+        .filter(
+            Message.conversation_id == conversation_id,
+            Message.id != user_message.id,
+        )
+        .order_by(Message.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+    enable_thinking = _resolve_enable_thinking(payload.enable_thinking, payload.content)
+
+    async def _event_generator():
+        """Yield SSE-formatted lines from the streaming orchestrator."""
+        full_content = ""
+        full_reasoning: str | None = None
+
+        try:
+            async for event in orchestrate_inference_stream(
+                db,
+                workspace_id=workspace_id,
+                project_id=conversation.project_id,
+                conversation_id=conversation_id,
+                user_message=payload.content,
+                recent_messages=recent_msgs,
+                enable_thinking=enable_thinking,
+                user_id=current_user.id,
+            ):
+                event_type = event["event"]
+                data = event["data"]
+
+                # Track accumulated content from the final event
+                if event_type == "message_done":
+                    full_content = data.get("content", "")
+                    full_reasoning = data.get("reasoning_content")
+
+                yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("SSE stream error")
+            error_data = json.dumps({"message": str(exc)}, ensure_ascii=False)
+            yield f"event: error\ndata: {error_data}\n\n"
+            return
+
+        # Save assistant message after stream completes
+        try:
+            ai_message = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=full_content,
+                reasoning_content=full_reasoning,
+            )
+            db.add(ai_message)
+            conversation.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to persist streamed assistant message")
+            db.rollback()
+
+        # Trigger async memory extraction (non-fatal)
+        _trigger_memory_extraction(
+            workspace_id,
+            conversation.project_id,
+            conversation_id,
+            payload.content,
+            full_content,
+        )
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +583,7 @@ def _save_pipeline_messages(
         conversation_id=conversation.id,
         role="assistant",
         content=result["text_response"],
+        reasoning_content=result.get("reasoning_content"),
     )
     db.add(ai_msg)
     conversation.updated_at = datetime.now(timezone.utc)
@@ -404,6 +627,7 @@ async def send_voice_message(
         window_seconds=60,
     )
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
 
     audio_bytes = await _read_validated_upload(audio, kind="audio")
 
@@ -415,6 +639,7 @@ async def send_voice_message(
             project_id=conversation.project_id,
             conversation_id=conversation_id,
             audio_bytes=audio_bytes,
+            audio_filename=audio.filename or "recording.webm",
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
@@ -453,6 +678,7 @@ async def dictate_voice_input(
         window_seconds=60,
     )
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
 
     audio_bytes = await _read_validated_upload(audio, kind="audio")
 
@@ -461,6 +687,7 @@ async def dictate_voice_input(
             db,
             project_id=conversation.project_id,
             audio_bytes=audio_bytes,
+            filename=audio.filename or "recording.webm",
         )
     except Exception as exc:  # noqa: BLE001
         _raise_inference_api_error(exc)
@@ -489,6 +716,7 @@ async def synthesize_message_audio(
         window_seconds=60,
     )
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
 
     text = payload.content.strip()
     if not text:
@@ -515,6 +743,7 @@ async def send_image_message(
     image: UploadFile = File(...),
     audio: UploadFile | None = File(None),
     prompt: str | None = Form(None),
+    enable_thinking: bool | None = Form(None),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_role: str = Depends(get_current_workspace_role),
@@ -532,10 +761,13 @@ async def send_image_message(
         window_seconds=60,
     )
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _ensure_model_api_configured()
 
     image_bytes = await _read_validated_upload(image, kind="image")
     audio_bytes = await _read_validated_upload(audio, kind="audio") if audio else None
     prompt_text = (prompt or "").strip()
+    effective_prompt = prompt_text if (prompt_text and not audio_bytes) else ("请描述这张图片" if not audio_bytes else None)
+    enable_thinking = _resolve_enable_thinking(enable_thinking, effective_prompt or "")
 
     # Run full pipeline with image (and optional voice input)
     try:
@@ -545,9 +777,11 @@ async def send_image_message(
             project_id=conversation.project_id,
             conversation_id=conversation_id,
             audio_bytes=audio_bytes,
+            audio_filename=audio.filename if audio else None,
             image_bytes=image_bytes,
-            image_mime_type=(image.content_type or "image/jpeg").lower(),
-            text_input=prompt_text if (prompt_text and not audio_bytes) else ("请描述这张图片" if not audio_bytes else None),
+            image_mime_type=_normalize_media_type(image.content_type) or "image/jpeg",
+            text_input=effective_prompt,
+            enable_thinking=enable_thinking,
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()

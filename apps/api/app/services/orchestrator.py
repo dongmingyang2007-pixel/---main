@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+from typing import AsyncIterator
 
 from sqlalchemy.orm import Session
 
@@ -11,11 +13,21 @@ from app.services.context_loader import (
     load_conversation_context,
     load_permanent_memories,
 )
-from app.services.dashscope_client import chat_completion, chat_completion_multimodal, omni_completion
+from app.services.dashscope_client import (
+    chat_completion_detailed,
+    chat_completion_multimodal_detailed,
+    omni_completion,
+)
+from app.services.dashscope_stream import chat_completion_stream
 from app.services.embedding import search_similar
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 from app.services.pipeline_models import resolve_pipeline_model_id
+
+logger = logging.getLogger(__name__)
+
+_OPENAI_COMPATIBLE_ASR_PREFIXES = ("qwen3-asr-",)
+_OPENAI_COMPATIBLE_TTS_PREFIXES = ("qwen3-tts-",)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +130,7 @@ def _memory_matches_query(memory: Memory, query: str) -> bool:
     return any(token in normalized_query for token in tokens[:6])
 
 
-async def _build_and_call_llm(
+async def _assemble_llm_context(
     db: Session,
     *,
     workspace_id: str,
@@ -126,19 +138,14 @@ async def _build_and_call_llm(
     conversation_id: str,
     user_message: str,
     recent_messages: list[dict[str, str]],
-    llm_model_id: str,
-    image_bytes: bytes | None = None,
-    image_mime_type: str = "image/jpeg",
-    video_bytes: bytes | None = None,
-    video_mime_type: str = "video/mp4",
-) -> str:
-    """Shared logic used by both text and voice pipelines.
+) -> list[dict[str, str]]:
+    """Assemble the full messages list (system + history + user) for an LLM call.
 
-    1. Retrieve RAG knowledge (semantic search)
-    2. Load relevant memories (permanent + conversation temporary)
-    3. Load project personality
-    4. Assemble system prompt
-    5. Call model API (text-only or multimodal if *image_bytes* provided)
+    Shared by both the blocking ``_build_and_call_llm`` and the streaming
+    ``orchestrate_inference_stream`` paths so that context assembly logic is
+    not duplicated.
+
+    Returns a list of message dicts ready to pass to the model API.
     """
     # 1. Retrieve RAG knowledge
     knowledge_chunks: list[dict] = []
@@ -172,44 +179,45 @@ async def _build_and_call_llm(
     )
 
     try:
-        semantic_results = await search_similar(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            query=user_message,
-            limit=12,
-        )
-        relevant_memory_ids = _filter_relevant_memory_ids_for_prompt(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            conversation_created_by=conversation_record.created_by,
-            results=semantic_results,
-        )
-        knowledge_chunks = _filter_knowledge_chunks_for_prompt(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            results=semantic_results,
-        )
-        relevant_memory_ids.extend(
-            memory.id
-            for memory in [*permanent_memories, *temporary_memories]
-            if _memory_matches_query(memory, user_message)
-        )
-        relevant_memory_ids = list(dict.fromkeys(relevant_memory_ids))
-        if relevant_memory_ids:
-            linked_file_chunks = await load_linked_file_chunks_for_memories(
+        with db.begin_nested():
+            semantic_results = await search_similar(
                 db,
                 workspace_id=workspace_id,
                 project_id=project_id,
-                memory_ids=relevant_memory_ids,
                 query=user_message,
-                limit=4,
+                limit=12,
             )
+            relevant_memory_ids = _filter_relevant_memory_ids_for_prompt(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                conversation_created_by=conversation_record.created_by,
+                results=semantic_results,
+            )
+            knowledge_chunks = _filter_knowledge_chunks_for_prompt(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                results=semantic_results,
+            )
+            relevant_memory_ids.extend(
+                memory.id
+                for memory in [*permanent_memories, *temporary_memories]
+                if _memory_matches_query(memory, user_message)
+            )
+            relevant_memory_ids = list(dict.fromkeys(relevant_memory_ids))
+            if relevant_memory_ids:
+                linked_file_chunks = await load_linked_file_chunks_for_memories(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    memory_ids=relevant_memory_ids,
+                    query=user_message,
+                    limit=4,
+                )
     except Exception:  # noqa: BLE001
-        pass  # RAG failure is non-fatal, continue without knowledge
+        logger.exception("RAG context assembly failed; continuing without semantic context")
 
     # 3. Load project personality
     personality = extract_personality(project.description) if project else ""
@@ -252,21 +260,66 @@ async def _build_and_call_llm(
 
     system_prompt = "\n\n".join(system_parts) if system_parts else "你是一个有帮助的 AI 助手。"
 
-    # 5. Call model API
+    # 5. Build messages list
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})
 
+    return messages
+
+
+async def _build_and_call_llm(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    llm_model_id: str,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+    video_bytes: bytes | None = None,
+    video_mime_type: str = "video/mp4",
+    enable_thinking: bool | None = None,
+) -> dict[str, str | None]:
+    """Shared logic used by both text and voice pipelines.
+
+    1. Retrieve RAG knowledge (semantic search)
+    2. Load relevant memories (permanent + conversation temporary)
+    3. Load project personality
+    4. Assemble system prompt
+    5. Call model API (text-only or multimodal if *image_bytes* provided)
+    """
+    messages = await _assemble_llm_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+    )
+
     if image_bytes or video_bytes:
-        return await chat_completion_multimodal(
+        result = await chat_completion_multimodal_detailed(
             messages,
             model=llm_model_id,
             image_bytes=image_bytes,
             image_mime_type=image_mime_type,
             video_bytes=video_bytes,
             video_mime_type=video_mime_type,
+            enable_thinking=enable_thinking,
         )
-    return await chat_completion(messages, model=llm_model_id)
+    else:
+        result = await chat_completion_detailed(
+            messages,
+            model=llm_model_id,
+            enable_thinking=enable_thinking,
+        )
+    return {
+        "content": result.content,
+        "reasoning_content": result.reasoning_content,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +335,8 @@ async def orchestrate_inference(
     conversation_id: str,
     user_message: str,
     recent_messages: list[dict[str, str]],
-) -> str:
+    enable_thinking: bool | None = None,
+) -> dict[str, str | None]:
     """Orchestrate a full inference call (text → text).
 
     This is the original entry-point used by the chat endpoint.
@@ -298,7 +352,77 @@ async def orchestrate_inference(
         user_message=user_message,
         recent_messages=recent_messages,
         llm_model_id=llm_model_id,
+        enable_thinking=enable_thinking,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public API: streaming text inference (SSE)
+# ---------------------------------------------------------------------------
+
+
+async def orchestrate_inference_stream(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    enable_thinking: bool | None = None,
+    user_id: str | None = None,
+) -> AsyncIterator[dict]:
+    """Streaming variant of :func:`orchestrate_inference`.
+
+    Yields SSE-style event dicts as tokens arrive from the model:
+
+    * ``{"event": "message_start", "data": {"role": "assistant"}}``
+    * ``{"event": "token", "data": {"content": "..."}}``
+    * ``{"event": "reasoning", "data": {"content": "..."}}``
+    * ``{"event": "message_done", "data": {"content": ..., "reasoning_content": ...}}``
+
+    On error an ``{"event": "error", "data": {"message": ...}}`` is emitted.
+    """
+    llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
+
+    messages = await _assemble_llm_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+    )
+
+    yield {"event": "message_start", "data": {"role": "assistant"}}
+
+    full_content = ""
+    full_reasoning = ""
+
+    try:
+        async for chunk in chat_completion_stream(
+            messages,
+            model=llm_model_id,
+            enable_thinking=enable_thinking or False,
+        ):
+            if chunk.reasoning_content:
+                full_reasoning += chunk.reasoning_content
+                yield {"event": "reasoning", "data": {"content": chunk.reasoning_content}}
+            if chunk.content:
+                full_content += chunk.content
+                yield {"event": "token", "data": {"content": chunk.content}}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Streaming inference error")
+        yield {"event": "error", "data": {"message": str(exc)}}
+        return
+
+    yield {
+        "event": "message_done",
+        "data": {
+            "content": full_content,
+            "reasoning_content": full_reasoning or None,
+        },
+    }
 
 
 async def transcribe_audio_input_for_project(
@@ -306,6 +430,7 @@ async def transcribe_audio_input_for_project(
     *,
     project_id: str,
     audio_bytes: bytes,
+    filename: str = "audio.wav",
 ) -> str:
     from app.services.asr_client import transcribe_audio, transcribe_audio_realtime
 
@@ -314,10 +439,15 @@ async def transcribe_audio_input_for_project(
         db.query(ModelCatalog).filter(ModelCatalog.model_id == asr_model_id).first()
     )
     asr_is_realtime = asr_model_info is not None and "realtime" in (asr_model_info.capabilities or [])
+    runtime_model_id = (
+        asr_model_id
+        if asr_model_id.startswith(_OPENAI_COMPATIBLE_ASR_PREFIXES)
+        else "qwen3-asr-flash"
+    )
 
     if asr_is_realtime:
         return await transcribe_audio_realtime(audio_bytes, model=asr_model_id)
-    return await transcribe_audio(audio_bytes, model=asr_model_id)
+    return await transcribe_audio(audio_bytes, filename=filename, model=runtime_model_id)
 
 
 async def synthesize_speech_for_project(
@@ -333,10 +463,15 @@ async def synthesize_speech_for_project(
         db.query(ModelCatalog).filter(ModelCatalog.model_id == tts_model_id).first()
     )
     tts_is_realtime = tts_model_info is not None and "realtime" in (tts_model_info.capabilities or [])
+    runtime_model_id = (
+        tts_model_id
+        if tts_model_id.startswith(_OPENAI_COMPATIBLE_TTS_PREFIXES)
+        else "qwen3-tts-flash"
+    )
 
     if tts_is_realtime:
         return await synthesize_speech_realtime(text, model=tts_model_id)
-    return await synthesize_speech(text, model=tts_model_id)
+    return await synthesize_speech(text, model=runtime_model_id)
 
 
 async def transcribe_realtime_audio_input_for_project(
@@ -374,7 +509,8 @@ async def orchestrate_synthetic_realtime_turn(
     image_mime_type: str = "image/jpeg",
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
-) -> dict[str, str]:
+    enable_thinking: bool | None = None,
+) -> dict[str, str | None]:
     user_text = await transcribe_realtime_audio_input_for_project(
         db,
         project_id=project_id,
@@ -393,7 +529,7 @@ async def orchestrate_synthetic_realtime_turn(
         .all()
     )
     recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
-    text_response = await _build_and_call_llm(
+    llm_result = await _build_and_call_llm(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
@@ -405,8 +541,13 @@ async def orchestrate_synthetic_realtime_turn(
         image_mime_type=image_mime_type,
         video_bytes=video_bytes,
         video_mime_type=video_mime_type,
+        enable_thinking=enable_thinking,
     )
-    return {"text_input": user_text, "text_response": text_response}
+    return {
+        "text_input": user_text,
+        "text_response": llm_result["content"] or "",
+        "reasoning_content": llm_result["reasoning_content"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -421,10 +562,12 @@ async def orchestrate_voice_inference(
     project_id: str,
     conversation_id: str,
     audio_bytes: bytes | None = None,
+    audio_filename: str | None = None,
     image_bytes: bytes | None = None,
     image_mime_type: str = "image/jpeg",
     text_input: str | None = None,
     return_audio: bool = True,
+    enable_thinking: bool | None = None,
 ) -> dict:
     """Full voice pipeline orchestration.
 
@@ -433,6 +576,7 @@ async def orchestrate_voice_inference(
             "text_input": str,          # What the user said (after ASR)
             "text_response": str,       # AI's text response
             "audio_response": bytes | None,  # AI's voice (after TTS)
+            "reasoning_content": str | None,
         }
     """
     from app.models.entities import Message
@@ -474,21 +618,22 @@ async def orchestrate_voice_inference(
         # so we assemble system prompt here and call omni_completion directly.
         knowledge_chunks: list[dict] = []
         try:
-            knowledge_chunks = await search_similar(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                query=user_text if text_input else "voice conversation",
-                limit=5,
-            )
-            knowledge_chunks = _filter_knowledge_chunks_for_prompt(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                results=knowledge_chunks,
-            )
+            with db.begin_nested():
+                knowledge_chunks = await search_similar(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    query=user_text if text_input else "voice conversation",
+                    limit=5,
+                )
+                knowledge_chunks = _filter_knowledge_chunks_for_prompt(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    results=knowledge_chunks,
+                )
         except Exception:  # noqa: BLE001
-            pass
+            logger.exception("Omni RAG lookup failed; continuing without semantic context")
 
         permanent_memories = _load_visible_permanent_memories(
             db,
@@ -531,6 +676,7 @@ async def orchestrate_voice_inference(
             image_bytes=image_bytes,
             image_mime_type=image_mime_type,
             model=llm_model_id,
+            enable_thinking=enable_thinking,
         )
         text_response = omni_result["text"]
 
@@ -538,18 +684,20 @@ async def orchestrate_voice_inference(
         audio_response: bytes | None = None
         if return_audio and text_response:
             try:
-                audio_response = await synthesize_speech_for_project(
-                    db,
-                    project_id=project_id,
-                    text=text_response,
-                )
+                with db.begin_nested():
+                    audio_response = await synthesize_speech_for_project(
+                        db,
+                        project_id=project_id,
+                        text=text_response,
+                    )
             except Exception:  # noqa: BLE001
-                pass
+                logger.warning("Realtime TTS failed in omni pipeline", exc_info=True)
 
         return {
             "text_input": user_text,
             "text_response": text_response,
             "audio_response": audio_response,
+            "reasoning_content": omni_result.get("reasoning_content"),
         }
 
     # ① ASR: audio → text  ------------------------------------------------
@@ -559,6 +707,7 @@ async def orchestrate_voice_inference(
             db,
             project_id=project_id,
             audio_bytes=audio_bytes,
+            filename=audio_filename or "audio.wav",
         )
 
     if not user_text.strip():
@@ -611,7 +760,7 @@ async def orchestrate_voice_inference(
         enriched_text = f"[用户发送了一张图片，内容是：{image_description}]\n{user_text}"
 
     # ⑤ Call LLM (reuses shared helper)  -----------------------------------
-    text_response = await _build_and_call_llm(
+    llm_result = await _build_and_call_llm(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
@@ -621,22 +770,26 @@ async def orchestrate_voice_inference(
         llm_model_id=llm_model_id,
         image_bytes=image_bytes if use_multimodal_llm else None,
         image_mime_type=image_mime_type,
+        enable_thinking=enable_thinking,
     )
+    text_response = llm_result["content"] or ""
 
     # ⑥ TTS: text → audio  ------------------------------------------------
     audio_response: bytes | None = None
     if return_audio and text_response:
         try:
-            audio_response = await synthesize_speech_for_project(
-                db,
-                project_id=project_id,
-                text=text_response,
-            )
+            with db.begin_nested():
+                audio_response = await synthesize_speech_for_project(
+                    db,
+                    project_id=project_id,
+                    text=text_response,
+                )
         except Exception:  # noqa: BLE001
-            pass  # TTS failure is non-fatal
+            logger.warning("TTS failed in voice pipeline", exc_info=True)
 
     return {
         "text_input": user_text,
         "text_response": text_response,
         "audio_response": audio_response,
+        "reasoning_content": llm_result["reasoning_content"],
     }
