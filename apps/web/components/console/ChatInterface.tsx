@@ -151,6 +151,7 @@ export function ChatInterface({
   // Load messages when conversationId changes
   useEffect(() => {
     setVoiceNotice(null);
+    messageListRef.current?.stopPlayback();
     if (!conversationId) {
       setMessages([]);
       return;
@@ -247,6 +248,12 @@ export function ChatInterface({
         isStreaming: false,
       };
       setMessages((prev) => [...prev, assistantMessage]);
+      if (autoReadEnabled && response.audio_response) {
+        messageListRef.current?.playReadAloud(
+          assistantMessage.id,
+          response.audio_response,
+        );
+      }
     } catch (error) {
       let content = t("errors.imageUploadFailed");
       if (isApiRequestError(error)) {
@@ -270,6 +277,7 @@ export function ChatInterface({
       setIsTyping(false);
     }
   }, [
+    autoReadEnabled,
     conversationId,
     input,
     isTyping,
@@ -318,6 +326,9 @@ export function ChatInterface({
         isStreaming: false,
       };
       setMessages((prev) => [...prev, aiMessage]);
+      if (autoReadEnabled) {
+        messageListRef.current?.playReadAloud(aiMessage.id);
+      }
     } catch (error) {
       let content = t("errors.generic");
       if (isApiRequestError(error)) {
@@ -341,6 +352,7 @@ export function ChatInterface({
       setIsTyping(false);
     }
   }, [
+    autoReadEnabled,
     conversationId,
     handleSendImage,
     input,
@@ -691,6 +703,7 @@ export function ChatInterface({
           isTyping={isTyping}
           conversationId={conversationId}
           noConversation={noConversation}
+          onError={setVoiceNotice}
         />
       )}
 

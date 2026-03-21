@@ -82,6 +82,7 @@ export interface ChatMessageListProps {
   isTyping: boolean;
   conversationId?: string | null;
   noConversation: boolean;
+  onError?: (message: string) => void;
 }
 
 export interface ChatMessageListHandle {
@@ -94,6 +95,8 @@ export interface ChatMessageListHandle {
   ) => void;
   setMessages: (msgs: Message[]) => void;
   replaceMessages: (updater: (prev: Message[]) => Message[]) => void;
+  playReadAloud: (messageId: string, audioBase64?: string) => void;
+  stopPlayback: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -104,7 +107,7 @@ export const ChatMessageList = forwardRef<
   ChatMessageListHandle,
   ChatMessageListProps
 >(function ChatMessageList(
-  { messages, onMessagesChange, isTyping, conversationId, noConversation },
+  { messages, onMessagesChange, isTyping, conversationId, noConversation, onError },
   ref,
 ) {
   const t = useTranslations("console-chat");
@@ -206,8 +209,10 @@ export const ChatMessageList = forwardRef<
         }
         cacheMessageAudio(message.id, data.audio_response);
         playMessageAudio(data.audio_response, message.id);
-      } catch {
-        // Error handled silently — parent can add notice via voiceNotice if needed
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Read-aloud failed";
+        onError?.(errorMessage);
       } finally {
         setLoadingReadAloudId((current) =>
           current === message.id ? null : current,
@@ -217,6 +222,7 @@ export const ChatMessageList = forwardRef<
     [
       cacheMessageAudio,
       conversationId,
+      onError,
       playMessageAudio,
       readingMessageId,
       stopReadAloud,
@@ -273,8 +279,22 @@ export const ChatMessageList = forwardRef<
       replaceMessages(updater: (prev: Message[]) => Message[]) {
         onMessagesChange(updater(messagesRef.current));
       },
+      playReadAloud(messageId: string, audioBase64?: string) {
+        if (audioBase64) {
+          cacheMessageAudio(messageId, audioBase64);
+          playMessageAudio(audioBase64, messageId);
+        } else {
+          const msg = messagesRef.current.find((m) => m.id === messageId);
+          if (msg) {
+            void handleReadAloud(msg);
+          }
+        }
+      },
+      stopPlayback() {
+        stopReadAloud();
+      },
     }),
-    [onMessagesChange],
+    [cacheMessageAudio, handleReadAloud, onMessagesChange, playMessageAudio, stopReadAloud],
   );
 
   /* ---------- render ---------- */
