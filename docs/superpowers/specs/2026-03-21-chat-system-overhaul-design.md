@@ -130,6 +130,8 @@ Flow:
 4. On stream end: save assistant message async + trigger memory extraction
 5. Existing `POST /messages` stays as non-streaming fallback
 
+**Abort/cancel behavior:** If the user sends a new message while a stream is in-flight, or navigates away, the frontend calls `AbortController.abort()` on the fetch. The backend detects the closed connection and stops the DashScope stream. A "Stop generating" button appears in the UI during streaming.
+
 ### 2.2 DashScope Streaming Client
 
 New function in `dashscope_client.py`:
@@ -304,11 +306,11 @@ if (calibrationSamplesRef.current < CALIBRATION_FRAMES) {
     speechThresholdRef.current = Math.max(p75 * 2.5, MIN_SPEECH_THRESHOLD);
     // MIN_SPEECH_THRESHOLD = 0.008
   }
-  return; // Don't send audio during calibration
+  return; // Buffer audio during calibration but don't trigger VAD
 }
 ```
 
-State transitions from `ready` to `listening` after calibration. UI shows "Calibrating microphone..." briefly.
+State transitions from `ready` to `listening` after calibration. UI shows "Calibrating microphone..." briefly. Audio received during calibration is buffered (not discarded) so the user's first utterance is not lost if they start speaking immediately.
 
 ### 4.3 Empty Buffer Error Feedback
 
