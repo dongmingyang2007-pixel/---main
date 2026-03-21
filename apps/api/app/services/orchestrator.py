@@ -431,6 +431,7 @@ async def transcribe_audio_input_for_project(
     project_id: str,
     audio_bytes: bytes,
     filename: str = "audio.wav",
+    content_type: str | None = None,
 ) -> str:
     from app.services.asr_client import transcribe_audio, transcribe_audio_realtime
 
@@ -447,7 +448,7 @@ async def transcribe_audio_input_for_project(
 
     if asr_is_realtime:
         return await transcribe_audio_realtime(audio_bytes, model=asr_model_id)
-    return await transcribe_audio(audio_bytes, filename=filename, model=runtime_model_id)
+    return await transcribe_audio(audio_bytes, filename=filename, model=runtime_model_id, content_type=content_type)
 
 
 async def synthesize_speech_for_project(

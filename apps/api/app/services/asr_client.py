@@ -10,10 +10,19 @@ DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
 
+def _detect_audio_mime(content_type: str | None, filename: str) -> str:
+    """Detect audio MIME type, prioritizing content_type over filename extension."""
+    if content_type and content_type.startswith("audio/"):
+        return content_type
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "wav"
+    return {"wav": "audio/wav", "mp3": "audio/mpeg", "webm": "audio/webm", "m4a": "audio/mp4", "ogg": "audio/ogg", "mp4": "audio/mp4"}.get(ext, "audio/wav")
+
+
 async def transcribe_audio(
     audio_bytes: bytes,
     filename: str = "audio.wav",
     model: str | None = None,
+    content_type: str | None = None,
 ) -> str:
     """Transcribe audio to text using Qwen3-ASR-Flash (OpenAI-compatible).
 
@@ -22,8 +31,9 @@ async def transcribe_audio(
 
     Args:
         audio_bytes: Raw audio data (WAV, MP3, WebM, etc.)
-        filename: Filename (used for logging, not sent to API)
+        filename: Filename (used for MIME detection fallback)
         model: ASR model ID (default: qwen3-asr-flash)
+        content_type: HTTP Content-Type from the upload (preferred over filename extension)
 
     Returns:
         Transcribed text string
@@ -32,10 +42,8 @@ async def transcribe_audio(
 
     # Encode audio as base64 data URL
     audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-    # Detect MIME type from filename
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "wav"
-    mime_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "webm": "audio/webm", "m4a": "audio/mp4", "ogg": "audio/ogg"}
-    mime = mime_map.get(ext, "audio/wav")
+    # Detect MIME type: prefer content_type, fall back to filename extension
+    mime = _detect_audio_mime(content_type, filename)
     data_url = f"data:{mime};base64,{audio_b64}"
 
     try:

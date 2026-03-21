@@ -688,6 +688,7 @@ async def dictate_voice_input(
             project_id=conversation.project_id,
             audio_bytes=audio_bytes,
             filename=audio.filename or "recording.webm",
+            content_type=_normalize_media_type(audio.content_type) or None,
         )
     except Exception as exc:  # noqa: BLE001
         _raise_inference_api_error(exc)
