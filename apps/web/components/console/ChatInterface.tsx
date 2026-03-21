@@ -4,16 +4,16 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
-import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import RealtimeVoice from "./RealtimeVoice";
 import SyntheticRealtimeVoice from "./SyntheticRealtimeVoice";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
+import { ChatModePanel } from "./ChatModePanel";
+import { StandardVoiceControls } from "./StandardVoiceControls";
 import {
   type ChatMode,
   type Message,
   type ApiMessage,
-  type DictationResponse,
   type ImageMessageResponse,
   type ProjectChatSettings,
   type PipelineConfigItem,
@@ -44,9 +44,6 @@ export function ChatInterface({
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<
-    "idle" | "recording" | "sending"
-  >("idle");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
   const [projectDefaultMode, setProjectDefaultMode] = useState<ChatMode>("standard");
@@ -54,6 +51,7 @@ export function ChatInterface({
   const [catalogItems, setCatalogItems] = useState<CatalogModelItem[]>([]);
   const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
+  const [dictationText, setDictationText] = useState<string | null>(null);
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
   const runtimeMessageCounterRef = useRef(0);
@@ -73,7 +71,6 @@ export function ChatInterface({
     projectId: projectId ?? null,
     chatMode: projectDefaultMode,
   });
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder();
 
   const nextRuntimeMessageId = useCallback((prefix: string) => {
     runtimeMessageCounterRef.current += 1;
@@ -330,65 +327,6 @@ export function ChatInterface({
     [autoReadEnabled, conversationId, isTyping, onConversationActivity, t],
   );
 
-  const dictateVoiceInput = useCallback(
-    async (audioBlob: Blob) => {
-      if (!conversationId) return;
-      setVoiceStatus("sending");
-      setVoiceNotice(null);
-
-      try {
-        const formData = new FormData();
-        formData.append("audio", audioBlob, "recording.webm");
-
-        const data = await apiPostFormData<DictationResponse>(
-          `/api/v1/chat/conversations/${conversationId}/dictate`,
-          formData,
-        );
-
-        const dictatedText = data.text_input.trim();
-        if (!dictatedText) {
-          setVoiceNotice(t("errors.dictationFailed"));
-          return;
-        }
-        // TODO(Task 4): route dictated text into ChatInputBar via StandardVoiceControls
-        void handleSend(dictatedText, {});
-      } catch (error) {
-        let content = t("errors.dictationFailed");
-        if (isApiRequestError(error)) {
-          if (error.code === "inference_timeout") {
-            content = t("errors.inferenceTimeout");
-          } else if (error.code === "model_api_unconfigured") {
-            content = t("errors.modelUnconfigured");
-          }
-        }
-        setVoiceNotice(content);
-      } finally {
-        setVoiceStatus("idle");
-      }
-    },
-    [conversationId, handleSend, t],
-  );
-
-  const handleMicClick = useCallback(async () => {
-    if (isRecording) {
-      const blob = await stopRecording();
-      if (blob.size > 0) {
-        await dictateVoiceInput(blob);
-      } else {
-        setVoiceStatus("idle");
-      }
-    } else {
-      try {
-        setVoiceNotice(null);
-        await startRecording();
-        setVoiceStatus("recording");
-      } catch {
-        setVoiceStatus("idle");
-        setVoiceNotice(t("micPermissionDenied"));
-      }
-    }
-  }, [dictateVoiceInput, isRecording, startRecording, stopRecording, t]);
-
   const handleLiveTranscriptUpdate = useCallback(
     ({ role, text, final, action = "upsert" }: LiveTranscriptUpdate) => {
       if (!conversationId) {
@@ -565,59 +503,52 @@ export function ChatInterface({
     voiceContextRef.current = next;
   }, [chatMode, conversationId, projectId, t, voiceSessionState]);
 
+  const handleModeChange = useCallback(
+    (mode: ChatMode) => {
+      if (!conversationId) {
+        return;
+      }
+      setConversationModeOverrides((prev) => {
+        if (mode === projectDefaultMode) {
+          if (!(conversationId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        }
+        return {
+          ...prev,
+          [conversationId]: mode,
+        };
+      });
+    },
+    [conversationId, projectDefaultMode],
+  );
+
+  const handleDictationResult = useCallback((text: string) => {
+    setDictationText(text);
+  }, []);
+
+  const handleDictationTextConsumed = useCallback(() => {
+    setDictationText(null);
+  }, []);
+
   const llmModelId = getPipelineModelId(pipelineItems, "llm", "qwen3.5-plus");
   const syntheticModeAvailable = modelSupportsCapability(catalogItems, llmModelId, "vision");
   const syntheticVideoAvailable = modelSupportsCapability(catalogItems, llmModelId, "video");
-  const chatModeOptions: { key: ChatMode; label: string; disabled?: boolean }[] = [
-    { key: "standard", label: t("mode.standard") },
-    { key: "omni_realtime", label: t("mode.omni") },
-    {
-      key: "synthetic_realtime",
-      label: t("mode.synthetic"),
-      disabled: !syntheticModeAvailable,
-    },
-  ];
   const isStandardMode = chatMode === "standard";
   const noConversation = !conversationId;
 
   return (
     <div className="chat-interface">
-      <div className="chat-mode-switcher">
-        {chatModeOptions.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            className={`chat-mode-chip${chatMode === option.key ? " is-active" : ""}`}
-            onClick={() => {
-              if (!option.disabled) {
-                if (!conversationId) {
-                  return;
-                }
-                setConversationModeOverrides((prev) => {
-                  if (option.key === projectDefaultMode) {
-                    if (!(conversationId in prev)) {
-                      return prev;
-                    }
-                    const next = { ...prev };
-                    delete next[conversationId];
-                    return next;
-                  }
-                  return {
-                    ...prev,
-                    [conversationId]: option.key,
-                  };
-                });
-              }
-            }}
-            disabled={option.disabled}
-          >
-            {option.label}
-            {projectDefaultMode === option.key ? (
-              <span className="chat-mode-default">{t("mode.default")}</span>
-            ) : null}
-          </button>
-        ))}
-      </div>
+      <ChatModePanel
+        chatMode={chatMode}
+        projectDefaultMode={projectDefaultMode}
+        syntheticModeAvailable={syntheticModeAvailable}
+        onModeChange={handleModeChange}
+        disabled={noConversation}
+      />
 
       {loadingMessages && (
         <div className="chat-messages">
@@ -638,44 +569,14 @@ export function ChatInterface({
       )}
 
       <div className="chat-input-bar-voice">
-        {isStandardMode ? (
-          <button
-            className={`chat-mic-btn ${isRecording ? "is-recording" : ""}`}
-            onClick={() => void handleMicClick()}
-            disabled={voiceStatus === "sending" || (isTyping && !isRecording) || noConversation}
-            title={isRecording ? t("voiceRecording") : t("voiceRecord")}
-            type="button"
-          >
-            {isRecording ? (
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="6" y="6" width="12" height="12" rx="2" />
-              </svg>
-            ) : (
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="9" y="2" width="6" height="12" rx="3" />
-                <path d="M5 10a7 7 0 0 0 14 0" />
-                <line x1="12" y1="19" x2="12" y2="22" />
-              </svg>
-            )}
-          </button>
+        {isStandardMode && conversationId ? (
+          <StandardVoiceControls
+            conversationId={conversationId}
+            isTyping={isTyping}
+            disabled={noConversation}
+            onDictationResult={handleDictationResult}
+            onError={setVoiceNotice}
+          />
         ) : null}
         <ChatInputBar
           onSend={(content, options) => void handleSend(content, options)}
@@ -684,16 +585,12 @@ export function ChatInterface({
           isStandardMode={isStandardMode}
           autoReadEnabled={autoReadEnabled}
           onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
+          externalInputText={dictationText}
+          onExternalInputTextConsumed={handleDictationTextConsumed}
         />
       </div>
 
-      {isStandardMode && voiceStatus === "recording" && (
-        <div className="chat-voice-indicator">{t("voiceRecording")}</div>
-      )}
-      {isStandardMode && voiceStatus === "sending" && (
-        <div className="chat-voice-indicator">{t("voiceSending")}</div>
-      )}
-      {voiceNotice && (!isStandardMode || voiceStatus === "idle") && (
+      {voiceNotice && (
         <div className="chat-voice-indicator is-error">{voiceNotice}</div>
       )}
 

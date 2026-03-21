@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslations } from "next-intl";
 
 import { cycleState } from "./chat-types";
@@ -19,6 +19,10 @@ export interface ChatInputBarProps {
   isStandardMode: boolean;
   autoReadEnabled: boolean;
   onAutoReadToggle: () => void;
+  /** When called externally (e.g. from dictation), sets the input text. */
+  externalInputText?: string | null;
+  /** Acknowledge that the external text was consumed. */
+  onExternalInputTextConsumed?: () => void;
 }
 
 export function ChatInputBar({
@@ -28,6 +32,8 @@ export function ChatInputBar({
   isStandardMode,
   autoReadEnabled,
   onAutoReadToggle,
+  externalInputText,
+  onExternalInputTextConsumed,
 }: ChatInputBarProps) {
   const t = useTranslations("console-chat");
   const [input, setInput] = useState("");
@@ -38,6 +44,19 @@ export function ChatInputBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
+
+  // Accept dictated / external text into the input field
+  useEffect(() => {
+    if (externalInputText != null && externalInputText !== "") {
+      setInput((prev) => {
+        const trimmed = prev.trim();
+        return trimmed ? `${trimmed} ${externalInputText}` : externalInputText;
+      });
+      onExternalInputTextConsumed?.();
+      // Focus the input so the user can review / edit before sending
+      inputRef.current?.focus();
+    }
+  }, [externalInputText, onExternalInputTextConsumed]);
 
   const handleImageFileSelected = useCallback(
     (file: File | null) => {
