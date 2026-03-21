@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Link } from "@/i18n/navigation";
 import { startAssistantTraining } from "@/lib/assistant-training";
+import { MODEL_PICKER_SELECTION_KEY } from "@/lib/discover-labels";
 import { apiGet, apiPatch } from "@/lib/api";
 import { uploadKnowledgeFiles } from "@/lib/knowledge-upload";
 
@@ -117,7 +118,6 @@ const ACCEPTED_KNOWLEDGE_MIME = [
 const DEFAULT_REALTIME_MODEL_ID = "qwen3-omni-flash-realtime";
 const DEFAULT_REALTIME_ASR_MODEL_ID = "qwen3-asr-flash-realtime";
 const DEFAULT_REALTIME_TTS_MODEL_ID = "qwen3-tts-flash-realtime";
-const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
 
 interface PendingModelSelection {
   from: string;

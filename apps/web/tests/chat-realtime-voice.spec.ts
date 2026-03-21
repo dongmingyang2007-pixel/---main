@@ -3,9 +3,13 @@ import { installWorkbenchApiMock } from "./helpers/mockWorkbenchApi";
 
 test.use({ locale: "zh-CN" });
 
+async function switchToOmniRealtime(page: Page) {
+  await page.getByRole("button", { name: /Omni 实时/ }).click();
+}
+
 async function installRealtimeVoiceMocks(
   page: Page,
-  scenario: "success" | "permission-denied",
+  scenario: "success" | "permission-denied" | "turn-error",
 ) {
   await page.evaluate(
     ({ activeScenario }) => {
@@ -53,6 +57,18 @@ async function installRealtimeVoiceMocks(
         }
       }
 
+      class MockGainNode {
+        gain = { value: 1 };
+
+        connect() {
+          return undefined;
+        }
+
+        disconnect() {
+          return undefined;
+        }
+      }
+
       class MockAudioContext {
         static readonly sampleRate = 24000;
         state: "running" | "suspended" | "closed" = "running";
@@ -85,6 +101,10 @@ async function installRealtimeVoiceMocks(
 
         createScriptProcessor() {
           return new MockScriptProcessor();
+        }
+
+        createGain() {
+          return new MockGainNode();
         }
       }
 
@@ -162,6 +182,22 @@ async function installRealtimeVoiceMocks(
                   data: JSON.stringify({ type: "response.done" }),
                 });
               }, 90);
+            } else if (activeScenario === "turn-error") {
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.final", text: "语音问题" }),
+                });
+              }, 30);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "response.text", text: "回答到一半" }),
+                });
+              }, 60);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "turn.error", message: "AI 暂时无响应，请重试" }),
+                });
+              }, 90);
             }
             return;
           }
@@ -204,6 +240,7 @@ test.describe("Realtime Voice", () => {
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await installRealtimeVoiceMocks(page, "permission-denied");
     await page.locator(".chat-sidebar-new").click();
+    await switchToOmniRealtime(page);
     await expect(page.locator(".rt-entry")).toBeVisible();
 
     await page.locator(".rt-entry").click();
@@ -217,6 +254,7 @@ test.describe("Realtime Voice", () => {
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await installRealtimeVoiceMocks(page, "success");
     await page.locator(".chat-sidebar-new").click();
+    await switchToOmniRealtime(page);
     await expect(page.locator(".rt-entry")).toBeVisible();
 
     await page.locator(".rt-entry").click();
@@ -224,5 +262,24 @@ test.describe("Realtime Voice", () => {
     await expect(page.locator(".chat-message.is-user").last()).toContainText("语音问题");
     await expect(page.locator(".chat-message.is-assistant").last()).toContainText("语音回答");
     await expect(page.locator(".chat-sidebar-item.is-active")).toContainText("语音问题");
+  });
+
+  test("turn errors keep realtime session interactive instead of dropping to retry", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await installRealtimeVoiceMocks(page, "turn-error");
+    await page.locator(".chat-sidebar-new").click();
+    await switchToOmniRealtime(page);
+    await expect(page.locator(".rt-entry")).toBeVisible();
+
+    await page.locator(".rt-entry").click();
+
+    await expect(page.locator(".chat-message.is-user").last()).toContainText("语音问题");
+    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("回答到一半");
+    await expect(page.locator(".rt-pill")).toBeVisible();
+    await expect(page.locator(".rt-pill-status")).toHaveText("聆听中");
+    await expect(page.locator(".chat-voice-indicator.is-error")).toContainText("AI 暂时无响应，请重试");
+    await expect(page.locator(".rt-entry-label")).toHaveCount(0);
   });
 });

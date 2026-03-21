@@ -147,6 +147,10 @@ test.describe("Console Shell", () => {
     await page.locator(".model-card").filter({ hasText: "Qwen3.5-Plus" }).first().click();
     await expect(page).toHaveURL(/\/app\/discover\/models\/qwen3\.5-plus$/);
     await expect(page.getByRole("heading", { name: "Qwen3.5-Plus" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "使用此模型" })).toHaveCount(0);
+    await expect(page.locator(".model-detail-status")).toContainText("可在助手页使用");
+    await expect(page.locator('[aria-label="Breadcrumb"]').first()).toContainText("模型");
+    await expect(page.getByRole("link", { name: "models" })).toHaveCount(0);
 
     await page.goto("/app/discover/models/qwen3-vl-plus");
     await expect(page.getByRole("heading", { name: "Qwen3-VL-Plus" })).toBeVisible();
@@ -257,6 +261,8 @@ test.describe("Console Shell", () => {
     await expect(page).toHaveURL(/\/app\/discover\?picker=1&category=llm/);
     await page.locator(".model-card").filter({ hasText: "Qwen Max" }).first().click();
     await expect(page.getByRole("heading", { name: "Qwen Max" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "返回上一页" })).toHaveCount(1);
+    await expect(page.getByRole("button", { name: "使用此模型" })).toBeEnabled();
     await page.getByRole("button", { name: "使用此模型" }).click();
 
     await expect(page).toHaveURL(new RegExp(`/app/assistants/${handle.seedProjectId}$`));
@@ -427,6 +433,59 @@ test.describe("Console Shell", () => {
 
     await expect.poll(() => speechBodies.length).toBe(1);
     expect(speechBodies).toEqual([{ content: "Mock assistant response" }]);
+  });
+
+  test("deep think shows reasoning content and read aloud still uses the final answer", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+    const messageBodies: Array<{ content?: string; enable_thinking?: boolean }> = [];
+    const speechBodies: Array<{ content?: string }> = [];
+
+    await stubBrowserVoiceApis(page);
+    await page.route("**/api/v1/chat/conversations/*/messages", async (route, request) => {
+      if (request.method() === "POST") {
+        messageBodies.push(request.postDataJSON() as { content?: string; enable_thinking?: boolean });
+      }
+      await route.fallback();
+    });
+    await page.route("**/api/v1/chat/conversations/*/speech", async (route) => {
+      speechBodies.push(route.request().postDataJSON() as { content?: string });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          audio_response: "AQID",
+        }),
+      });
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("button", { name: "深度思考" }).click();
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("请拆解一下");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    await expect.poll(() => messageBodies.length).toBe(1);
+    expect(messageBodies[0]).toEqual({ content: "请拆解一下", enable_thinking: true });
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-reasoning")).toContainText("思考过程");
+    await expect(assistantMessage.locator(".chat-reasoning")).toContainText("Mock reasoning trace");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
+
+    await assistantMessage.getByRole("button", { name: "朗读" }).click();
+    await expect.poll(() => speechBodies.length).toBe(1);
+    expect(speechBodies[0]).toEqual({ content: "Mock assistant response" });
+  });
+
+  test("new assistant messages render with a typewriter cursor before settling", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我起草");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-inline-cursor")).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
   });
 
   test("auto read requests speech for each new assistant reply", async ({ page }) => {

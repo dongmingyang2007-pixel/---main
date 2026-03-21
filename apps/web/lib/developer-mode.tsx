@@ -32,7 +32,7 @@ function subscribeDeveloperMode(onStoreChange: () => void): () => void {
     return () => {};
   }
   const handleStorage = (event: Event) => {
-    if (!(event instanceof StorageEvent) || event.key === DEV_MODE_KEY) {
+    if (event instanceof StorageEvent && event.key === DEV_MODE_KEY) {
       onStoreChange();
     }
   };

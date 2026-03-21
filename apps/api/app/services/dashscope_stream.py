@@ -11,10 +11,10 @@ import httpx
 
 from app.core.config import settings
 from app.services.dashscope_client import (
-    DASHSCOPE_BASE_URL,
     InferenceTimeoutError,
     UpstreamServiceError,
 )
+from app.services.dashscope_http import DASHSCOPE_BASE_URL, dashscope_headers, get_client
 
 logger = logging.getLogger(__name__)
 
@@ -54,46 +54,44 @@ async def chat_completion_stream(
         payload["enable_thinking"] = True
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream(
-                "POST",
-                f"{DASHSCOPE_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.dashscope_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line[len("data:"):].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        logger.warning("dashscope_stream: failed to parse SSE line: %r", raw)
-                        continue
+        client = get_client()
+        async with client.stream(
+            "POST",
+            f"{DASHSCOPE_BASE_URL}/chat/completions",
+            headers=dashscope_headers(),
+            json=payload,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[len("data:"):].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.warning("dashscope_stream: failed to parse SSE line: %r", raw)
+                    continue
 
-                    choices = data.get("choices")
-                    if not choices:
-                        # Could be a usage-only chunk; skip silently
-                        continue
+                choices = data.get("choices")
+                if not choices:
+                    # Could be a usage-only chunk; skip silently
+                    continue
 
-                    delta = choices[0].get("delta", {})
-                    finish_reason = choices[0].get("finish_reason")
+                delta = choices[0].get("delta", {})
+                finish_reason = choices[0].get("finish_reason")
 
-                    content = delta.get("content") or ""
-                    reasoning_content = delta.get("reasoning_content") or ""
+                content = delta.get("content") or ""
+                reasoning_content = delta.get("reasoning_content") or ""
 
-                    if content or reasoning_content or finish_reason:
-                        yield StreamChunk(
-                            content=content,
-                            reasoning_content=reasoning_content,
-                            finish_reason=finish_reason,
-                        )
+                if content or reasoning_content or finish_reason:
+                    yield StreamChunk(
+                        content=content,
+                        reasoning_content=reasoning_content,
+                        finish_reason=finish_reason,
+                    )
     except (InferenceTimeoutError, UpstreamServiceError):
         raise
     except httpx.TimeoutException as exc:

@@ -24,6 +24,7 @@ import {
   getPipelineModelId,
   modelSupportsCapability,
   toMessage,
+  getApiErrorMessage,
 } from "./chat-types";
 
 interface ChatInterfaceProps {
@@ -238,16 +239,9 @@ export function ChatInterface({
             );
           }
         } catch (error) {
-          let errorContent = t("errors.imageUploadFailed");
-          if (isApiRequestError(error)) {
-            if (error.code === "inference_timeout") {
-              errorContent = t("errors.inferenceTimeout");
-            } else if (error.code === "model_api_unconfigured") {
-              errorContent = t("errors.modelUnconfigured");
-            } else if (error.code === "model_api_unavailable") {
-              errorContent = t("errors.modelUnavailable");
-            }
-          }
+          const errorContent = isApiRequestError(error)
+            ? getApiErrorMessage(error, t)
+            : t("errors.imageUploadFailed");
           setMessages((prev) => [
             ...prev,
             {
@@ -394,16 +388,9 @@ export function ChatInterface({
               messageListRef.current?.playReadAloud(aiMessage.id);
             }
           } catch (fallbackError) {
-            let errorContent = t("errors.generic");
-            if (isApiRequestError(fallbackError)) {
-              if (fallbackError.code === "inference_timeout") {
-                errorContent = t("errors.inferenceTimeout");
-              } else if (fallbackError.code === "model_api_unconfigured") {
-                errorContent = t("errors.modelUnconfigured");
-              } else if (fallbackError.code === "model_api_unavailable") {
-                errorContent = t("errors.modelUnavailable");
-              }
-            }
+            const errorContent = isApiRequestError(fallbackError)
+              ? getApiErrorMessage(fallbackError, t)
+              : t("errors.generic");
             setMessages((prev) => [
               ...prev,
               {

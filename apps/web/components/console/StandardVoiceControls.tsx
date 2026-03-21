@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 
 import { apiPostFormData, isApiRequestError } from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
-import type { DictationResponse } from "./chat-types";
+import { type DictationResponse, getApiErrorMessage } from "./chat-types";
 
 export interface StandardVoiceControlsProps {
   conversationId: string;
@@ -58,14 +58,11 @@ export function StandardVoiceControls({
         }
         onDictationResult(dictatedText);
       } catch (error) {
-        let content = t("errors.dictationFailed");
-        if (isApiRequestError(error)) {
-          if (error.code === "inference_timeout") {
-            content = t("errors.inferenceTimeout");
-          } else if (error.code === "model_api_unconfigured") {
-            content = t("errors.modelUnconfigured");
-            setAsrAvailable(false);
-          }
+        const content = isApiRequestError(error)
+          ? getApiErrorMessage(error, t)
+          : t("errors.dictationFailed");
+        if (isApiRequestError(error) && error.code === "model_api_unconfigured") {
+          setAsrAvailable(false);
         }
         onError(content);
       } finally {

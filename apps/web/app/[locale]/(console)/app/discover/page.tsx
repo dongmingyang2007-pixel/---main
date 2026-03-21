@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Link } from "@/i18n/navigation";
 import { apiGet, isApiRequestError } from "@/lib/api";
 import { getProviderStyle } from "@/lib/model-utils";
+import {
+  categoryLabel,
+  groupLabel,
+  capabilityLabel,
+  providerDisplayLabel,
+} from "@/lib/discover-labels";
 
 interface DiscoverTaxonomyItem {
   key: string;
@@ -46,115 +52,6 @@ interface DiscoverResponse {
 
 type Tab = "all" | "packs" | "models";
 
-function capabilityLabel(token: string, t: (key: string) => string): string {
-  const keyMap: Record<string, string> = {
-    function_calling: "modelDetail.tool.functionCalling",
-    web_search: "modelDetail.tool.webSearch",
-    deep_thinking: "modelDetail.feature.deepThinking",
-    streaming: "modelDetail.feature.streaming",
-    structured_output: "modelDetail.feature.structuredOutput",
-    cache: "modelDetail.feature.cache",
-    ranking: "modelDetail.feature.ranking",
-  };
-  return keyMap[token] ? t(keyMap[token]) : token;
-}
-
-function providerDisplayLabel(
-  provider: string,
-  fallback: string,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return fallback || provider;
-  }
-  if (provider.includes("qwen") || provider.includes("alibaba")) {
-    return t("discover.provider.qwen");
-  }
-  if (provider.includes("deepseek")) {
-    return "DeepSeek";
-  }
-  return fallback || provider;
-}
-
-function categoryLabelForTaxonomy(
-  item: DiscoverTaxonomyItem,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return item.label;
-  }
-  const key = item.key;
-  const map: Record<string, string> = {
-    omni: "discover.taxonomy.omni",
-    deep_thinking: "discover.taxonomy.deepThinking",
-    text_generation: "discover.taxonomy.textGeneration",
-    vision: "discover.taxonomy.vision",
-    image_generation: "discover.taxonomy.imageGeneration",
-    video_generation: "discover.taxonomy.videoGeneration",
-    speech_recognition: "discover.taxonomy.speechRecognition",
-    speech_synthesis: "discover.taxonomy.speechSynthesis",
-    multimodal_embedding: "discover.taxonomy.multimodalEmbedding",
-    text_embedding: "discover.taxonomy.textEmbedding",
-    realtime_omni: "discover.taxonomy.realtimeOmni",
-    realtime_tts: "discover.taxonomy.realtimeTts",
-    realtime_asr: "discover.taxonomy.realtimeAsr",
-    realtime_translate: "discover.taxonomy.realtimeTranslate",
-    rerank: "discover.taxonomy.rerank",
-  };
-  return map[key] ? t(map[key]) : item.label;
-}
-
-function categoryLabelForModel(
-  item: DiscoverModel,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return item.official_category || "";
-  }
-  const key = item.official_category_key || "";
-  const map: Record<string, string> = {
-    omni: "discover.taxonomy.omni",
-    deep_thinking: "discover.taxonomy.deepThinking",
-    text_generation: "discover.taxonomy.textGeneration",
-    vision: "discover.taxonomy.vision",
-    image_generation: "discover.taxonomy.imageGeneration",
-    video_generation: "discover.taxonomy.videoGeneration",
-    speech_recognition: "discover.taxonomy.speechRecognition",
-    speech_synthesis: "discover.taxonomy.speechSynthesis",
-    multimodal_embedding: "discover.taxonomy.multimodalEmbedding",
-    text_embedding: "discover.taxonomy.textEmbedding",
-    realtime_omni: "discover.taxonomy.realtimeOmni",
-    realtime_tts: "discover.taxonomy.realtimeTts",
-    realtime_asr: "discover.taxonomy.realtimeAsr",
-    realtime_translate: "discover.taxonomy.realtimeTranslate",
-    rerank: "discover.taxonomy.rerank",
-  };
-  return key && map[key] ? t(map[key]) : (item.official_category || "");
-}
-
-function groupLabelForModel(
-  item: DiscoverModel,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return item.official_group || "";
-  }
-  const key = item.official_group_key || "";
-  const map: Record<string, string> = {
-    multimodal: "discover.group.multimodal",
-    text: "discover.group.text",
-    vision: "discover.group.vision",
-    speech: "discover.group.speech",
-    embedding: "discover.group.embedding",
-    realtime: "discover.group.realtime",
-  };
-  return key && map[key] ? t(map[key]) : (item.official_group || "");
-}
-
 function normalizeDiscoverPayload(raw: unknown): DiscoverResponse {
   if (Array.isArray(raw)) {
     const items = raw.filter((item): item is DiscoverModel => typeof item === "object" && item !== null);
@@ -193,7 +90,7 @@ function normalizeDiscoverPayload(raw: unknown): DiscoverResponse {
   };
 }
 
-export default function DiscoverPage() {
+function DiscoverPageContent() {
   const t = useTranslations("console");
   const locale = useLocale();
   const searchParams = useSearchParams();
@@ -260,9 +157,9 @@ export default function DiscoverPage() {
         providerDisplayLabel(item.provider, item.provider_display, locale, t),
         item.description,
         item.official_category || "",
-        categoryLabelForModel(item, locale, t),
+        categoryLabel(item.official_category_key, item.official_category, locale, t),
         item.official_group || "",
-        groupLabelForModel(item, locale, t),
+        groupLabel(item.official_group_key, item.official_group, locale, t),
         ...(item.aliases ?? []),
       ]
         .join(" ")
@@ -342,7 +239,7 @@ export default function DiscoverPage() {
                 className={`discover-category-chip${activeCategory === item.key ? " active" : ""}`}
                 onClick={() => setActiveCategory(item.key)}
               >
-                {categoryLabelForTaxonomy(item, locale, t)}
+                {categoryLabel(item.key, item.label, locale, t)}
               </button>
             ))}
           </div>
@@ -409,7 +306,7 @@ export default function DiscoverPage() {
 
                     <div className="model-card-tags">
                       <span className="model-card-tag highlight">
-                        {categoryLabelForModel(model, locale, t)}
+                        {categoryLabel(model.official_category_key, model.official_category, locale, t)}
                       </span>
                       {secondaryTag ? (
                         <span className="model-card-tag">
@@ -431,5 +328,13 @@ export default function DiscoverPage() {
         </section>
       )}
     </div>
+  );
+}
+
+export default function DiscoverPage() {
+  return (
+    <Suspense fallback={<div className="discover-page" />}>
+      <DiscoverPageContent />
+    </Suspense>
   );
 }

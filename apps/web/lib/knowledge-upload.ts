@@ -17,7 +17,7 @@ type UploadPresignResponse = {
   data_item_id: string;
 };
 
-async function ensureKnowledgeDataset(projectId: string): Promise<DatasetInfo> {
+export async function ensureKnowledgeDataset(projectId: string): Promise<DatasetInfo> {
   const datasets = await apiGet<DatasetInfo[]>(`/api/v1/datasets?project_id=${projectId}`);
   if (datasets.length > 0) {
     return datasets[0];

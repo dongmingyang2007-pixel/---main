@@ -20,6 +20,7 @@ class ConversationOut(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    enable_thinking: bool | None = None
 
 
 class MessageOut(BaseModel):
@@ -27,4 +28,5 @@ class MessageOut(BaseModel):
     conversation_id: str
     role: str
     content: str
+    reasoning_content: str | None = None
     created_at: datetime

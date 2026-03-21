@@ -20,8 +20,11 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.routers import auth, chat, datasets, demo, eval, memory, memory_stream, model_catalog, models, pipeline, projects, realtime, train, uploads, waitlist
 from app.services.chat_modes import ensure_project_chat_mode_schema
+from app.services.embedding import ensure_embedding_schema
 from app.services.model_catalog_seed import seed_model_catalog
 from app.services.memory_roots import ensure_project_memory_root_schema
+from app.services.schema_helpers import ensure_column
+from app.services.dashscope_http import close_client
 from app.services.runtime_state import runtime_state
 
 
@@ -31,6 +34,8 @@ async def lifespan(_: FastAPI):
     runtime_state.ensure_available()
     Base.metadata.create_all(bind=engine)
     ensure_project_chat_mode_schema(engine)
+    ensure_embedding_schema(engine)
+    ensure_column(engine, "messages", "reasoning_content", "TEXT")
     ensure_project_memory_root_schema(engine)
     db = SessionLocal()
     try:
@@ -38,6 +43,7 @@ async def lifespan(_: FastAPI):
     finally:
         db.close()
     yield
+    await close_client()
 
 
 app = FastAPI(

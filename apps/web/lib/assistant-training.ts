@@ -1,30 +1,12 @@
 "use client";
 
 import { apiGet, apiPost } from "@/lib/api";
-
-type DatasetInfo = {
-  id: string;
-  name: string;
-  type: string;
-};
+import { ensureKnowledgeDataset } from "@/lib/knowledge-upload";
 
 type DatasetVersion = {
   id: string;
   version: number;
 };
-
-async function ensureDataset(projectId: string): Promise<DatasetInfo> {
-  const datasets = await apiGet<DatasetInfo[]>(`/api/v1/datasets?project_id=${projectId}`);
-  if (datasets.length > 0) {
-    return datasets[0];
-  }
-
-  return apiPost<DatasetInfo>("/api/v1/datasets", {
-    project_id: projectId,
-    name: "Default Knowledge",
-    type: "text",
-  });
-}
 
 async function ensureDatasetVersion(datasetId: string): Promise<DatasetVersion> {
   const versions = await apiGet<DatasetVersion[]>(`/api/v1/datasets/${datasetId}/versions`).catch(() => []);
@@ -43,7 +25,7 @@ async function ensureDatasetVersion(datasetId: string): Promise<DatasetVersion> 
 }
 
 export async function ensureTrainableDatasetVersion(projectId: string): Promise<string> {
-  const dataset = await ensureDataset(projectId);
+  const dataset = await ensureKnowledgeDataset(projectId);
   const version = await ensureDatasetVersion(dataset.id);
   return version.id;
 }

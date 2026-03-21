@@ -180,6 +180,7 @@ type ChatMessage = {
   conversation_id: string;
   role: "user" | "assistant";
   content: string;
+  reasoning_content?: string | null;
   created_at: string;
 };
 
@@ -1056,7 +1057,7 @@ export async function installWorkbenchApiMock(
 
     if (conversationMessagesMatch && method === "POST") {
       const conversationId = conversationMessagesMatch[1];
-      const body = readJsonBody<{ content?: string }>(route);
+      const body = readJsonBody<{ content?: string; enable_thinking?: boolean }>(route);
       const now = nowIso();
       const userMessage: ChatMessage = {
         id: nextId(db, "msg"),
@@ -1070,6 +1071,7 @@ export async function installWorkbenchApiMock(
         conversation_id: conversationId,
         role: "assistant",
         content: "Mock assistant response",
+        reasoning_content: body.enable_thinking ? "Mock reasoning trace" : null,
         created_at: now,
       };
       db.messagesByConversationId[conversationId] = [

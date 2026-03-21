@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Literal, cast
 
-from sqlalchemy import inspect, text as sql_text
+from sqlalchemy import text as sql_text
 from sqlalchemy.engine import Engine
+
+from app.services.schema_helpers import ensure_column
 
 
 ChatMode = Literal["standard", "omni_realtime", "synthetic_realtime"]
@@ -19,20 +21,11 @@ def normalize_chat_mode(value: str | None) -> ChatMode:
 
 
 def ensure_project_chat_mode_schema(engine: Engine) -> None:
-    inspector = inspect(engine)
-    table_names = set(inspector.get_table_names())
-    if "projects" not in table_names:
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("projects")}
+    ensure_column(
+        engine, "projects", "default_chat_mode", "TEXT",
+        nullable=False, default="'standard'",
+    )
     with engine.begin() as connection:
-        if "default_chat_mode" not in columns:
-            connection.execute(
-                sql_text(
-                    "ALTER TABLE projects "
-                    "ADD COLUMN default_chat_mode TEXT NOT NULL DEFAULT 'standard'"
-                )
-            )
         connection.execute(
             sql_text(
                 "UPDATE projects "

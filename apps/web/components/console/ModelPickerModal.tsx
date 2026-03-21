@@ -4,6 +4,7 @@ import { useEffect, useMemo, useReducer } from "react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
+import { MODEL_PICKER_SELECTION_KEY } from "@/lib/discover-labels";
 
 interface CatalogModel {
   id: string;
@@ -80,7 +81,6 @@ const CATEGORY_LABEL_KEYS: Record<string, string> = {
   realtime_asr: "pipelineRealtimeAsr",
   realtime_tts: "pipelineRealtimeTts",
 };
-const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
 
 interface PendingModelSelection {
   from: string;

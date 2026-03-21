@@ -1,6 +1,6 @@
 import { getApiBaseUrl, getApiHttpBaseUrl } from "@/lib/env";
 import { clearAuthState, setAuthState } from "@/lib/auth-state";
-import { buildClientCookieAttributes } from "@/lib/security";
+import { readCookie, writeCookie, clearCookie } from "@/lib/cookie";
 
 const WORKSPACE_COOKIE_NAME = "mingrun_workspace_id";
 const LEGACY_WORKSPACE_COOKIE_NAME = "qihang_workspace_id";
@@ -59,28 +59,6 @@ function toApiRequestError(error: unknown, apiBaseUrl: string): ApiRequestError 
   });
 }
 
-function readCookie(name: string): string | null {
-  if (typeof document === "undefined") {
-    return null;
-  }
-  const cookies = document.cookie.split(";").map((value) => value.trim());
-  const match = cookies.find((value) => value.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
-}
-
-function writeCookie(name: string, value: string): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-  document.cookie = `${name}=${encodeURIComponent(value)}; ${buildClientCookieAttributes()}`;
-}
-
-function clearCookie(name: string): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-  document.cookie = `${name}=; ${buildClientCookieAttributes(0)}`;
-}
 
 function readWorkspaceId(): string | null {
   return readCookie(WORKSPACE_COOKIE_NAME) || readCookie(LEGACY_WORKSPACE_COOKIE_NAME);

@@ -16,7 +16,7 @@ from app.core.deps import (
 from app.core.errors import ApiError
 from app.core.sanitize import strip_object_key_fields
 from app.models import Annotation, DataItem, Dataset, DatasetVersion, User
-from app.routers.utils import get_data_item_in_workspace, get_dataset_in_workspace, get_project_in_workspace
+from app.routers.utils import get_data_item_in_workspace, get_dataset_in_workspace, get_project_in_workspace_or_404
 from app.schemas.dataset import (
     AnnotationCreateRequest,
     AnnotationOut,
@@ -115,9 +115,7 @@ def list_datasets(
     db: Session = Depends(get_db_session),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[DatasetOut]:
-    project = get_project_in_workspace(db, project_id=project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, project_id, workspace_id)
 
     items = (
         db.query(Dataset)
@@ -137,9 +135,7 @@ def create_dataset(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> DatasetOut:
-    project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
 
     dataset = Dataset(project_id=payload.project_id, name=payload.name, type=payload.type)
     db.add(dataset)

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DEFAULT_LOCAL_API_PORT, LOOPBACK_HOSTS, isLoopbackHost, isLocalBindHost } from "@/lib/network-hosts";
 
 const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
-const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const;
-const CSP_LOOPBACK_HOSTS = ["localhost", "127.0.0.1"] as const;
-const LOCAL_BIND_HOSTS = ["0.0.0.0", "::"] as const;
-const DEFAULT_LOCAL_API_PORT = "8000";
+const CSP_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
 /** Routes that next-intl should handle (pages, not API/static/files). */
 function isPageRoute(pathname: string): boolean {
@@ -24,17 +22,9 @@ function normalizeOrigin(value?: string): string | null {
   }
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  return LOOPBACK_HOSTS.includes(hostname as (typeof LOOPBACK_HOSTS)[number]);
-}
-
-function isLocalBindHost(hostname: string): boolean {
-  return LOCAL_BIND_HOSTS.includes(hostname as (typeof LOCAL_BIND_HOSTS)[number]);
-}
-
 function expandLoopbackOrigins(
   origin: string | null,
-  loopbackHosts: readonly string[] = LOOPBACK_HOSTS,
+  loopbackHosts: Iterable<string> = LOOPBACK_HOSTS,
 ): string[] {
   if (!origin) {
     return [];
@@ -189,11 +179,7 @@ export function proxy(request: NextRequest) {
   let nonce: string | null = null;
   let response: NextResponse;
 
-  if (isPageRoute(rawPathname)) {
-    response = NextResponse.next();
-  } else {
-    response = NextResponse.next();
-  }
+  response = NextResponse.next();
 
   // Generate nonce for CSP (production only)
   if (useNonceCsp) {

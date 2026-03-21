@@ -24,7 +24,7 @@ from app.models import Artifact, Metric, Project, TrainingJob, TrainingRun, User
 from app.routers.utils import (
     get_dataset_in_workspace,
     get_dataset_version_in_workspace,
-    get_project_in_workspace,
+    get_project_in_workspace_or_404,
     get_training_job_in_workspace,
     get_training_run_in_workspace,
 )
@@ -100,9 +100,7 @@ def create_job(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
-    project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
 
     dataset_version = get_dataset_version_in_workspace(
         db,
@@ -182,9 +180,7 @@ def list_jobs(
     query = db.query(TrainingJob).join(Project, Project.id == TrainingJob.project_id)
     query = query.filter(Project.workspace_id == workspace_id, Project.deleted_at.is_(None))
     if project_id:
-        project = get_project_in_workspace(db, project_id=project_id, workspace_id=workspace_id)
-        if not project:
-            raise ApiError("not_found", "Project not found", status_code=404)
+        get_project_in_workspace_or_404(db, project_id, workspace_id)
         query = query.filter(TrainingJob.project_id == project_id)
 
     jobs = query.order_by(TrainingJob.created_at.desc()).all()

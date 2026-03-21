@@ -1,13 +1,20 @@
-const DEFAULT_LOCAL_API_PORT = "8000";
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const LOCAL_BIND_HOSTS = new Set(["0.0.0.0", "::"]);
+import { DEFAULT_LOCAL_API_PORT, LOOPBACK_HOSTS, LOCAL_BIND_HOSTS, isLoopbackHost } from "@/lib/network-hosts";
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  return LOOPBACK_HOSTS.has(hostname);
+function shouldUseDirectBrowserApi(configured?: string): boolean {
+  if (!configured) {
+    return false;
+  }
+
+  try {
+    const url = new URL(configured);
+    return isLoopbackHost(url.hostname) || LOCAL_BIND_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function getApiBaseUrl(): string {
@@ -42,6 +49,10 @@ export function getApiBaseUrl(): string {
 
 export function getApiHttpBaseUrl(): string {
   if (typeof window !== "undefined") {
+    const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    if (shouldUseDirectBrowserApi(configured)) {
+      return getApiBaseUrl();
+    }
     return "";
   }
   return getApiBaseUrl();

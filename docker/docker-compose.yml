@@ -46,6 +46,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.api
+    env_file:
+      - ../.env
     environment:
       ENV: local
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/qihang
@@ -66,9 +68,6 @@ services:
       COOKIE_SAMESITE: lax
       CSRF_TTL_SECONDS: 3600
       ALLOWED_HOSTS: localhost,127.0.0.1,testserver,api
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      DASHSCOPE_MODEL: ${DASHSCOPE_MODEL:-qwen-plus}
-      DASHSCOPE_EMBEDDING_MODEL: ${DASHSCOPE_EMBEDDING_MODEL:-text-embedding-v3}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-auto@mingrun-tech.com}
@@ -99,6 +98,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.worker
+    env_file:
+      - ../.env
     environment:
       ENV: local
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/qihang

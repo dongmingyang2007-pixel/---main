@@ -23,6 +23,10 @@ test.describe("Realtime Voice", () => {
         disconnect(): void {}
       }
 
+      class FakeGainNode extends FakeAudioNode {
+        gain = { value: 1 };
+      }
+
       class FakeScriptProcessorNode extends FakeAudioNode {
         onaudioprocess: ((event: unknown) => void) | null = null;
       }
@@ -45,6 +49,10 @@ test.describe("Realtime Voice", () => {
 
         createScriptProcessor(): FakeScriptProcessorNode {
           return new FakeScriptProcessorNode();
+        }
+
+        createGain(): FakeGainNode {
+          return new FakeGainNode();
         }
 
         createBuffer(_channels: number, length: number, sampleRate: number) {
@@ -152,6 +160,7 @@ test.describe("Realtime Voice", () => {
     expect(response?.headers()["permissions-policy"] || "").toContain("microphone=(self)");
 
     await page.locator(".chat-sidebar-new").click();
+    await page.getByRole("button", { name: /Omni 实时/ }).click();
     await expect(page.locator(".rt-entry")).toBeVisible();
 
     await page.locator(".rt-entry").click();

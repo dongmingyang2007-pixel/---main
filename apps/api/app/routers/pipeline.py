@@ -12,6 +12,7 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.models import ModelCatalog, PipelineConfig, Project, User
+from app.routers.utils import get_project_in_workspace_or_404
 from app.schemas.pipeline import PipelineConfigOut, PipelineConfigUpdate, PipelineOut
 from app.services.pipeline_models import (
     DEFAULT_PIPELINE_MODELS,
@@ -21,17 +22,6 @@ from app.services.pipeline_models import (
 )
 
 router = APIRouter(prefix="/api/v1/pipeline", tags=["pipeline"])
-
-
-def _verify_project_ownership(db: Session, project_id: str, workspace_id: str) -> Project:
-    project = (
-        db.query(Project)
-        .filter(Project.id == project_id, Project.workspace_id == workspace_id, Project.deleted_at.is_(None))
-        .first()
-    )
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
-    return project
 
 
 def _ensure_pipeline_defaults(db: Session, project_id: str) -> bool:
@@ -73,7 +63,7 @@ def get_pipeline(
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> PipelineOut:
     _ = current_user
-    project = _verify_project_ownership(db, project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, project_id, workspace_id)
 
     changed = _ensure_pipeline_defaults(db, project_id)
     configs = db.query(PipelineConfig).filter(PipelineConfig.project_id == project_id).all()
@@ -92,7 +82,7 @@ def upsert_pipeline_config(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> PipelineConfigOut:
-    project = _verify_project_ownership(db, payload.project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
     _ensure_pipeline_defaults(db, payload.project_id)
 
     # Validate that the model_id exists in the catalog

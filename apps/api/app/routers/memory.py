@@ -17,7 +17,7 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.models import Conversation, DataItem, Dataset, Memory, MemoryEdge, MemoryFile, Project, User
-from app.routers.utils import get_data_item_in_workspace
+from app.routers.utils import get_data_item_in_workspace, get_project_in_workspace_or_404
 from app.schemas.memory import (
     MemoryCreate,
     MemoryDetailOut,
@@ -42,17 +42,6 @@ from app.services.memory_visibility import (
 )
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
-
-
-def _verify_project_ownership(db: Session, project_id: str, workspace_id: str) -> Project:
-    project = (
-        db.query(Project)
-        .filter(Project.id == project_id, Project.workspace_id == workspace_id, Project.deleted_at.is_(None))
-        .first()
-    )
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
-    return project
 
 
 def _is_completed_data_item(item: DataItem) -> bool:
@@ -264,7 +253,7 @@ def get_memory_graph(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> MemoryGraphOut:
-    project = _verify_project_ownership(db, project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, project_id, workspace_id)
     if conversation_id:
         _verify_conversation_ownership(
             db,
@@ -396,7 +385,7 @@ def create_memory(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> MemoryOut:
-    project = _verify_project_ownership(db, payload.project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
     if payload.type not in {"permanent", "temporary"}:
         raise ApiError("bad_request", "Invalid memory type", status_code=400)
     if payload.type == "temporary" and not payload.source_conversation_id:
@@ -761,7 +750,7 @@ def delete_memory(
     if is_assistant_root_memory(memory):
         raise ApiError("bad_request", "Assistant root memory cannot be deleted", status_code=400)
 
-    project = _verify_project_ownership(db, memory.project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
     root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
     replacement_parent_id = memory.parent_memory_id or (root_memory.id if root_memory.id != memory.id else None)
     children = (
@@ -822,7 +811,7 @@ def promote_memory(
     memory.metadata_json = build_private_memory_metadata(metadata, owner_user_id=owner_user_id)
     memory.source_conversation_id = None
     if memory.parent_memory_id is None:
-        project = _verify_project_ownership(db, memory.project_id, workspace_id)
+        project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
         root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
         memory.parent_memory_id = root_memory.id
     memory.updated_at = datetime.now(timezone.utc)
@@ -839,7 +828,7 @@ async def search_memory(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[MemorySearchResult]:
-    project = _verify_project_ownership(db, payload.project_id, workspace_id)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
     root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=False)
     if root_changed:
         db.commit()

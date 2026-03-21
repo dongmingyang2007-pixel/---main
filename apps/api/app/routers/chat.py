@@ -31,6 +31,7 @@ from app.services.orchestrator import (
     synthesize_speech_for_project,
     transcribe_audio_input_for_project,
 )
+from app.routers.utils import get_project_in_workspace_or_404
 from app.services.upload_validation import (
     UPLOAD_SIGNATURE_READ_BYTES,
     validate_workspace_upload_signature,
@@ -177,17 +178,6 @@ async def _read_validated_upload(upload: UploadFile, *, kind: str) -> bytes:
     return payload
 
 
-def _verify_project_ownership(db: Session, project_id: str, workspace_id: str) -> Project:
-    project = (
-        db.query(Project)
-        .filter(Project.id == project_id, Project.workspace_id == workspace_id, Project.deleted_at.is_(None))
-        .first()
-    )
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
-    return project
-
-
 def _raise_inference_api_error(exc: Exception) -> None:
     if isinstance(exc, InferenceTimeoutError):
         raise ApiError("inference_timeout", "Inference timeout", status_code=503) from exc
@@ -219,7 +209,7 @@ def list_conversations(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[ConversationOut]:
-    _verify_project_ownership(db, project_id, workspace_id)
+    get_project_in_workspace_or_404(db, project_id, workspace_id)
 
     conversations_query = db.query(Conversation).filter(
         Conversation.project_id == project_id,
@@ -241,7 +231,7 @@ def create_conversation(
     _write_guard: None = Depends(require_workspace_write_access),
     _csrf_guard: None = Depends(require_csrf_protection),
 ) -> ConversationOut:
-    _verify_project_ownership(db, payload.project_id, workspace_id)
+    get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
 
     conversation = Conversation(
         workspace_id=workspace_id,

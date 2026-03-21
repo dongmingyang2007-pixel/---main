@@ -118,6 +118,22 @@ export function toMessage(message: ApiMessage): Message {
   };
 }
 
+export function getApiErrorMessage(
+  error: { code?: string; message?: string },
+  t: (key: string) => string,
+): string {
+  if (error.code === "inference_timeout") {
+    return t("errors.inferenceTimeout");
+  }
+  if (error.code === "model_api_unconfigured") {
+    return t("errors.modelUnconfigured");
+  }
+  if (error.code === "model_api_unavailable") {
+    return t("errors.modelUnavailable");
+  }
+  return error.message || t("errors.generic");
+}
+
 export function cycleState(current: "auto" | "on" | "off"): "auto" | "on" | "off" {
   if (current === "auto") return "on";
   if (current === "on") return "off";

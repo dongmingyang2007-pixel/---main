@@ -251,6 +251,7 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Memory(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):

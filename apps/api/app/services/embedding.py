@@ -1,8 +1,32 @@
 from sqlalchemy import bindparam, text as sql_text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from uuid import uuid4
 
 from app.services.dashscope_client import create_embedding
+from app.services.schema_helpers import ensure_column
+
+
+def ensure_embedding_schema(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(sql_text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+    ensure_column(engine, "embeddings", "vector", "vector(1024)")
+
+    with engine.begin() as connection:
+        connection.execute(
+            sql_text(
+                "CREATE INDEX IF NOT EXISTS idx_embeddings_ws_project "
+                "ON embeddings (workspace_id, project_id)"
+            )
+        )
+        connection.execute(
+            sql_text(
+                "CREATE INDEX IF NOT EXISTS idx_embeddings_vector_hnsw "
+                "ON embeddings USING hnsw (vector vector_cosine_ops) "
+                "WITH (m = 16, ef_construction = 200)"
+            )
+        )
 
 
 async def embed_and_store(
@@ -27,7 +51,7 @@ async def embed_and_store(
     db.execute(
         sql_text("""
             INSERT INTO embeddings (id, workspace_id, project_id, memory_id, data_item_id, chunk_text, vector, created_at)
-            VALUES (:id, :workspace_id, :project_id, :memory_id, :data_item_id, :chunk_text, :vector::vector, now())
+            VALUES (:id, :workspace_id, :project_id, :memory_id, :data_item_id, :chunk_text, CAST(:vector AS vector), now())
         """),
         {
             "id": embedding_id,
@@ -59,12 +83,12 @@ async def search_similar(
     results = db.execute(
         sql_text("""
             SELECT id, chunk_text, memory_id, data_item_id,
-                   1 - (vector <=> :query_vector::vector) AS score
+                   1 - (vector <=> CAST(:query_vector AS vector)) AS score
             FROM embeddings
             WHERE workspace_id = :workspace_id
               AND project_id = :project_id
               AND vector IS NOT NULL
-            ORDER BY vector <=> :query_vector::vector
+            ORDER BY vector <=> CAST(:query_vector AS vector)
             LIMIT :limit
         """),
         {
@@ -105,15 +129,15 @@ async def find_duplicate_memory_with_vector(
     row = db.execute(
         sql_text("""
             SELECT e.memory_id, m.content,
-                   1 - (e.vector <=> :query_vector::vector) AS score
+                   1 - (e.vector <=> CAST(:query_vector AS vector)) AS score
             FROM embeddings e
             JOIN memories m ON m.id = e.memory_id
             WHERE e.workspace_id = :workspace_id
               AND e.project_id = :project_id
               AND e.memory_id IS NOT NULL
               AND e.vector IS NOT NULL
-              AND 1 - (e.vector <=> :query_vector::vector) >= :threshold
-            ORDER BY e.vector <=> :query_vector::vector
+              AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :threshold
+            ORDER BY e.vector <=> CAST(:query_vector AS vector)
             LIMIT 1
         """),
         {
@@ -172,16 +196,16 @@ async def find_related_memories(
     rows = db.execute(
         sql_text("""
             SELECT e.memory_id, m.content, m.category,
-                   1 - (e.vector <=> :query_vector::vector) AS score
+                   1 - (e.vector <=> CAST(:query_vector AS vector)) AS score
             FROM embeddings e
             JOIN memories m ON m.id = e.memory_id
             WHERE e.workspace_id = :workspace_id
               AND e.project_id = :project_id
               AND e.memory_id IS NOT NULL
               AND e.vector IS NOT NULL
-              AND 1 - (e.vector <=> :query_vector::vector) >= :low
-              AND 1 - (e.vector <=> :query_vector::vector) < :high
-            ORDER BY e.vector <=> :query_vector::vector
+              AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :low
+              AND 1 - (e.vector <=> CAST(:query_vector AS vector)) < :high
+            ORDER BY e.vector <=> CAST(:query_vector AS vector)
             LIMIT :limit
         """),
         {
@@ -348,7 +372,7 @@ async def search_data_item_chunks(
     query_vector = await create_embedding(query)
     statement = sql_text("""
         SELECT embeddings.id, embeddings.chunk_text, embeddings.data_item_id, data_items.filename,
-               1 - (embeddings.vector <=> :query_vector::vector) AS score
+               1 - (embeddings.vector <=> CAST(:query_vector AS vector)) AS score
         FROM embeddings
         JOIN data_items ON data_items.id = embeddings.data_item_id
         JOIN datasets ON datasets.id = data_items.dataset_id
@@ -361,7 +385,7 @@ async def search_data_item_chunks(
           AND projects.deleted_at IS NULL
           AND projects.workspace_id = :workspace_id
           AND COALESCE(data_items.meta_json ->> 'upload_status', 'completed') = 'completed'
-        ORDER BY embeddings.vector <=> :query_vector::vector
+        ORDER BY embeddings.vector <=> CAST(:query_vector AS vector)
         LIMIT :limit
     """).bindparams(bindparam("data_item_ids", expanding=True))
 

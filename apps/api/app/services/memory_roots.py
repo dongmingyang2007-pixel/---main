@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import inspect, text as sql_text
+from sqlalchemy import text as sql_text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+
+from app.services.schema_helpers import ensure_column
 
 from app.models import Memory, Project
 
@@ -139,15 +141,7 @@ def ensure_project_assistant_root(
 
 
 def ensure_project_memory_root_schema(engine: Engine) -> None:
-    inspector = inspect(engine)
-    table_names = set(inspector.get_table_names())
-    if "projects" not in table_names:
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("projects")}
-    if "assistant_root_memory_id" not in columns:
-        with engine.begin() as connection:
-            connection.execute(sql_text("ALTER TABLE projects ADD COLUMN assistant_root_memory_id TEXT"))
+    ensure_column(engine, "projects", "assistant_root_memory_id", "TEXT")
 
     with engine.begin() as connection:
         connection.execute(

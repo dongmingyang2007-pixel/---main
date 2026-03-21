@@ -15,7 +15,7 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.models import DataItem, User
-from app.routers.utils import get_data_item_in_workspace, get_dataset_in_workspace, get_project_in_workspace
+from app.routers.utils import get_data_item_in_workspace, get_dataset_in_workspace, get_project_in_workspace_or_404
 from app.schemas.dataset import UploadCompleteRequest, UploadPresignRequest, UploadPresignResponse
 from app.services.audit import write_audit_log
 from app.services.runtime_state import runtime_state
@@ -98,9 +98,7 @@ def presign_upload(
     dataset = get_dataset_in_workspace(db, dataset_id=payload.dataset_id, workspace_id=workspace_id)
     if not dataset:
         raise ApiError("not_found", "Dataset not found", status_code=404)
-    project = get_project_in_workspace(db, project_id=dataset.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, dataset.project_id, workspace_id)
     normalized_media_type = validate_workspace_upload_declaration(payload.filename, payload.media_type)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024

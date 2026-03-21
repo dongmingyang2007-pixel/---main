@@ -1,10 +1,7 @@
 import base64
 
-import httpx
-from app.core.config import settings
 from app.services.dashscope_client import raise_upstream_error
-
-DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+from app.services.dashscope_http import DASHSCOPE_BASE_URL, dashscope_headers, get_client
 
 
 async def describe_image(
@@ -28,38 +25,35 @@ async def describe_image(
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{DASHSCOPE_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.dashscope_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{image_b64}",
-                                    },
+        client = get_client()
+        response = await client.post(
+            f"{DASHSCOPE_BASE_URL}/chat/completions",
+            headers=dashscope_headers(),
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_b64}",
                                 },
-                                {
-                                    "type": "text",
-                                    "text": prompt,
-                                },
-                            ],
-                        }
-                    ],
-                    "max_tokens": 1024,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 1024,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as exc:  # noqa: BLE001
         raise_upstream_error(exc)
 
@@ -107,21 +101,18 @@ async def chat_with_image(
             formatted_messages.append(msg)
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{DASHSCOPE_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.dashscope_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": formatted_messages,
-                    "max_tokens": 2048,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
+        client = get_client()
+        response = await client.post(
+            f"{DASHSCOPE_BASE_URL}/chat/completions",
+            headers=dashscope_headers(),
+            json={
+                "model": model,
+                "messages": formatted_messages,
+                "max_tokens": 2048,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as exc:  # noqa: BLE001
         raise_upstream_error(exc)

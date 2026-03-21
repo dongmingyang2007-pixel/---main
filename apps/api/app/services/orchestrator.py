@@ -12,6 +12,7 @@ from app.services.context_loader import (
     filter_knowledge_chunks,
     load_conversation_context,
     load_permanent_memories,
+    load_recent_messages,
 )
 from app.services.dashscope_client import (
     chat_completion_detailed,
@@ -522,14 +523,7 @@ async def orchestrate_synthetic_realtime_turn(
         return {"text_input": "", "text_response": ""}
 
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
-    recent = (
-        db.query(Message)
-        .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
-        .limit(20)
-        .all()
-    )
-    recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+    recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
     llm_result = await _build_and_call_llm(
         db,
         workspace_id=workspace_id,
@@ -580,7 +574,6 @@ async def orchestrate_voice_inference(
             "reasoning_content": str | None,
         }
     """
-    from app.models.entities import Message
     from app.services.vision_client import describe_image
 
     # ⓪ Check for omni model (handles audio in/out directly)  -------------
@@ -603,14 +596,7 @@ async def orchestrate_voice_inference(
         )
         # Omni mode: skip ASR (model understands audio directly)
         # Build context from recent messages
-        recent = (
-            db.query(Message)
-            .filter(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.desc())
-            .limit(20)
-            .all()
-        )
-        recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+        recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
 
         user_text = text_input or "(audio input)"
 
@@ -746,14 +732,7 @@ async def orchestrate_voice_inference(
 
     # ④ Build context  -----------------------------------------------------
     # Get recent messages for conversation history
-    recent = (
-        db.query(Message)
-        .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
-        .limit(20)
-        .all()
-    )
-    recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
+    recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
 
     # If we have an image description from a separate Vision model, prepend
     enriched_text = user_text

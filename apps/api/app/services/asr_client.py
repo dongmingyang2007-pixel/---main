@@ -1,13 +1,10 @@
 import base64
 import json
 
-import httpx
 import websockets
 from app.core.config import settings
 from app.services.dashscope_client import raise_upstream_error
-
-DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+from app.services.dashscope_http import DASHSCOPE_BASE_URL, DASHSCOPE_WS_URL, dashscope_headers, get_client
 
 
 def _detect_audio_mime(content_type: str | None, filename: str) -> str:
@@ -47,31 +44,28 @@ async def transcribe_audio(
     data_url = f"data:{mime};base64,{audio_b64}"
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{DASHSCOPE_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.dashscope_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_audio",
-                                    "input_audio": {"data": data_url},
-                                }
-                            ],
-                        }
-                    ],
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
+        client = get_client()
+        response = await client.post(
+            f"{DASHSCOPE_BASE_URL}/chat/completions",
+            headers=dashscope_headers(),
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": data_url},
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as exc:  # noqa: BLE001
         raise_upstream_error(exc)
 

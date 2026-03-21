@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
 import { getProviderStyle } from "@/lib/model-utils";
-
-const MODEL_PICKER_SELECTION_KEY = "model_picker_pending_selection";
+import {
+  MODEL_PICKER_SELECTION_KEY,
+  categoryLabel,
+  groupLabel,
+  labelForToken,
+  providerDisplayLabel,
+} from "@/lib/discover-labels";
 
 interface ModelDetail {
   id: string;
@@ -48,99 +53,7 @@ function ArrowLeftIcon() {
   );
 }
 
-function labelForToken(token: string, t: (key: string) => string): string {
-  const modalityMap: Record<string, string> = {
-    text: "modelDetail.text",
-    image: "modelDetail.image",
-    audio: "modelDetail.audio",
-    video: "modelDetail.video",
-  };
-  const capabilityMap: Record<string, string> = {
-    function_calling: "modelDetail.tool.functionCalling",
-    web_search: "modelDetail.tool.webSearch",
-    deep_thinking: "modelDetail.feature.deepThinking",
-    streaming: "modelDetail.feature.streaming",
-    structured_output: "modelDetail.feature.structuredOutput",
-    cache: "modelDetail.feature.cache",
-    ranking: "modelDetail.feature.ranking",
-  };
-  if (modalityMap[token]) {
-    return t(modalityMap[token]);
-  }
-  if (capabilityMap[token]) {
-    return t(capabilityMap[token]);
-  }
-  return token;
-}
-
-function providerDisplayLabel(
-  provider: string,
-  fallback: string,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return fallback || provider;
-  }
-  if (provider.includes("qwen") || provider.includes("alibaba")) {
-    return t("discover.provider.qwen");
-  }
-  if (provider.includes("deepseek")) {
-    return "DeepSeek";
-  }
-  return fallback || provider;
-}
-
-function categoryLabel(
-  categoryKey: string | null | undefined,
-  fallback: string | null | undefined,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return fallback || "";
-  }
-  const map: Record<string, string> = {
-    omni: "discover.taxonomy.omni",
-    deep_thinking: "discover.taxonomy.deepThinking",
-    text_generation: "discover.taxonomy.textGeneration",
-    vision: "discover.taxonomy.vision",
-    image_generation: "discover.taxonomy.imageGeneration",
-    video_generation: "discover.taxonomy.videoGeneration",
-    speech_recognition: "discover.taxonomy.speechRecognition",
-    speech_synthesis: "discover.taxonomy.speechSynthesis",
-    multimodal_embedding: "discover.taxonomy.multimodalEmbedding",
-    text_embedding: "discover.taxonomy.textEmbedding",
-    realtime_omni: "discover.taxonomy.realtimeOmni",
-    realtime_tts: "discover.taxonomy.realtimeTts",
-    realtime_asr: "discover.taxonomy.realtimeAsr",
-    realtime_translate: "discover.taxonomy.realtimeTranslate",
-    rerank: "discover.taxonomy.rerank",
-  };
-  return categoryKey && map[categoryKey] ? t(map[categoryKey]) : (fallback || "");
-}
-
-function groupLabel(
-  groupKey: string | null | undefined,
-  fallback: string | null | undefined,
-  locale: string,
-  t: (key: string) => string,
-): string {
-  if (!locale.startsWith("en")) {
-    return fallback || "";
-  }
-  const map: Record<string, string> = {
-    multimodal: "discover.group.multimodal",
-    text: "discover.group.text",
-    vision: "discover.group.vision",
-    speech: "discover.group.speech",
-    embedding: "discover.group.embedding",
-    realtime: "discover.group.realtime",
-  };
-  return groupKey && map[groupKey] ? t(map[groupKey]) : (fallback || "");
-}
-
-export default function ModelDetailPage() {
+function ModelDetailPageContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -156,6 +69,7 @@ export default function ModelDetailPage() {
   const pickerMode = searchParams.get("picker") === "1";
   const pickerCategory = searchParams.get("category");
   const from = searchParams.get("from") || "/app/discover";
+  const backLabel = pickerMode ? t("modelDetail.backToPrevious") : t("modelDetail.backToDiscover");
 
   const [model, setModel] = useState<ModelDetail | null>(null);
   const [loadedModelId, setLoadedModelId] = useState(modelId);
@@ -218,7 +132,7 @@ export default function ModelDetailPage() {
       <div className="model-detail">
         <Link href={from} className="model-detail-back">
           <ArrowLeftIcon />
-          {t("modelDetail.backToDiscover")}
+          {backLabel}
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
           <div style={{ width: "40%", height: 20, borderRadius: 8, background: "var(--border)" }} />
@@ -234,7 +148,7 @@ export default function ModelDetailPage() {
       <div className="model-detail">
         <Link href={from} className="model-detail-back">
           <ArrowLeftIcon />
-          {t("modelDetail.backToDiscover")}
+          {backLabel}
         </Link>
         <p style={{ color: "var(--text-secondary)", marginTop: 24 }}>
           {t("modelDetail.notFound")}
@@ -247,6 +161,9 @@ export default function ModelDetailPage() {
   const providerStyle = getProviderStyle(currentModel.provider);
   const selectableInConsole = currentModel.is_selectable_in_console !== false;
   const actionable = pickerMode && selectableInConsole;
+  const statusLabel = selectableInConsole
+    ? t("modelDetail.availableInConsole")
+    : t("modelDetail.browseOnly");
 
   function handleUseModel() {
     if (!actionable || typeof window === "undefined" || !pickerCategory) {
@@ -268,7 +185,7 @@ export default function ModelDetailPage() {
     <div className="model-detail">
       <Link href={from} className="model-detail-back">
         <ArrowLeftIcon />
-        {t("modelDetail.backToDiscover")}
+        {backLabel}
       </Link>
 
       <div className="model-detail-header">
@@ -298,13 +215,21 @@ export default function ModelDetailPage() {
         </div>
       </div>
 
-      <button
-        className={`model-detail-cta${actionable ? "" : " is-disabled"}`}
-        disabled={!actionable}
-        onClick={handleUseModel}
-      >
-        {selectableInConsole ? t("modelDetail.useModel") : t("modelDetail.browseOnly")}
-      </button>
+      {pickerMode ? (
+        <button
+          className={`model-detail-cta${actionable ? "" : " is-disabled"}`}
+          disabled={!actionable}
+          onClick={handleUseModel}
+        >
+          {selectableInConsole ? t("modelDetail.useModel") : t("modelDetail.browseOnly")}
+        </button>
+      ) : (
+        <div
+          className={`model-detail-status${selectableInConsole ? " is-available" : " is-unavailable"}`}
+        >
+          {statusLabel}
+        </div>
+      )}
 
       {currentModel.description ? (
         <div className="model-detail-section">
@@ -360,5 +285,13 @@ export default function ModelDetailPage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function ModelDetailPage() {
+  return (
+    <Suspense fallback={<div className="model-detail" />}>
+      <ModelDetailPageContent />
+    </Suspense>
   );
 }

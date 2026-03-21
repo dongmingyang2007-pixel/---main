@@ -17,7 +17,7 @@ from app.core.errors import ApiError
 from app.models import Artifact, Model, ModelAlias, ModelVersion, User
 from app.routers.utils import (
     get_model_in_workspace,
-    get_project_in_workspace,
+    get_project_in_workspace_or_404,
     get_training_job_in_workspace,
     get_training_run_in_workspace,
 )
@@ -96,9 +96,7 @@ def list_models(
     db: Session = Depends(get_db_session),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> dict:
-    project = get_project_in_workspace(db, project_id=project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, project_id, workspace_id)
     models = (
         db.query(Model)
         .filter(Model.project_id == project_id, Model.deleted_at.is_(None))
@@ -117,9 +115,7 @@ def create_model(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> dict:
-    project = get_project_in_workspace(db, project_id=payload.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
 
     model = Model(project_id=payload.project_id, name=payload.name, task_type=payload.task_type)
     db.add(model)
@@ -196,9 +192,7 @@ def presign_model_artifact_upload(
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
     if not model:
         raise ApiError("not_found", "Model not found", status_code=404)
-    project = get_project_in_workspace(db, project_id=model.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, model.project_id, workspace_id)
 
     max_bytes = settings.upload_max_mb * 1024 * 1024
     if payload.size_bytes > max_bytes:
@@ -327,9 +321,7 @@ def create_model_version(
     model = get_model_in_workspace(db, model_id=model_id, workspace_id=workspace_id)
     if not model:
         raise ApiError("not_found", "Model not found", status_code=404)
-    project = get_project_in_workspace(db, project_id=model.project_id, workspace_id=workspace_id)
-    if not project:
-        raise ApiError("not_found", "Project not found", status_code=404)
+    project = get_project_in_workspace_or_404(db, model.project_id, workspace_id)
     if payload.run_id and payload.artifact_upload_id:
         raise ApiError("invalid_request", "Provide either run_id or artifact_upload_id, not both", status_code=400)
 
