@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
@@ -310,6 +311,7 @@ def stub_realtime_upstream(
 
     monkeypatch.setattr("app.services.realtime_bridge.RealtimeSession.connect_upstream", fake_connect_upstream)
     monkeypatch.setattr("app.services.realtime_bridge.RealtimeSession.send_session_update", fake_send_session_update)
+    monkeypatch.setattr("app.services.realtime_bridge.RealtimeSession.send_initial_session_update", fake_send_session_update)
 
 
 def test_auth_cookie_and_me() -> None:
@@ -403,6 +405,7 @@ def test_realtime_websocket_auth_uses_cookie_and_rejects_revoked_token() -> None
 
 
 def test_realtime_websocket_enforces_conversation_access(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     stub_realtime_upstream(monkeypatch)
 
     owner = TestClient(main_module.app)
@@ -444,6 +447,7 @@ def test_realtime_websocket_enforces_conversation_access(monkeypatch) -> None:
 
 
 def test_realtime_websocket_ends_after_token_revocation(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     stub_realtime_upstream(monkeypatch)
     monkeypatch.setattr(realtime_router, "SESSION_MONITOR_INTERVAL_SECONDS", 0.01)
 
@@ -479,6 +483,7 @@ def test_realtime_websocket_ends_after_token_revocation(monkeypatch) -> None:
 
 
 def test_realtime_websocket_closes_when_upstream_disconnects(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     stub_realtime_upstream(monkeypatch, close_immediately=True)
 
     client = TestClient(main_module.app)
@@ -511,6 +516,7 @@ def test_realtime_websocket_closes_when_upstream_disconnects(monkeypatch) -> Non
 
 
 def test_realtime_websocket_times_out_during_upstream_setup(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     stub_realtime_upstream(monkeypatch, connect_delay_seconds=0.05)
     monkeypatch.setattr(realtime_router, "UPSTREAM_CONNECT_TIMEOUT_SECONDS", 0.01)
 
@@ -538,6 +544,7 @@ def test_realtime_websocket_times_out_during_upstream_setup(monkeypatch) -> None
 
 
 def test_realtime_websocket_initial_prompt_includes_recent_history(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     prompt_sink: list[str] = []
     stub_realtime_upstream(monkeypatch, prompt_sink=prompt_sink)
 
@@ -576,6 +583,7 @@ def test_realtime_websocket_initial_prompt_includes_recent_history(monkeypatch) 
 
 
 def test_realtime_websocket_prefers_project_realtime_model_when_configured(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     model_sink: list[str] = []
     stub_realtime_upstream(monkeypatch, model_sink=model_sink)
 
@@ -618,6 +626,7 @@ def test_realtime_websocket_prefers_project_realtime_model_when_configured(monke
 
 
 def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     persisted_turns: list[tuple[str, str]] = []
 
     async def fake_orchestrate(
@@ -685,6 +694,9 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
         assistant_chunk = websocket.receive_json()
         assert assistant_chunk == {"type": "response.text", "text": "你好，我在。"}
 
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
         audio = websocket.receive_bytes()
         assert audio == b"fake-mp3"
 
@@ -694,7 +706,149 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
     assert persisted_turns == [("你好", "你好，我在。")]
 
 
+def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        audio_bytes: bytes,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert audio_bytes == b"pcm-turn"
+        _ = image_bytes
+        _ = image_mime_type
+        _ = video_bytes
+        _ = video_mime_type
+        raise realtime_router.UpstreamServiceError("boom")
+
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-turn-error@example.com", "Synthetic Turn Error")
+    project = create_project(client, "Synthetic Turn Error Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        turn_error = websocket.receive_json()
+        assert turn_error == {
+            "type": "turn.error",
+            "code": "upstream_unavailable",
+            "message": "AI 暂时无响应，请重试",
+        }
+
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        audio_bytes: bytes,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert audio_bytes == b"pcm-turn"
+        _ = image_bytes
+        _ = image_mime_type
+        _ = video_bytes
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "这次先看文字。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "这次先看文字。"
+        raise realtime_router.UpstreamServiceError("tts boom")
+
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-tts-fallback@example.com", "Synthetic TTS Fallback")
+    project = create_project(client, "Synthetic TTS Fallback Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "你好"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "这次先看文字。"}
+
+        done = websocket.receive_json()
+        assert done == {"type": "response.done"}
+
+        notice = websocket.receive_json()
+        assert notice == {
+            "type": "turn.notice",
+            "code": "audio_unavailable",
+            "message": "语音输出暂时不可用，已切换为文字回复",
+        }
+
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
 def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     async def fake_orchestrate(
         _db,
         *,
@@ -764,6 +918,7 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
 
 
 def test_composed_realtime_media_set_rejects_oversized_payload(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     monkeypatch.setattr(realtime_router.settings, "realtime_media_max_mb", 0)
 
     client = TestClient(main_module.app)
@@ -795,7 +950,8 @@ def test_composed_realtime_media_set_rejects_oversized_payload(monkeypatch) -> N
         assert error["code"] == "payload_too_large"
 
 
-def test_composed_realtime_media_set_rejects_signature_mismatch() -> None:
+def test_composed_realtime_media_set_rejects_signature_mismatch(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     client = TestClient(main_module.app)
     register_user(client, "synthetic-mismatch@example.com", "Synthetic Mismatch")
     project = create_project(client, "Synthetic Mismatch Project")
@@ -976,7 +1132,11 @@ def test_workspace_header_is_required_when_user_has_multiple_workspaces() -> Non
     assert ambiguous.json()["error"]["code"] == "workspace_required"
 
 
-def test_conversation_access_respects_role_and_creator_boundary() -> None:
+def test_conversation_access_respects_role_and_creator_boundary(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    async def fake_orchestrate_inference(*args, **kwargs):
+        return "mocked reply"
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
     owner = TestClient(main_module.app)
     owner_info = register_user(owner, "owner-boundary@example.com", "Owner Boundary")
     owner_workspace_id = owner_info["workspace"]["id"]
@@ -2036,7 +2196,183 @@ def test_send_message_does_not_duplicate_current_user_message(monkeypatch) -> No
     assert captured["recent_messages"] == []
 
 
+def test_send_message_persists_reasoning_content_when_thinking_enabled(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-thinking@example.com", "Chat Thinking")
+    project = create_project(client, "Chat Thinking Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        captured["enable_thinking"] = kwargs.get("enable_thinking")
+        return {
+            "content": "最终回答",
+            "reasoning_content": "先拆解问题，再形成回答。",
+        }
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "帮我分析", "enable_thinking": True},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["enable_thinking"] is True
+    assert resp.json()["content"] == "最终回答"
+    assert resp.json()["reasoning_content"] == "先拆解问题，再形成回答。"
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json()[1]["reasoning_content"] == "先拆解问题，再形成回答。"
+
+
+def test_send_message_auto_disables_thinking_for_simple_greeting(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-auto-greeting@example.com", "Chat Auto Greeting")
+    project = create_project(client, "Chat Auto Greeting Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        captured["enable_thinking"] = kwargs.get("enable_thinking")
+        return {"content": "你好呀", "reasoning_content": None}
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "你好"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["enable_thinking"] is False
+
+
+def test_send_message_auto_enables_thinking_for_analysis_prompt(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-auto-analysis@example.com", "Chat Auto Analysis")
+    project = create_project(client, "Chat Auto Analysis Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        captured["enable_thinking"] = kwargs.get("enable_thinking")
+        return {"content": "我来分析一下", "reasoning_content": "..." }
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "请分析一下这个方案的优缺点"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["enable_thinking"] is True
+
+
+def test_send_message_returns_explicit_error_when_model_api_is_unconfigured(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-unconfigured@example.com", "Chat Unconfigured")
+    project = create_project(client, "Chat Unconfigured Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "")
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "hello world"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "model_api_unconfigured"
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json() == []
+
+
+def test_send_message_survives_non_fatal_rag_failure(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-rag-failure@example.com", "Chat Rag Failure")
+    project = create_project(client, "Chat Rag Failure Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_search_similar(*args, **kwargs):
+        raise RuntimeError("vector lookup failed")
+
+    async def fake_chat_completion_detailed(messages, model, enable_thinking=None):  # noqa: ARG001
+        return SimpleNamespace(content="rag fallback ok", reasoning_content=None)
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "hello world"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["content"] == "rag fallback ok"
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert [item["role"] for item in messages.json()] == ["user", "assistant"]
+
+
 def test_dictate_voice_input_transcribes_audio_without_creating_messages(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
     client = TestClient(main_module.app)
     register_user(client, "chat-dictate@example.com", "Chat Dictate")
     project = create_project(client, "Chat Dictate Project")
@@ -2051,6 +2387,7 @@ def test_dictate_voice_input_transcribes_audio_without_creating_messages(monkeyp
     async def fake_transcribe_audio_input_for_project(*args, **kwargs):
         assert kwargs["project_id"] == project["id"]
         assert kwargs["audio_bytes"] == b"voice-audio"
+        assert kwargs["filename"] == "recording.webm"
         return "这是听写结果"
 
     monkeypatch.setattr(
@@ -2072,7 +2409,42 @@ def test_dictate_voice_input_transcribes_audio_without_creating_messages(monkeyp
     assert messages.json() == []
 
 
+def test_dictate_voice_input_accepts_media_type_parameters(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    client = TestClient(main_module.app)
+    register_user(client, "chat-dictate-codecs@example.com", "Chat Dictate Codecs")
+    project = create_project(client, "Chat Dictate Codecs Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_transcribe_audio_input_for_project(*args, **kwargs):
+        assert kwargs["project_id"] == project["id"]
+        assert kwargs["audio_bytes"] == b"voice-audio"
+        assert kwargs["filename"] == "recording.webm"
+        return "带参数的音频头也能过"
+
+    monkeypatch.setattr(
+        chat_router,
+        "transcribe_audio_input_for_project",
+        fake_transcribe_audio_input_for_project,
+    )
+
+    dictated = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/dictate",
+        files={"audio": ("recording.webm", b"voice-audio", "audio/webm;codecs=opus")},
+        headers=csrf_headers(client),
+    )
+    assert dictated.status_code == 200
+    assert dictated.json()["text_input"] == "带参数的音频头也能过"
+
+
 def test_speech_endpoint_synthesizes_audio_without_creating_messages(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
     client = TestClient(main_module.app)
     register_user(client, "chat-speech@example.com", "Chat Speech")
     project = create_project(client, "Chat Speech Project")
@@ -2108,7 +2480,68 @@ def test_speech_endpoint_synthesizes_audio_without_creating_messages(monkeypatch
     assert messages.json() == []
 
 
+def test_transcribe_audio_input_for_project_falls_back_to_qwen3_asr_flash(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-asr-fallback@example.com", "Chat ASR Fallback")
+    project = create_project(client, "Chat ASR Fallback Project")
+
+    captured: dict[str, object] = {}
+
+    async def fake_transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav", model: str | None = None, content_type: str | None = None) -> str:
+        captured["audio_bytes"] = audio_bytes
+        captured["filename"] = filename
+        captured["model"] = model
+        return "fallback ok"
+
+    monkeypatch.setattr("app.services.asr_client.transcribe_audio", fake_transcribe_audio)
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.transcribe_audio_input_for_project(
+                db,
+                project_id=project["id"],
+                audio_bytes=b"voice-audio",
+                filename="recording.webm",
+            )
+        )
+
+    assert result == "fallback ok"
+    assert captured["audio_bytes"] == b"voice-audio"
+    assert captured["filename"] == "recording.webm"
+    assert captured["model"] == "qwen3-asr-flash"
+
+
+def test_synthesize_speech_for_project_falls_back_to_qwen3_tts_flash(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-tts-fallback@example.com", "Chat TTS Fallback")
+    project = create_project(client, "Chat TTS Fallback Project")
+
+    captured: dict[str, object] = {}
+
+    async def fake_synthesize_speech(text: str, model: str | None = None, voice: str = "Cherry") -> bytes:
+        captured["text"] = text
+        captured["model"] = model
+        captured["voice"] = voice
+        return b"\x01\x02"
+
+    monkeypatch.setattr("app.services.tts_client.synthesize_speech", fake_synthesize_speech)
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.synthesize_speech_for_project(
+                db,
+                project_id=project["id"],
+                text="请朗读这段回复",
+            )
+        )
+
+    assert result == b"\x01\x02"
+    assert captured["text"] == "请朗读这段回复"
+    assert captured["model"] == "qwen3-tts-flash"
+
+
 def test_image_endpoint_uses_prompt_and_preserves_image_mime_type(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
     client = TestClient(main_module.app)
     register_user(client, "chat-image@example.com", "Chat Image")
     project = create_project(client, "Chat Image Project")
@@ -2651,7 +3084,11 @@ def test_delete_conversation_returns_204_and_removes_temporary_memories() -> Non
     assert detail.status_code == 404
 
 
-def test_send_message_rate_limit_triggers_after_ten_requests() -> None:
+def test_send_message_rate_limit_triggers_after_ten_requests(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    async def fake_orchestrate_inference(*args, **kwargs):
+        return "mocked reply"
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
     client = TestClient(main_module.app)
     register_user(client, "chat-limit@example.com", "Chat Limit")
     project = create_project(client, "Chat Limit Project")
@@ -3326,12 +3763,12 @@ def test_orchestrator_filters_private_memory_embeddings_from_prompt(monkeypatch)
             }
         ]
 
-    async def fake_chat_completion(messages, model=None):
+    async def fake_chat_completion_detailed(messages, model=None, enable_thinking=None):
         captured["system_prompt"] = messages[0]["content"]
-        return "ok"
+        return SimpleNamespace(content="ok", reasoning_content=None)
 
     monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
-    monkeypatch.setattr(orchestrator_service, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
 
     with SessionLocal() as db:
         result = asyncio.run(
@@ -3345,7 +3782,7 @@ def test_orchestrator_filters_private_memory_embeddings_from_prompt(monkeypatch)
             )
         )
 
-    assert result == "ok"
+    assert result["content"] == "ok"
     assert "私有事实-不要进入别人的prompt" not in captured["system_prompt"]
 
 
@@ -3394,9 +3831,9 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
             }
         ]
 
-    async def fake_chat_completion(messages, model=None):
+    async def fake_chat_completion_detailed(messages, model=None, enable_thinking=None):
         captured["system_prompt"] = messages[0]["content"]
-        return "ok"
+        return SimpleNamespace(content="ok", reasoning_content=None)
 
     monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
     monkeypatch.setattr(
@@ -3404,7 +3841,7 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
         "load_linked_file_chunks_for_memories",
         fake_load_linked_file_chunks_for_memories,
     )
-    monkeypatch.setattr(orchestrator_service, "chat_completion", fake_chat_completion)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
 
     with SessionLocal() as db:
         result = asyncio.run(
@@ -3418,7 +3855,7 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
             )
         )
 
-    assert result == "ok"
+    assert result["content"] == "ok"
     assert "与当前相关记忆直接关联的资料摘录" in captured["system_prompt"]
     assert "心理学手册.pdf" in captured["system_prompt"]
     assert "认知行为疗法适用于焦虑干预" in captured["system_prompt"]
