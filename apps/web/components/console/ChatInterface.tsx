@@ -8,6 +8,7 @@ import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import RealtimeVoice from "./RealtimeVoice";
 import SyntheticRealtimeVoice from "./SyntheticRealtimeVoice";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
+import { ChatInputBar } from "./ChatInputBar";
 import {
   type ChatMode,
   type Message,
@@ -23,7 +24,6 @@ import {
   getPipelineModelId,
   modelSupportsCapability,
   toMessage,
-  cycleState,
 } from "./chat-types";
 
 interface ChatInterfaceProps {
@@ -42,7 +42,6 @@ export function ChatInterface({
 }: ChatInterfaceProps) {
   const t = useTranslations("console-chat");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<
@@ -50,18 +49,12 @@ export function ChatInterface({
   >("idle");
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
-  const [searchState, setSearchState] = useState<"auto" | "on" | "off">("auto");
-  const [thinkState, setThinkState] = useState<"auto" | "on" | "off">("auto");
   const [projectDefaultMode, setProjectDefaultMode] = useState<ChatMode>("standard");
   const [pipelineItems, setPipelineItems] = useState<PipelineConfigItem[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogModelItem[]>([]);
   const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
-  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
 
-  const inputRef = useRef<HTMLInputElement>(null);
-  const imageUploadRef = useRef<HTMLInputElement>(null);
-  const imageCaptureRef = useRef<HTMLInputElement>(null);
   const messageListRef = useRef<ChatMessageListHandle>(null);
   const runtimeMessageCounterRef = useRef(0);
   const liveTurnIdsRef = useRef<{
@@ -93,7 +86,6 @@ export function ChatInterface({
       setPipelineItems([]);
       setCatalogItems([]);
       setConversationModeOverrides({});
-      setPendingImageFile(null);
       return;
     }
 
@@ -181,187 +173,162 @@ export function ChatInterface({
     };
   }, [conversationId]);
 
-  const handleImageFileSelected = useCallback((file: File | null) => {
-    if (!file) {
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      setVoiceNotice(t("errors.imageUploadFailed"));
-      return;
-    }
-    setPendingImageFile(file);
-    setVoiceNotice(null);
-  }, [t]);
-
-  const clearPendingImage = useCallback(() => {
-    setPendingImageFile(null);
-  }, []);
-
-  const handleSendImage = useCallback(async () => {
-    const imageFile = pendingImageFile;
-    if (!conversationId || !imageFile || isTyping) {
-      return;
-    }
-
-    const prompt = input.trim();
-    const submittedText = prompt || t("imageDefaultPrompt");
-    const userMessage: Message = {
-      id: `img-u-${Date.now()}`,
-      role: "user",
-      content: submittedText,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setPendingImageFile(null);
-    setIsTyping(true);
-    setVoiceNotice(null);
-    onConversationActivity?.({
-      conversationId,
-      previewText: submittedText,
-    });
-
-    try {
-      const formData = new FormData();
-      formData.append("image", imageFile, imageFile.name);
-      if (prompt) {
-        formData.append("prompt", prompt);
-      }
-      if (thinkState === "on") {
-        formData.append("enable_thinking", "true");
-      } else if (thinkState === "off") {
-        formData.append("enable_thinking", "false");
+  const handleSend = useCallback(
+    async (
+      content: string,
+      options: {
+        enableThinking?: boolean | null;
+        enableSearch?: boolean | null;
+        imageFile?: File | null;
+      },
+    ) => {
+      if (!conversationId || isTyping) {
+        return;
       }
 
-      const response = await apiPostFormData<ImageMessageResponse>(
-        `/api/v1/chat/conversations/${conversationId}/image`,
-        formData,
-      );
+      const imageFile = options.imageFile ?? null;
+      const enableThinking = options.enableThinking ?? null;
 
-      const assistantMessage: Message = {
-        id: response.message?.id || `img-a-${Date.now()}`,
-        role: "assistant",
-        content: response.message?.content || "",
-        reasoningContent: response.message?.reasoning_content,
-        audioBase64: response.audio_response,
-        animateOnMount: true,
-        isStreaming: false,
+      if (imageFile) {
+        const submittedText = content || t("imageDefaultPrompt");
+        const userMessage: Message = {
+          id: `img-u-${Date.now()}`,
+          role: "user",
+          content: submittedText,
+        };
+
+        setMessages((prev) => [...prev, userMessage]);
+        setIsTyping(true);
+        setVoiceNotice(null);
+        onConversationActivity?.({
+          conversationId,
+          previewText: submittedText,
+        });
+
+        try {
+          const formData = new FormData();
+          formData.append("image", imageFile, imageFile.name);
+          if (content) {
+            formData.append("prompt", content);
+          }
+          if (enableThinking === true) {
+            formData.append("enable_thinking", "true");
+          } else if (enableThinking === false) {
+            formData.append("enable_thinking", "false");
+          }
+
+          const response = await apiPostFormData<ImageMessageResponse>(
+            `/api/v1/chat/conversations/${conversationId}/image`,
+            formData,
+          );
+
+          const assistantMessage: Message = {
+            id: response.message?.id || `img-a-${Date.now()}`,
+            role: "assistant",
+            content: response.message?.content || "",
+            reasoningContent: response.message?.reasoning_content,
+            audioBase64: response.audio_response,
+            animateOnMount: true,
+            isStreaming: false,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+          if (autoReadEnabled && response.audio_response) {
+            messageListRef.current?.playReadAloud(
+              assistantMessage.id,
+              response.audio_response,
+            );
+          }
+        } catch (error) {
+          let errorContent = t("errors.imageUploadFailed");
+          if (isApiRequestError(error)) {
+            if (error.code === "inference_timeout") {
+              errorContent = t("errors.inferenceTimeout");
+            } else if (error.code === "model_api_unconfigured") {
+              errorContent = t("errors.modelUnconfigured");
+            } else if (error.code === "model_api_unavailable") {
+              errorContent = t("errors.modelUnavailable");
+            }
+          }
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `img-err-${Date.now()}`,
+              role: "assistant",
+              content: errorContent,
+            },
+          ]);
+        } finally {
+          setIsTyping(false);
+        }
+        return;
+      }
+
+      if (!content) {
+        return;
+      }
+
+      const userMessage: Message = {
+        id: `u-${Date.now()}`,
+        role: "user",
+        content,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-      if (autoReadEnabled && response.audio_response) {
-        messageListRef.current?.playReadAloud(
-          assistantMessage.id,
-          response.audio_response,
+
+      setMessages((prev) => [...prev, userMessage]);
+      setIsTyping(true);
+      setVoiceNotice(null);
+      onConversationActivity?.({
+        conversationId,
+        previewText: content,
+      });
+
+      try {
+        const response = await apiPost<ApiMessage>(
+          `/api/v1/chat/conversations/${conversationId}/messages`,
+          {
+            content,
+            enable_thinking:
+              enableThinking === true
+                ? true
+                : enableThinking === false
+                  ? false
+                  : undefined,
+          },
         );
-      }
-    } catch (error) {
-      let content = t("errors.imageUploadFailed");
-      if (isApiRequestError(error)) {
-        if (error.code === "inference_timeout") {
-          content = t("errors.inferenceTimeout");
-        } else if (error.code === "model_api_unconfigured") {
-          content = t("errors.modelUnconfigured");
-        } else if (error.code === "model_api_unavailable") {
-          content = t("errors.modelUnavailable");
+        const aiMessage: Message = {
+          ...toMessage(response),
+          id: response.id || `a-${Date.now()}`,
+          animateOnMount: true,
+          isStreaming: false,
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        if (autoReadEnabled) {
+          messageListRef.current?.playReadAloud(aiMessage.id);
         }
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `img-err-${Date.now()}`,
-          role: "assistant",
-          content,
-        },
-      ]);
-    } finally {
-      setIsTyping(false);
-    }
-  }, [
-    autoReadEnabled,
-    conversationId,
-    input,
-    isTyping,
-    onConversationActivity,
-    pendingImageFile,
-    thinkState,
-    t,
-  ]);
-
-  const handleSend = useCallback(async () => {
-    if (pendingImageFile) {
-      await handleSendImage();
-      return;
-    }
-    const text = input.trim();
-    if (!text || isTyping || !conversationId) return;
-
-    const userMessage: Message = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      content: text,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsTyping(true);
-    setVoiceNotice(null);
-    onConversationActivity?.({
-      conversationId,
-      previewText: text,
-    });
-
-    try {
-      const response = await apiPost<ApiMessage>(
-        `/api/v1/chat/conversations/${conversationId}/messages`,
-        {
-          content: text,
-          enable_thinking:
-            thinkState === "on" ? true : thinkState === "off" ? false : undefined,
-        },
-      );
-      const aiMessage: Message = {
-        ...toMessage(response),
-        id: response.id || `a-${Date.now()}`,
-        animateOnMount: true,
-        isStreaming: false,
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-      if (autoReadEnabled) {
-        messageListRef.current?.playReadAloud(aiMessage.id);
-      }
-    } catch (error) {
-      let content = t("errors.generic");
-      if (isApiRequestError(error)) {
-        if (error.code === "inference_timeout") {
-          content = t("errors.inferenceTimeout");
-        } else if (error.code === "model_api_unconfigured") {
-          content = t("errors.modelUnconfigured");
-        } else if (error.code === "model_api_unavailable") {
-          content = t("errors.modelUnavailable");
+      } catch (error) {
+        let errorContent = t("errors.generic");
+        if (isApiRequestError(error)) {
+          if (error.code === "inference_timeout") {
+            errorContent = t("errors.inferenceTimeout");
+          } else if (error.code === "model_api_unconfigured") {
+            errorContent = t("errors.modelUnconfigured");
+          } else if (error.code === "model_api_unavailable") {
+            errorContent = t("errors.modelUnavailable");
+          }
         }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `err-${Date.now()}`,
+            role: "assistant",
+            content: errorContent,
+          },
+        ]);
+      } finally {
+        setIsTyping(false);
       }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: "assistant",
-          content,
-        },
-      ]);
-    } finally {
-      setIsTyping(false);
-    }
-  }, [
-    autoReadEnabled,
-    conversationId,
-    handleSendImage,
-    input,
-    isTyping,
-    onConversationActivity,
-    pendingImageFile,
-    thinkState,
-    t,
-  ]);
+    },
+    [autoReadEnabled, conversationId, isTyping, onConversationActivity, t],
+  );
 
   const dictateVoiceInput = useCallback(
     async (audioBlob: Blob) => {
@@ -383,12 +350,8 @@ export function ChatInterface({
           setVoiceNotice(t("errors.dictationFailed"));
           return;
         }
-        setInput((current) =>
-          current.trim()
-            ? `${current.trimEnd()} ${dictatedText}`
-            : dictatedText,
-        );
-        inputRef.current?.focus();
+        // TODO(Task 4): route dictated text into ChatInputBar via StandardVoiceControls
+        void handleSend(dictatedText, {});
       } catch (error) {
         let content = t("errors.dictationFailed");
         if (isApiRequestError(error)) {
@@ -403,7 +366,7 @@ export function ChatInterface({
         setVoiceStatus("idle");
       }
     },
-    [conversationId, t],
+    [conversationId, handleSend, t],
   );
 
   const handleMicClick = useCallback(async () => {
@@ -570,7 +533,6 @@ export function ChatInterface({
       : projectDefaultMode;
 
   useEffect(() => {
-    setPendingImageFile(null);
     liveTurnIdsRef.current = { userId: null, assistantId: null };
   }, [conversationId]);
 
@@ -603,13 +565,6 @@ export function ChatInterface({
     voiceContextRef.current = next;
   }, [chatMode, conversationId, projectId, t, voiceSessionState]);
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
-  }
-
   const llmModelId = getPipelineModelId(pipelineItems, "llm", "qwen3.5-plus");
   const syntheticModeAvailable = modelSupportsCapability(catalogItems, llmModelId, "vision");
   const syntheticVideoAvailable = modelSupportsCapability(catalogItems, llmModelId, "video");
@@ -627,31 +582,6 @@ export function ChatInterface({
 
   return (
     <div className="chat-interface">
-      <input
-        ref={imageUploadRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        disabled={isTyping || noConversation}
-        data-testid="chat-image-upload-input"
-        onChange={(event) => {
-          handleImageFileSelected(event.target.files?.[0] || null);
-          event.target.value = "";
-        }}
-      />
-      <input
-        ref={imageCaptureRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        disabled={isTyping || noConversation}
-        data-testid="chat-image-capture-input"
-        onChange={(event) => {
-          handleImageFileSelected(event.target.files?.[0] || null);
-          event.target.value = "";
-        }}
-      />
       <div className="chat-mode-switcher">
         {chatModeOptions.map((option) => (
           <button
@@ -747,102 +677,15 @@ export function ChatInterface({
             )}
           </button>
         ) : null}
-        <input
-          ref={inputRef}
-          className="chat-input"
-          type="text"
-          placeholder={t("inputPlaceholder")}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isTyping || noConversation}
+        <ChatInputBar
+          onSend={(content, options) => void handleSend(content, options)}
+          disabled={noConversation}
+          isTyping={isTyping}
+          isStandardMode={isStandardMode}
+          autoReadEnabled={autoReadEnabled}
+          onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
         />
-        <div className="chat-tool-chips">
-          {isStandardMode ? (
-            <button
-              type="button"
-              className="chat-tool-chip"
-              data-state={autoReadEnabled ? "on" : "auto"}
-              onClick={() => setAutoReadEnabled((state) => !state)}
-            >
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              </svg>
-              {t("voiceAutoRead")}
-            </button>
-          ) : null}
-          {isStandardMode ? (
-            <button
-              type="button"
-              className="chat-tool-chip"
-              onClick={() => imageUploadRef.current?.click()}
-              disabled={isTyping || noConversation}
-            >
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <rect x={3} y={3} width={18} height={18} rx={2} ry={2} />
-                <circle cx={8.5} cy={8.5} r={1.5} />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
-              {t("imageUpload")}
-            </button>
-          ) : null}
-          {isStandardMode ? (
-            <button
-              type="button"
-              className="chat-tool-chip"
-              onClick={() => imageCaptureRef.current?.click()}
-              disabled={isTyping || noConversation}
-            >
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx={12} cy={13} r={4} />
-              </svg>
-              {t("imageCapture")}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="chat-tool-chip"
-            data-state={searchState}
-            onClick={() => setSearchState(s => cycleState(s))}
-          >
-            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-              <circle cx={11} cy={11} r={8} />
-              <line x1={21} y1={21} x2={16.65} y2={16.65} />
-            </svg>
-            {t("tool.search")}
-          </button>
-          <button
-            type="button"
-            className="chat-tool-chip"
-            data-state={thinkState}
-            onClick={() => setThinkState(s => cycleState(s))}
-          >
-            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-              <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7.5V19h6v-2.5c2-2 4-4.5 4-7.5a7 7 0 0 0-7-7z" />
-              <line x1={9} y1={22} x2={15} y2={22} />
-            </svg>
-            {t("tool.think")}
-          </button>
-        </div>
-        <button
-          className="chat-send"
-          onClick={() => void handleSend()}
-          disabled={(!input.trim() && !pendingImageFile) || isTyping || noConversation}
-        >
-          {t("send")}
-        </button>
       </div>
-
-      {isStandardMode && pendingImageFile ? (
-        <div className="chat-attachment-chip">
-          <span className="chat-attachment-name">{pendingImageFile.name}</span>
-          <button type="button" className="chat-audio-btn" onClick={clearPendingImage}>
-            {t("imageClear")}
-          </button>
-        </div>
-      ) : null}
 
       {isStandardMode && voiceStatus === "recording" && (
         <div className="chat-voice-indicator">{t("voiceRecording")}</div>
