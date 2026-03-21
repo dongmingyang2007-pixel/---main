@@ -60,6 +60,8 @@
   "dateGroup.earlier": "Earlier",
   "tool.search": "Search",
   "tool.think": "Deep Think",
+  "stopGenerating": "Stop generating",
+  "reasoningLabel": "Thinking",
   "memory.remembered": "Remembered",
   "time.justNow": "Just now",
   "time.minutesAgo": "{n}m ago",
@@ -68,10 +70,12 @@
   "errors": {
     "generic": "Sorry, something went wrong. Please try again.",
     "inferenceTimeout": "The AI response timed out. Please try again shortly.",
+    "modelUnconfigured": "The AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service.",
     "modelUnavailable": "The model service is temporarily unavailable. Please try again shortly.",
     "voiceFailed": "Voice processing failed. Please try again.",
     "dictationFailed": "Dictation failed. Please try again.",
     "readAloudFailed": "Read aloud failed. Please try again.",
-    "imageUploadFailed": "Image understanding failed. Please try again."
+    "imageUploadFailed": "Image understanding failed. Please try again.",
+    "streamError": "An error occurred while streaming the response."
   }
 }

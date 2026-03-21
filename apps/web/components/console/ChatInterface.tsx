@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
+import { apiStream } from "@/lib/api-stream";
 import RealtimeVoicePanel from "./RealtimeVoicePanel";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
@@ -51,8 +52,10 @@ export function ChatInterface({
   const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
   const [dictationText, setDictationText] = useState<string | null>(null);
+  const [isStreamingActive, setIsStreamingActive] = useState(false);
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const runtimeMessageCounterRef = useRef(0);
   const liveTurnIdsRef = useRef<{
     userId: string | null;
@@ -178,7 +181,7 @@ export function ChatInterface({
         imageFile?: File | null;
       },
     ) => {
-      if (!conversationId || isTyping) {
+      if (!conversationId || isTyping || isStreamingActive) {
         return;
       }
 
@@ -277,53 +280,148 @@ export function ChatInterface({
         previewText: content,
       });
 
+      const streamBody = {
+        content,
+        enable_thinking:
+          enableThinking === true
+            ? true
+            : enableThinking === false
+              ? false
+              : undefined,
+      };
+
+      const tempAssistantId = `stream-a-${Date.now()}`;
+      let streamStarted = false;
+
       try {
-        const response = await apiPost<ApiMessage>(
-          `/api/v1/chat/conversations/${conversationId}/messages`,
-          {
-            content,
-            enable_thinking:
-              enableThinking === true
-                ? true
-                : enableThinking === false
-                  ? false
-                  : undefined,
-          },
-        );
-        const aiMessage: Message = {
-          ...toMessage(response),
-          id: response.id || `a-${Date.now()}`,
-          animateOnMount: true,
-          isStreaming: false,
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        setIsStreamingActive(true);
+
+        const assistantPlaceholder: Message = {
+          id: tempAssistantId,
+          role: "assistant",
+          content: "",
+          isStreaming: true,
         };
-        setMessages((prev) => [...prev, aiMessage]);
-        if (autoReadEnabled) {
-          messageListRef.current?.playReadAloud(aiMessage.id);
-        }
-      } catch (error) {
-        let errorContent = t("errors.generic");
-        if (isApiRequestError(error)) {
-          if (error.code === "inference_timeout") {
-            errorContent = t("errors.inferenceTimeout");
-          } else if (error.code === "model_api_unconfigured") {
-            errorContent = t("errors.modelUnconfigured");
-          } else if (error.code === "model_api_unavailable") {
-            errorContent = t("errors.modelUnavailable");
+        setMessages((prev) => [...prev, assistantPlaceholder]);
+        setIsTyping(false);
+        streamStarted = true;
+
+        for await (const event of apiStream(
+          `/api/v1/chat/conversations/${conversationId}/stream`,
+          streamBody,
+          abortController.signal,
+        )) {
+          if (event.event === "token") {
+            const delta = (event.data.content as string) ?? "";
+            messageListRef.current?.updateMessage(
+              tempAssistantId,
+              (prev) => prev + delta,
+            );
+          } else if (event.event === "reasoning") {
+            const delta = (event.data.content as string) ?? "";
+            messageListRef.current?.updateReasoning(
+              tempAssistantId,
+              (prev) => prev + delta,
+            );
+          } else if (event.event === "message_done") {
+            const finalId = (event.data.id as string) || tempAssistantId;
+            const memoriesExtracted = event.data.memories_extracted as string | undefined;
+            messageListRef.current?.finalizeMessage(tempAssistantId, {
+              id: finalId,
+              isStreaming: false,
+              memories_extracted: memoriesExtracted,
+            });
+          } else if (event.event === "error") {
+            const errorMsg =
+              (event.data.detail as string) ||
+              (event.data.message as string) ||
+              t("errors.streamError");
+            messageListRef.current?.updateMessage(
+              tempAssistantId,
+              () => errorMsg,
+            );
+            messageListRef.current?.finalizeMessage(tempAssistantId, {
+              id: tempAssistantId,
+              isStreaming: false,
+            });
           }
         }
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            role: "assistant",
-            content: errorContent,
-          },
-        ]);
+
+        // Stream finished normally — ensure finalized
+        messageListRef.current?.finalizeMessage(tempAssistantId, {
+          id: tempAssistantId,
+          isStreaming: false,
+        });
+
+        if (autoReadEnabled) {
+          messageListRef.current?.playReadAloud(tempAssistantId);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          // User clicked stop — finalize whatever we have so far
+          messageListRef.current?.finalizeMessage(tempAssistantId, {
+            id: tempAssistantId,
+            isStreaming: false,
+          });
+        } else if (streamStarted) {
+          // Stream failed after starting — show error in the existing placeholder
+          messageListRef.current?.updateMessage(
+            tempAssistantId,
+            () => t("errors.streamError"),
+          );
+          messageListRef.current?.finalizeMessage(tempAssistantId, {
+            id: tempAssistantId,
+            isStreaming: false,
+          });
+        } else {
+          // Stream never started — fall back to non-streaming apiPost
+          try {
+            setIsTyping(true);
+            const response = await apiPost<ApiMessage>(
+              `/api/v1/chat/conversations/${conversationId}/messages`,
+              streamBody,
+            );
+            const aiMessage: Message = {
+              ...toMessage(response),
+              id: response.id || `a-${Date.now()}`,
+              animateOnMount: true,
+              isStreaming: false,
+            };
+            setMessages((prev) => [...prev, aiMessage]);
+            if (autoReadEnabled) {
+              messageListRef.current?.playReadAloud(aiMessage.id);
+            }
+          } catch (fallbackError) {
+            let errorContent = t("errors.generic");
+            if (isApiRequestError(fallbackError)) {
+              if (fallbackError.code === "inference_timeout") {
+                errorContent = t("errors.inferenceTimeout");
+              } else if (fallbackError.code === "model_api_unconfigured") {
+                errorContent = t("errors.modelUnconfigured");
+              } else if (fallbackError.code === "model_api_unavailable") {
+                errorContent = t("errors.modelUnavailable");
+              }
+            }
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `err-${Date.now()}`,
+                role: "assistant",
+                content: errorContent,
+              },
+            ]);
+          } finally {
+            setIsTyping(false);
+          }
+        }
       } finally {
-        setIsTyping(false);
+        abortControllerRef.current = null;
+        setIsStreamingActive(false);
       }
     },
-    [autoReadEnabled, conversationId, isTyping, onConversationActivity, t],
+    [autoReadEnabled, conversationId, isStreamingActive, isTyping, onConversationActivity, t],
   );
 
   const handleLiveTranscriptUpdate = useCallback(
@@ -533,6 +631,12 @@ export function ChatInterface({
     setDictationText(null);
   }, []);
 
+  const handleStopGenerating = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsStreamingActive(false);
+  }, []);
+
   const llmModelId = getPipelineModelId(pipelineItems, "llm", "qwen3.5-plus");
   const syntheticModeAvailable = modelSupportsCapability(catalogItems, llmModelId, "vision");
   const syntheticVideoAvailable = modelSupportsCapability(catalogItems, llmModelId, "video");
@@ -567,6 +671,21 @@ export function ChatInterface({
         />
       )}
 
+      {isStreamingActive && (
+        <div className="chat-stop-generating">
+          <button
+            type="button"
+            className="chat-stop-btn"
+            onClick={handleStopGenerating}
+          >
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="currentColor">
+              <rect x={6} y={6} width={12} height={12} rx={2} />
+            </svg>
+            {t("stopGenerating")}
+          </button>
+        </div>
+      )}
+
       <div className="chat-input-bar-voice">
         {isStandardMode && conversationId ? (
           <StandardVoiceControls
@@ -580,7 +699,7 @@ export function ChatInterface({
         <ChatInputBar
           onSend={(content, options) => void handleSend(content, options)}
           disabled={noConversation}
-          isTyping={isTyping}
+          isTyping={isTyping || isStreamingActive}
           isStandardMode={isStandardMode}
           autoReadEnabled={autoReadEnabled}
           onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}

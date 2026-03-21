@@ -60,6 +60,8 @@
   "dateGroup.earlier": "更早",
   "tool.search": "搜索",
   "tool.think": "深度思考",
+  "stopGenerating": "停止生成",
+  "reasoningLabel": "思考过程",
   "memory.remembered": "记住了",
   "time.justNow": "刚刚",
   "time.minutesAgo": "{n}分钟前",
@@ -68,10 +70,12 @@
   "errors": {
     "generic": "抱歉，刚才出错了，请重试。",
     "inferenceTimeout": "AI 回复超时，请稍后重试。",
+    "modelUnconfigured": "AI 服务未配置，请设置 DASHSCOPE_API_KEY 后重启 API 服务。",
     "modelUnavailable": "模型服务暂时不可用，请稍后重试。",
     "voiceFailed": "语音处理失败，请重试。",
     "dictationFailed": "听写失败，请重试。",
     "readAloudFailed": "朗读失败，请重试。",
-    "imageUploadFailed": "图片理解失败，请重试。"
+    "imageUploadFailed": "图片理解失败，请重试。",
+    "streamError": "流式响应时发生错误。"
   }
 }
