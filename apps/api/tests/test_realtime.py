@@ -87,6 +87,7 @@ def test_build_system_prompt_with_recent_messages():
 import asyncio
 import pytest
 from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
+from app.services.dashscope_client import UpstreamServiceError
 
 
 def test_session_initial_state():
@@ -219,11 +220,17 @@ def test_session_backfills_audio_transcript_done_when_delta_was_missing():
 
 
 class _DummyUpstream:
-    def __init__(self) -> None:
+    def __init__(self, incoming_messages: list[str] | None = None) -> None:
         self.sent_messages: list[str] = []
+        self._incoming_messages = list(incoming_messages or [])
 
     async def send(self, message: str) -> None:
         self.sent_messages.append(message)
+
+    async def recv(self) -> str:
+        if not self._incoming_messages:
+            raise RuntimeError("No queued upstream messages")
+        return self._incoming_messages.pop(0)
 
     async def close(self) -> None:
         return None
@@ -244,6 +251,28 @@ def test_session_update_confirmation_is_resolved_by_listener():
     assert session.state == SessionState.READY
 
 
+def test_initial_session_update_reads_confirmation_without_listener():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream([
+        '{"type":"session.updated"}',
+    ])
+
+    asyncio.run(session.send_initial_session_update("你是助手"))
+
+    assert session.state == SessionState.READY
+    assert session._upstream_ws.sent_messages
+
+
+def test_initial_session_update_surfaces_upstream_error():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream([
+        '{"type":"error","error":{"message":"boom"}}',
+    ])
+
+    with pytest.raises(UpstreamServiceError, match="DashScope session error"):
+        asyncio.run(session.send_initial_session_update("你是助手"))
+
+
 def test_ai_output_activity_refreshes_idle_timer():
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
     session._last_activity = 0
@@ -261,6 +290,32 @@ def test_ai_output_activity_refreshes_idle_timer():
 
 
 import json
+
+
+def test_client_input_interrupt_while_ai_speaking_returns_ack():
+    """input.interrupt during ai_speaking triggers cancel and returns interrupt.ack."""
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._ai_speaking = True
+
+    replies = asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+
+    assert replies == [{"type": "interrupt.ack"}]
+    assert session._ai_speaking is False
+    sent = [json.loads(m) for m in session._upstream_ws.sent_messages]
+    assert any(m.get("type") == "response.cancel" for m in sent)
+
+
+def test_client_input_interrupt_when_ai_silent_is_noop():
+    """input.interrupt when AI is not speaking is a no-op (no interrupt.ack returned)."""
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._ai_speaking = False
+
+    replies = asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+
+    assert replies == []
+    assert session._upstream_ws.sent_messages == []
 
 
 def test_triage_memory_parses_merge_response(monkeypatch):

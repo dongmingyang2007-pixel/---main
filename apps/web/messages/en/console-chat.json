@@ -67,6 +67,7 @@
   "time.minutesAgo": "{n}m ago",
   "time.hoursAgo": "{n}h ago",
   "time.daysAgo": "{n}d ago",
+  "calibrating": "Calibrating microphone...",
   "errors": {
     "generic": "Sorry, something went wrong. Please try again.",
     "inferenceTimeout": "The AI response timed out. Please try again shortly.",
@@ -76,6 +77,8 @@
     "dictationFailed": "Dictation failed. Please try again.",
     "readAloudFailed": "Read aloud failed. Please try again.",
     "imageUploadFailed": "Image understanding failed. Please try again.",
-    "streamError": "An error occurred while streaming the response."
+    "streamError": "An error occurred while streaming the response.",
+    "noAudioInput": "No audio detected. Please check your microphone.",
+    "emptyTranscription": "No speech recognized. Please try again."
   }
 }

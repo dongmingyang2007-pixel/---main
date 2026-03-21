@@ -44,6 +44,9 @@ router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 SESSION_MONITOR_INTERVAL_SECONDS = 5.0
 UPSTREAM_CONNECT_TIMEOUT_SECONDS = 10.0
 UPSTREAM_SESSION_UPDATE_TIMEOUT_SECONDS = 10.0
+MODEL_API_UNCONFIGURED_MESSAGE = (
+    "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
+)
 
 
 async def _authenticate_websocket(ws: WebSocket) -> tuple[User, dict[str, object]]:
@@ -133,6 +136,18 @@ async def _send_error_and_close(
         await ws.close(code=close_code, reason=message)
     except Exception:
         pass
+
+
+async def _ensure_model_api_configured(ws: WebSocket) -> bool:
+    if settings.dashscope_api_key:
+        return True
+    await _send_error_and_close(
+        ws,
+        code="model_api_unconfigured",
+        message=MODEL_API_UNCONFIGURED_MESSAGE,
+        close_code=1011,
+    )
+    return False
 
 
 async def _load_initial_context(
@@ -420,6 +435,8 @@ async def realtime_voice(ws: WebSocket) -> None:
         return
 
     await ws.accept()
+    if not await _ensure_model_api_configured(ws):
+        return
 
     session: RealtimeSession | None = None
 
@@ -474,7 +491,7 @@ async def realtime_voice(ws: WebSocket) -> None:
                 timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                session.send_session_update(system_prompt),
+                session.send_initial_session_update(system_prompt),
                 timeout=UPSTREAM_SESSION_UPDATE_TIMEOUT_SECONDS,
             )
         except TimeoutError:
@@ -553,10 +570,14 @@ async def realtime_voice(ws: WebSocket) -> None:
 
                         if msg_type == "session.end":
                             break
-                        if msg_type == "audio.stop" and session._upstream_ws:
+                        elif msg_type == "audio.stop" and session._upstream_ws:
                             await session._upstream_ws.send(
                                 json.dumps({"type": "input_audio_buffer.commit"})
                             )
+                        elif msg_type == "input.interrupt":
+                            replies = await session.handle_client_message(msg_type, data)
+                            for reply in replies:
+                                await ws.send_json(reply)
 
                     receive_task = asyncio.create_task(ws.receive())
         except WebSocketDisconnect:
@@ -597,14 +618,14 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
         return
 
     await ws.accept()
+    if not await _ensure_model_api_configured(ws):
+        return
 
     session: ComposedRealtimeSession | None = None
     llm_capabilities: set[str] = set()
     receive_task: asyncio.Task | None = None
     turn_task: asyncio.Task[dict[str, str] | None] | None = None
     idle_task: asyncio.Task[str | None] | None = None
-    last_processing_error: dict[str, str] | None = None
-
     try:
         init_raw = await asyncio.wait_for(ws.receive_json(), timeout=10)
         if init_raw.get("type") != "session.start":
@@ -682,20 +703,23 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                 except asyncio.CancelledError:
                     turn_result = None
                 except UpstreamServiceError:
-                    last_processing_error = {"code": "upstream_unavailable", "message": "AI 暂时无响应"}
+                    logger.warning("Composed realtime turn failed due to upstream error", exc_info=True)
+                    await ws.send_json({
+                        "type": "turn.error",
+                        "code": "upstream_unavailable",
+                        "message": "AI 暂时无响应，请重试",
+                    })
+                    session.touch_activity()
                     turn_result = None
                 except Exception:
                     logger.exception("Composed realtime turn failed")
-                    last_processing_error = {"code": "upstream_unavailable", "message": "AI 暂时无响应"}
+                    await ws.send_json({
+                        "type": "turn.error",
+                        "code": "turn_failed",
+                        "message": "本轮处理失败，请重试",
+                    })
+                    session.touch_activity()
                     turn_result = None
-
-                if last_processing_error:
-                    await _send_error_and_close(
-                        ws,
-                        code=last_processing_error["code"],
-                        message=last_processing_error["message"],
-                    )
-                    break
 
                 if turn_result:
                     asyncio.create_task(

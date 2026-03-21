@@ -107,44 +107,80 @@ class RealtimeSession:
             max_size=16 * 1024 * 1024,
         )
 
-    async def send_session_update(self, system_prompt: str) -> None:
-        """Send session configuration with system prompt to DashScope."""
+    def _build_session_update_payload(self, system_prompt: str) -> dict:
+        return {
+            "type": "session.update",
+            "session": {
+                "modalities": ["audio", "text"],
+                "instructions": system_prompt,
+                "voice": DEFAULT_REALTIME_VOICE,
+                "input_audio_format": "pcm",
+                "input_audio_transcription": {
+                    "model": INPUT_AUDIO_TRANSCRIPTION_MODEL,
+                },
+                "output_audio_format": "pcm",
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.0,
+                    "silence_duration_ms": 400,
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+            },
+        }
+
+    async def _send_session_update_locked(
+        self,
+        system_prompt: str,
+        *,
+        wait_via_listener: bool,
+    ) -> None:
         if not self._upstream_ws:
             raise UpstreamServiceError("Upstream not connected")
 
-        async with self._session_update_lock:
-            loop = asyncio.get_running_loop()
-            pending = loop.create_future()
-            self._pending_session_update = pending
+        loop = asyncio.get_running_loop()
+        pending = loop.create_future()
+        self._pending_session_update = pending
 
-            config = {
-                "type": "session.update",
-                "session": {
-                    "modalities": ["audio", "text"],
-                    "instructions": system_prompt,
-                    "voice": DEFAULT_REALTIME_VOICE,
-                    "input_audio_format": "pcm",
-                    "input_audio_transcription": {
-                        "model": INPUT_AUDIO_TRANSCRIPTION_MODEL,
-                    },
-                    "output_audio_format": "pcm",
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.0,
-                        "silence_duration_ms": 400,
-                        "create_response": True,
-                        "interrupt_response": True,
-                    },
-                },
-            }
-            await self._upstream_ws.send(json.dumps(config))
-            try:
+        await self._upstream_ws.send(json.dumps(self._build_session_update_payload(system_prompt)))
+        try:
+            if wait_via_listener:
                 await pending
-            finally:
-                if self._pending_session_update is pending:
-                    self._pending_session_update = None
+            else:
+                while not pending.done():
+                    raw_msg = await self._upstream_ws.recv()
+                    if isinstance(raw_msg, bytes):
+                        continue
+                    event = json.loads(raw_msg)
+                    await self.handle_upstream_event(event)
+                await pending
+        except websockets.ConnectionClosed as exc:
+            if not pending.done():
+                pending.set_exception(
+                    UpstreamServiceError("Upstream connection closed during session setup")
+                )
+            raise UpstreamServiceError("Upstream connection closed during session setup") from exc
+        finally:
+            if self._pending_session_update is pending:
+                self._pending_session_update = None
 
-            self.state = SessionState.READY
+        self.state = SessionState.READY
+
+    async def send_session_update(self, system_prompt: str) -> None:
+        """Update the active session after the upstream listener is already running."""
+        async with self._session_update_lock:
+            await self._send_session_update_locked(
+                system_prompt,
+                wait_via_listener=True,
+            )
+
+    async def send_initial_session_update(self, system_prompt: str) -> None:
+        """Configure the initial session before the upstream listener starts."""
+        async with self._session_update_lock:
+            await self._send_session_update_locked(
+                system_prompt,
+                wait_via_listener=False,
+            )
 
     async def relay_audio_to_upstream(self, audio_bytes: bytes) -> None:
         """Forward PCM audio chunk from client to DashScope."""
@@ -245,6 +281,15 @@ class RealtimeSession:
                 self._speech_start_time = None
                 outgoing.append({"type": "interrupt.ack"})
 
+        return outgoing
+
+    async def handle_client_message(self, msg_type: str, data: dict) -> list[dict]:
+        """Process a control message sent from the client and return reply messages."""
+        outgoing: list[dict] = []
+        if msg_type == "input.interrupt":
+            if self._ai_speaking:
+                await self.cancel_response()
+                outgoing.append({"type": "interrupt.ack"})
         return outgoing
 
     async def cancel_response(self) -> None:

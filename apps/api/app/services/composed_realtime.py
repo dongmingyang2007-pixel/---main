@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import re
 from binascii import Error as BinasciiError
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from fastapi import WebSocket
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.db.session import SessionLocal
+from app.services.dashscope_client import UpstreamServiceError
 from app.services.orchestrator import (
     orchestrate_synthetic_realtime_turn,
     synthesize_realtime_speech_for_project,
@@ -36,6 +38,8 @@ ALLOWED_SYNTHETIC_VIDEO_MEDIA_TYPES = {
     "video/quicktime",
 }
 ALLOWED_SYNTHETIC_MEDIA_TYPES = ALLOWED_SYNTHETIC_IMAGE_MEDIA_TYPES | ALLOWED_SYNTHETIC_VIDEO_MEDIA_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -189,6 +193,11 @@ class ComposedRealtimeSession:
 
     async def start_turn(self, ws: WebSocket) -> tuple[asyncio.Task[dict[str, str] | None] | None, bool]:
         if not self._audio_buffer:
+            await ws.send_json({
+                "type": "turn.notice",
+                "code": "no_audio_input",
+                "message": "No audio detected.",
+            })
             return None, False
 
         audio_bytes = bytes(self._audio_buffer)
@@ -233,24 +242,48 @@ class ComposedRealtimeSession:
             user_text = result.get("text_input", "").strip()
             assistant_text = result.get("text_response", "").strip()
             self.touch_activity()
+            if not user_text.strip():
+                await ws.send_json({
+                    "type": "turn.notice",
+                    "code": "empty_transcription",
+                    "message": "No speech recognized.",
+                })
+                return
             if user_text:
                 await ws.send_json({"type": "transcript.final", "text": user_text})
 
             if not assistant_text or epoch != self._generation_epoch:
                 return {"user_text": user_text, "assistant_text": assistant_text}
 
+            audio_degraded = False
+            audio_meta_sent = False
             for segment in split_text_for_realtime_tts(assistant_text):
                 if epoch != self._generation_epoch:
                     return None
                 await ws.send_json({"type": "response.text", "text": segment})
-                with SessionLocal() as db:
-                    audio_chunk = await synthesize_realtime_speech_for_project(
-                        db,
-                        project_id=self.project_id,
-                        text=segment,
+                try:
+                    with SessionLocal() as db:
+                        audio_chunk = await synthesize_realtime_speech_for_project(
+                            db,
+                            project_id=self.project_id,
+                            text=segment,
+                        )
+                except UpstreamServiceError:
+                    logger.warning(
+                        "Composed realtime TTS failed; continuing with text-only response",
+                        exc_info=True,
                     )
+                    audio_degraded = True
+                    audio_chunk = b""
                 if epoch != self._generation_epoch:
                     return None
+                if audio_chunk and not audio_meta_sent:
+                    await ws.send_json({
+                        "type": "audio.meta",
+                        "mime": "audio/mpeg",
+                        "sample_rate": 24000,
+                    })
+                    audio_meta_sent = True
                 if audio_chunk:
                     await ws.send_bytes(audio_chunk)
                     self.touch_activity()
@@ -258,6 +291,12 @@ class ComposedRealtimeSession:
             if epoch == self._generation_epoch:
                 self.turn_count += 1
                 await ws.send_json({"type": "response.done"})
+                if audio_degraded:
+                    await ws.send_json({
+                        "type": "turn.notice",
+                        "code": "audio_unavailable",
+                        "message": "语音输出暂时不可用，已切换为文字回复",
+                    })
                 self.touch_activity()
                 return {"user_text": user_text, "assistant_text": assistant_text}
             return None
