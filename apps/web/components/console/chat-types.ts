@@ -74,6 +74,52 @@ export const VOICE_ACTIVE_STATES = new Set([
   "reconnecting",
 ]);
 
+function isCjkCharacter(value: string): boolean {
+  return /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(value);
+}
+
+function isWordLikeCharacter(value: string): boolean {
+  return /[A-Za-z0-9]/.test(value);
+}
+
+function startsWithPunctuation(value: string): boolean {
+  return /^[\s.,!?;:)\]}，。！？；：、】【》」』、]/.test(value);
+}
+
+function endsWithOpeningPunctuation(value: string): boolean {
+  return /[\s([{'"“‘（【《「『-]$/.test(value);
+}
+
+export function appendNaturalText(base: string, addition: string): string {
+  const trimmedAddition = addition.trim();
+  if (!trimmedAddition) {
+    return base.trimEnd();
+  }
+
+  const trimmedBase = base.trimEnd();
+  if (!trimmedBase) {
+    return trimmedAddition;
+  }
+
+  const lastChar = trimmedBase.slice(-1);
+  const firstChar = trimmedAddition[0] ?? "";
+  const shouldInsertSpace =
+    isWordLikeCharacter(lastChar) &&
+    isWordLikeCharacter(firstChar) &&
+    !isCjkCharacter(lastChar) &&
+    !isCjkCharacter(firstChar) &&
+    !endsWithOpeningPunctuation(trimmedBase) &&
+    !startsWithPunctuation(trimmedAddition);
+
+  return shouldInsertSpace
+    ? `${trimmedBase} ${trimmedAddition}`
+    : `${trimmedBase}${trimmedAddition}`;
+}
+
+export function joinNaturalText(segments: string[]): string {
+  return segments.reduce((acc, segment) => appendNaturalText(acc, segment), "");
+}
+
 export function createAudioPlayer(base64Audio: string) {
   const audioBytes = Uint8Array.from(atob(base64Audio), (c) =>
     c.charCodeAt(0),

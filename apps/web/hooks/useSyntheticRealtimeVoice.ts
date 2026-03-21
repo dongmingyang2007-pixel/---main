@@ -85,7 +85,7 @@ export function useSyntheticRealtimeVoice({
     audioSendMode: "vad-gated",
     enableInterrupt: true,
     vadConfig: {
-      speechThreshold: "auto",
+      speechThreshold: 0.015,
       silenceCommitMs: 420,
     },
     onError,

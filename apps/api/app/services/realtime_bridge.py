@@ -61,6 +61,7 @@ class RealtimeSession:
     conversation_id: str
     user_id: str
     upstream_model: str = OMNI_MODEL
+    input_transcription_model: str = INPUT_AUDIO_TRANSCRIPTION_MODEL
 
     state: SessionState = SessionState.CONNECTING
     turn_count: int = 0
@@ -69,6 +70,7 @@ class RealtimeSession:
     _memory_texts: list[str] = field(default_factory=list)
     _knowledge_chunks: list[str] = field(default_factory=list)
     _speech_start_time: float | None = None
+    _partial_transcript: str = ""
     _current_transcript: str = ""
     _current_response_text: str = ""
     _upstream_ws: websockets.ClientConnection | None = None
@@ -116,7 +118,7 @@ class RealtimeSession:
                 "voice": DEFAULT_REALTIME_VOICE,
                 "input_audio_format": "pcm",
                 "input_audio_transcription": {
-                    "model": INPUT_AUDIO_TRANSCRIPTION_MODEL,
+                    "model": self.input_transcription_model or INPUT_AUDIO_TRANSCRIPTION_MODEL,
                 },
                 "output_audio_format": "pcm",
                 "turn_detection": {
@@ -198,19 +200,32 @@ class RealtimeSession:
         event_type = event.get("type", "")
         outgoing: list[dict | bytes] = []
 
-        if event_type == "conversation.item.input_audio_transcription.delta":
+        if event_type == "conversation.item.input_audio_transcription.text":
+            confirmed = str(event.get("text", ""))
+            speculative = str(event.get("stash", ""))
+            preview = f"{confirmed}{speculative}"
+            if preview:
+                self._partial_transcript = preview
+            outgoing.append({"type": "transcript.partial", "text": self._partial_transcript})
+            self.touch()
+
+        elif event_type == "conversation.item.input_audio_transcription.delta":
             partial = event.get("delta", "")
-            outgoing.append({"type": "transcript.partial", "text": partial})
+            if partial:
+                self._partial_transcript += partial
+            outgoing.append({"type": "transcript.partial", "text": self._partial_transcript})
             self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "")
+            self._partial_transcript = ""
             self._current_transcript = transcript
             outgoing.append({"type": "transcript.final", "text": transcript})
             self.state = SessionState.LISTENING
             self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.failed":
+            self._partial_transcript = ""
             self._current_transcript = ""
             self.touch()
 
@@ -254,6 +269,7 @@ class RealtimeSession:
             self.touch()
 
         elif event_type == "input_audio_buffer.speech_started":
+            self._partial_transcript = ""
             self._speech_start_time = time.time()
             self.touch()
 

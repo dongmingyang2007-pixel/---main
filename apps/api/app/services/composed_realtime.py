@@ -14,7 +14,7 @@ from app.core.errors import ApiError
 from app.db.session import SessionLocal
 from app.services.dashscope_client import UpstreamServiceError
 from app.services.orchestrator import (
-    orchestrate_synthetic_realtime_turn,
+    orchestrate_synthetic_realtime_turn_from_text,
     synthesize_realtime_speech_for_project,
 )
 from app.services.upload_validation import (
@@ -141,6 +141,7 @@ class ComposedRealtimeSession:
         self._last_activity = self._loop.time()
         self._audio_buffer = bytearray()
         self._pending_media: PendingMedia | None = None
+        self._live_transcript = ""
         self._generation_epoch = 0
         self._turn_task: asyncio.Task[dict[str, str] | None] | None = None
 
@@ -162,6 +163,19 @@ class ComposedRealtimeSession:
 
     def touch_activity(self) -> None:
         self._last_activity = self._loop.time()
+
+    def clear_buffered_audio(self) -> None:
+        self._audio_buffer.clear()
+
+    def set_live_transcript(self, text: str, *, final: bool) -> None:
+        if final:
+            self._live_transcript = text.strip()
+        else:
+            self._live_transcript = text
+        self.touch_activity()
+
+    def clear_live_transcript(self) -> None:
+        self._live_transcript = ""
 
     def replace_pending_media(self, media: PendingMedia) -> dict[str, str]:
         self._pending_media = media
@@ -196,24 +210,32 @@ class ComposedRealtimeSession:
             await ws.send_json({
                 "type": "turn.notice",
                 "code": "no_audio_input",
-                "message": "No audio detected.",
+                "message": "未检测到音频，请检查麦克风。",
             })
             return None, False
 
-        audio_bytes = bytes(self._audio_buffer)
         self._audio_buffer.clear()
         pending_media = self._pending_media
         self._pending_media = None
+        user_text = self._live_transcript.strip()
+        self._live_transcript = ""
         self._generation_epoch += 1
         epoch = self._generation_epoch
-        task = asyncio.create_task(self._run_turn(ws, audio_bytes, pending_media, epoch))
+        if not user_text:
+            await ws.send_json({
+                "type": "turn.notice",
+                "code": "empty_transcription",
+                "message": "未识别到语音，请重试。",
+            })
+            return None, pending_media is not None
+        task = asyncio.create_task(self._run_turn(ws, user_text, pending_media, epoch))
         self._turn_task = task
         return task, pending_media is not None
 
     async def _run_turn(
         self,
         ws: WebSocket,
-        audio_bytes: bytes,
+        user_text: str,
         pending_media: PendingMedia | None,
         epoch: int,
     ) -> dict[str, str] | None:
@@ -224,12 +246,12 @@ class ComposedRealtimeSession:
             video_mime_type = pending_media.mime_type if pending_media and pending_media.kind == "video" else "video/mp4"
 
             with SessionLocal() as db:
-                result = await orchestrate_synthetic_realtime_turn(
+                result = await orchestrate_synthetic_realtime_turn_from_text(
                     db,
                     workspace_id=self.workspace_id,
                     project_id=self.project_id,
                     conversation_id=self.conversation_id,
-                    audio_bytes=audio_bytes,
+                    user_text=user_text,
                     image_bytes=image_bytes,
                     image_mime_type=image_mime_type,
                     video_bytes=video_bytes,
@@ -242,15 +264,6 @@ class ComposedRealtimeSession:
             user_text = result.get("text_input", "").strip()
             assistant_text = result.get("text_response", "").strip()
             self.touch_activity()
-            if not user_text.strip():
-                await ws.send_json({
-                    "type": "turn.notice",
-                    "code": "empty_transcription",
-                    "message": "No speech recognized.",
-                })
-                return
-            if user_text:
-                await ws.send_json({"type": "transcript.final", "text": user_text})
 
             if not assistant_text or epoch != self._generation_epoch:
                 return {"user_text": user_text, "assistant_text": assistant_text}

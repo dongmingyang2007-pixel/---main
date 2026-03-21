@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -28,6 +29,7 @@ from app.services.context_loader import (
     search_rag_knowledge,
 )
 from app.services.composed_realtime import ComposedRealtimeSession, decode_pending_media
+from app.services.asr_client import RealtimeTranscriptionBridge
 from app.services.realtime_bridge import (
     RealtimeSession,
     register_session,
@@ -103,6 +105,11 @@ def _load_authorized_conversation(
 def _resolve_realtime_model_id(db: Session, project_id: str) -> str:
     model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="realtime")
     return model_id or DEFAULT_PIPELINE_MODELS["realtime"]
+
+
+def _resolve_realtime_asr_model_id(db: Session, project_id: str) -> str:
+    model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="realtime_asr")
+    return model_id or DEFAULT_PIPELINE_MODELS["realtime_asr"]
 
 
 async def _send_session_end(
@@ -420,6 +427,189 @@ async def _idle_monitor(
     return None
 
 
+@router.websocket("/dictate")
+async def realtime_dictate(ws: WebSocket) -> None:
+    """Realtime dictation endpoint for the standard chat input mic."""
+    user: User | None = None
+    auth_payload: dict[str, object] | None = None
+    receive_task: asyncio.Task | None = None
+    transcription_task: asyncio.Task[dict[str, str]] | None = None
+    transcription_bridge: RealtimeTranscriptionBridge | None = None
+
+    try:
+        try:
+            user, auth_payload = await _authenticate_websocket(ws)
+        except ApiError as exc:
+            await ws.accept()
+            await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+            await ws.close(code=4001 if exc.status_code == 401 else 4003, reason=exc.message)
+            return
+
+        await ws.accept()
+        if not await _ensure_model_api_configured(ws):
+            return
+
+        init_raw = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        if init_raw.get("type") != "session.start":
+            await ws.send_json({"type": "error", "code": "bad_request", "message": "Expected session.start"})
+            await ws.close()
+            return
+
+        conversation_id = init_raw.get("conversation_id")
+        project_id = init_raw.get("project_id")
+        if not conversation_id or not project_id:
+            await ws.send_json({"type": "error", "code": "bad_request", "message": "Missing conversation_id or project_id"})
+            await ws.close()
+            return
+
+        db: Session = SessionLocal()
+        try:
+            _load_authorized_conversation(
+                db,
+                current_user_id=user.id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+            realtime_asr_model_id = _resolve_realtime_asr_model_id(db, project_id)
+        except ApiError as exc:
+            await ws.send_json({"type": "error", "code": exc.code, "message": exc.message})
+            await ws.close(code=4003, reason=exc.message)
+            return
+        finally:
+            db.close()
+
+        await ws.send_json({"type": "session.ready"})
+        receive_task = asyncio.create_task(ws.receive())
+
+        while True:
+            wait_set: set[asyncio.Task] = {receive_task}
+            if transcription_task is not None:
+                wait_set.add(transcription_task)
+
+            done, _pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+
+            if transcription_task is not None and transcription_task in done:
+                event = transcription_task.result()
+                event_type = event.get("type", "")
+
+                if event_type == "transcript.partial":
+                    await ws.send_json({"type": "transcript.partial", "text": event.get("text", "")})
+                elif event_type == "transcript.final":
+                    await ws.send_json({"type": "transcript.final", "text": event.get("text", "")})
+                    await transcription_bridge.close()
+                    transcription_bridge = None
+                elif event_type == "transcript.empty":
+                    await ws.send_json({
+                        "type": "turn.notice",
+                        "code": "empty_transcription",
+                        "message": "未识别到语音，请重试。",
+                    })
+                    await transcription_bridge.close()
+                    transcription_bridge = None
+                elif event_type == "error":
+                    await _send_error_and_close(
+                        ws,
+                        code="upstream_unavailable",
+                        message="AI 暂时无响应，请重试",
+                    )
+                    break
+                elif event_type == "session.closed":
+                    transcription_bridge = None
+
+                transcription_task = (
+                    asyncio.create_task(transcription_bridge.next_event())
+                    if transcription_bridge is not None
+                    else None
+                )
+
+            if receive_task in done:
+                try:
+                    message = receive_task.result()
+                except WebSocketDisconnect:
+                    break
+
+                if message["type"] == "websocket.disconnect":
+                    break
+
+                if "bytes" in message and message["bytes"]:
+                    if transcription_bridge is None:
+                        transcription_bridge = RealtimeTranscriptionBridge(model=realtime_asr_model_id)
+                        try:
+                            await asyncio.wait_for(
+                                transcription_bridge.connect(),
+                                timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+                            )
+                        except TimeoutError:
+                            await _send_error_and_close(
+                                ws,
+                                code="upstream_timeout",
+                                message="AI 暂时无响应，请重试",
+                                close_code=1013,
+                            )
+                            break
+                        except UpstreamServiceError:
+                            await _send_error_and_close(
+                                ws,
+                                code="upstream_unavailable",
+                                message="AI 暂时无响应，请重试",
+                            )
+                            break
+                        transcription_task = asyncio.create_task(transcription_bridge.next_event())
+                    try:
+                        await transcription_bridge.send_audio_chunk(message["bytes"])
+                    except UpstreamServiceError:
+                        await _send_error_and_close(
+                            ws,
+                            code="upstream_unavailable",
+                            message="AI 暂时无响应，请重试",
+                        )
+                        break
+
+                elif "text" in message and message["text"]:
+                    data = json.loads(message["text"])
+                    msg_type = data.get("type")
+                    if msg_type == "session.end":
+                        break
+                    if msg_type == "audio.stop":
+                        if transcription_bridge is None:
+                            await ws.send_json({
+                                "type": "turn.notice",
+                                "code": "no_audio_input",
+                                "message": "未检测到音频，请检查麦克风。",
+                            })
+                        else:
+                            try:
+                                await transcription_bridge.commit()
+                            except UpstreamServiceError:
+                                await _send_error_and_close(
+                                    ws,
+                                    code="upstream_unavailable",
+                                    message="AI 暂时无响应，请重试",
+                                )
+                                break
+
+                receive_task = asyncio.create_task(ws.receive())
+    except Exception as exc:
+        logger.exception("Realtime dictate error: %s", exc)
+        try:
+            await ws.send_json({"type": "error", "code": "internal", "message": "Internal server error"})
+        except Exception:
+            pass
+    finally:
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+        if transcription_task is not None and not transcription_task.done():
+            transcription_task.cancel()
+        if transcription_bridge is not None:
+            await transcription_bridge.close()
+        if user is not None and auth_payload is not None and is_token_revoked_for_user(user.id, auth_payload):
+            with suppress(Exception):
+                await ws.close(code=4001, reason="auth_revoked")
+            return
+        with suppress(Exception):
+            await ws.close()
+
+
 @router.websocket("/voice")
 async def realtime_voice(ws: WebSocket) -> None:
     """Full-duplex voice conversation WebSocket endpoint."""
@@ -469,6 +659,7 @@ async def realtime_voice(ws: WebSocket) -> None:
                 conversation_id=conversation.id,
                 user_id=user.id,
                 upstream_model=_resolve_realtime_model_id(db, conversation.project_id),
+                input_transcription_model=_resolve_realtime_asr_model_id(db, conversation.project_id),
             )
 
             if not await register_session(user.id, session):
@@ -625,7 +816,11 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
     llm_capabilities: set[str] = set()
     receive_task: asyncio.Task | None = None
     turn_task: asyncio.Task[dict[str, str] | None] | None = None
+    transcription_task: asyncio.Task[dict[str, str]] | None = None
+    transcription_bridge: RealtimeTranscriptionBridge | None = None
     idle_task: asyncio.Task[str | None] | None = None
+    awaiting_transcript_final = False
+    realtime_asr_model_id = DEFAULT_PIPELINE_MODELS["realtime_asr"]
     try:
         init_raw = await asyncio.wait_for(ws.receive_json(), timeout=10)
         if init_raw.get("type") != "session.start":
@@ -649,6 +844,7 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                 conversation_id=conversation_id,
             )
             llm_model_id, llm_capabilities = _load_llm_capabilities(db, conversation.project_id)
+            realtime_asr_model_id = _resolve_realtime_asr_model_id(db, conversation.project_id)
             if "vision" not in llm_capabilities and "image" not in llm_capabilities:
                 await _send_error_and_close(
                     ws,
@@ -684,6 +880,8 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
             wait_set: set[asyncio.Task] = {receive_task, idle_task}
             if turn_task is not None:
                 wait_set.add(turn_task)
+            if transcription_task is not None:
+                wait_set.add(transcription_task)
 
             done, _pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
 
@@ -742,12 +940,53 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
 
                 if "bytes" in message and message["bytes"]:
                     is_new_utterance = not session.has_buffered_audio
+                    audio_chunk_forwarded = False
                     if is_new_utterance and session.is_processing:
                         interrupted = await session.interrupt()
                         if interrupted:
                             await ws.send_json({"type": "interrupt.ack"})
                             turn_task = None
-                    session.append_audio_chunk(message["bytes"])
+                    if is_new_utterance:
+                        session.clear_live_transcript()
+                        awaiting_transcript_final = False
+                    if transcription_bridge is None:
+                        transcription_bridge = RealtimeTranscriptionBridge(model=realtime_asr_model_id)
+                        try:
+                            await asyncio.wait_for(
+                                transcription_bridge.connect(),
+                                timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+                            )
+                        except TimeoutError:
+                            logger.warning("Composed realtime ASR setup timed out")
+                            await ws.send_json({
+                                "type": "turn.error",
+                                "code": "upstream_timeout",
+                                "message": "AI 暂时无响应，请重试",
+                            })
+                            awaiting_transcript_final = False
+                            session.clear_live_transcript()
+                            session.clear_buffered_audio()
+                            await transcription_bridge.close()
+                            transcription_bridge = None
+                        except UpstreamServiceError:
+                            logger.warning("Composed realtime ASR setup failed", exc_info=True)
+                            await ws.send_json({
+                                "type": "turn.error",
+                                "code": "upstream_unavailable",
+                                "message": "AI 暂时无响应，请重试",
+                            })
+                            awaiting_transcript_final = False
+                            session.clear_live_transcript()
+                            session.clear_buffered_audio()
+                            await transcription_bridge.close()
+                            transcription_bridge = None
+                        else:
+                            transcription_task = asyncio.create_task(transcription_bridge.next_event())
+                    if transcription_bridge is not None:
+                        await transcription_bridge.send_audio_chunk(message["bytes"])
+                        audio_chunk_forwarded = True
+                    if audio_chunk_forwarded:
+                        session.append_audio_chunk(message["bytes"])
 
                 elif "text" in message and message["text"]:
                     data = json.loads(message["text"])
@@ -756,11 +995,15 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                     if msg_type == "session.end":
                         break
                     if msg_type == "audio.stop":
-                        maybe_task, consumed_media = await session.start_turn(ws)
-                        if consumed_media:
-                            await ws.send_json({"type": "media.cleared"})
-                        if maybe_task is not None:
-                            turn_task = maybe_task
+                        if transcription_bridge is None:
+                            maybe_task, consumed_media = await session.start_turn(ws)
+                            if consumed_media:
+                                await ws.send_json({"type": "media.cleared"})
+                            if maybe_task is not None:
+                                turn_task = maybe_task
+                        else:
+                            awaiting_transcript_final = True
+                            await transcription_bridge.commit()
                     elif msg_type == "media.set":
                         data_url = str(data.get("data_url") or "")
                         filename = str(data.get("filename") or "")
@@ -786,6 +1029,60 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
 
                 receive_task = asyncio.create_task(ws.receive())
 
+            if transcription_task is not None and transcription_task in done:
+                event = transcription_task.result()
+                event_type = event.get("type", "")
+
+                if event_type == "transcript.partial":
+                    partial_text = event.get("text", "")
+                    session.set_live_transcript(partial_text, final=False)
+                    await ws.send_json({"type": "transcript.partial", "text": partial_text})
+                elif event_type == "transcript.final":
+                    final_text = event.get("text", "")
+                    session.set_live_transcript(final_text, final=True)
+                    await ws.send_json({"type": "transcript.final", "text": final_text})
+                    if awaiting_transcript_final:
+                        maybe_task, consumed_media = await session.start_turn(ws)
+                        if consumed_media:
+                            await ws.send_json({"type": "media.cleared"})
+                        if maybe_task is not None:
+                            turn_task = maybe_task
+                        awaiting_transcript_final = False
+                        await transcription_bridge.close()
+                        transcription_bridge = None
+                elif event_type == "transcript.empty":
+                    session.clear_live_transcript()
+                    if awaiting_transcript_final:
+                        maybe_task, consumed_media = await session.start_turn(ws)
+                        if consumed_media:
+                            await ws.send_json({"type": "media.cleared"})
+                        if maybe_task is not None:
+                            turn_task = maybe_task
+                        awaiting_transcript_final = False
+                        await transcription_bridge.close()
+                        transcription_bridge = None
+                elif event_type == "error":
+                    logger.warning("Composed realtime transcription bridge failed: %s", event.get("message", ""))
+                    await ws.send_json({
+                        "type": "turn.error",
+                        "code": "upstream_unavailable",
+                        "message": "AI 暂时无响应，请重试",
+                    })
+                    awaiting_transcript_final = False
+                    session.clear_live_transcript()
+                    session.clear_buffered_audio()
+                    if transcription_bridge is not None:
+                        await transcription_bridge.close()
+                        transcription_bridge = None
+                elif event_type == "session.closed":
+                    transcription_bridge = None
+
+                transcription_task = (
+                    asyncio.create_task(transcription_bridge.next_event())
+                    if transcription_bridge is not None
+                    else None
+                )
+
     except Exception as exc:
         logger.exception("Composed realtime voice error: %s", exc)
         try:
@@ -795,8 +1092,12 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
     finally:
         if receive_task is not None and not receive_task.done():
             receive_task.cancel()
+        if transcription_task is not None and not transcription_task.done():
+            transcription_task.cancel()
         if idle_task is not None:
             idle_task.cancel()
+        if transcription_bridge is not None:
+            await transcription_bridge.close()
         if session is not None:
             await session.close()
             await unregister_session(user.id if user else "")

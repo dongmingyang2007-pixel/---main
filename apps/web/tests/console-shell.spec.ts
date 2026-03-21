@@ -70,6 +70,198 @@ async function stubBrowserVoiceApis(page: Page) {
   });
 }
 
+async function stubRealtimeDictationApis(page: Page) {
+  await page.addInitScript(() => {
+    class MockMediaStreamSource {
+      connect() {
+        return undefined;
+      }
+    }
+
+    class MockScriptProcessor {
+      onaudioprocess: ((event: { inputBuffer: { getChannelData: () => Float32Array } }) => void) | null = null;
+
+      connect() {
+        return undefined;
+      }
+
+      disconnect() {
+        return undefined;
+      }
+    }
+
+    class MockGainNode {
+      gain = { value: 1 };
+
+      connect() {
+        return undefined;
+      }
+
+      disconnect() {
+        return undefined;
+      }
+    }
+
+    class MockAudioContext {
+      state: "running" | "suspended" | "closed" = "running";
+      destination = {};
+
+      resume() {
+        this.state = "running";
+        return Promise.resolve();
+      }
+
+      close() {
+        this.state = "closed";
+        return Promise.resolve();
+      }
+
+      createMediaStreamSource() {
+        return new MockMediaStreamSource();
+      }
+
+      createScriptProcessor(bufferSize?: number) {
+        (window as Window & { __lastDictationBufferSize?: number }).__lastDictationBufferSize = bufferSize;
+        return new MockScriptProcessor();
+      }
+
+      createGain() {
+        return new MockGainNode();
+      }
+    }
+
+    Object.defineProperty(window, "AudioContext", {
+      configurable: true,
+      writable: true,
+      value: MockAudioContext,
+    });
+
+    Object.defineProperty(globalThis, "AudioContext", {
+      configurable: true,
+      writable: true,
+      value: MockAudioContext,
+    });
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({
+          getTracks: () => [{ stop() {} }],
+        }),
+      },
+    });
+
+    class MockWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+
+      readyState = MockWebSocket.CONNECTING;
+      binaryType = "blob";
+      onopen: ((event: unknown) => void) | null = null;
+      onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      onerror: ((event: unknown) => void) | null = null;
+
+      constructor(url: string) {
+        if (!url.includes("/api/v1/realtime/dictate")) {
+          throw new Error(`Unexpected WebSocket URL: ${url}`);
+        }
+        setTimeout(() => {
+          this.readyState = MockWebSocket.OPEN;
+          this.onopen?.({});
+        }, 0);
+      }
+
+      send(data: string | ArrayBuffer) {
+        if (typeof data !== "string") {
+          return;
+        }
+        const payload = JSON.parse(data);
+        if (payload.type === "session.start") {
+          setTimeout(() => {
+            this.onmessage?.({ data: JSON.stringify({ type: "session.ready" }) });
+          }, 0);
+          setTimeout(() => {
+            this.onmessage?.({ data: JSON.stringify({ type: "transcript.partial", text: "帮我" }) });
+          }, 50);
+          return;
+        }
+        if (payload.type === "audio.stop") {
+          setTimeout(() => {
+            this.onmessage?.({
+              data: JSON.stringify({ type: "transcript.final", text: "帮我整理成一段话" }),
+            });
+          }, 30);
+          return;
+        }
+        if (payload.type === "session.end") {
+          this.close(1000, "client_end");
+        }
+      }
+
+      close(code = 1000, reason = "") {
+        if (this.readyState === MockWebSocket.CLOSED) {
+          return;
+        }
+        this.readyState = MockWebSocket.CLOSED;
+        setTimeout(() => {
+          this.onclose?.({ code, reason });
+        }, 0);
+      }
+    }
+
+    Object.defineProperty(window, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: MockWebSocket,
+    });
+
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      writable: true,
+      value: MockWebSocket,
+    });
+  });
+}
+
+async function forceSelectChatProject(page: Page, projectId: string) {
+  await page.evaluate(({ nextProjectId }) => {
+    const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
+    if (!select) {
+      return;
+    }
+    if (!Array.from(select.options).some((option) => option.value === nextProjectId)) {
+      const option = document.createElement("option");
+      option.value = nextProjectId;
+      option.textContent = nextProjectId;
+      select.appendChild(option);
+    }
+  }, { nextProjectId: projectId });
+  await page.locator(".inline-topbar-project-select").selectOption(projectId);
+}
+
+async function ensureChatConversationReady(page: Page, projectId: string) {
+  const activeConversation = page.locator(".chat-sidebar-item.is-active");
+  try {
+    await expect(activeConversation).toBeVisible({ timeout: 8000 });
+    return;
+  } catch {
+    await forceSelectChatProject(page, projectId);
+    try {
+      await expect(activeConversation).toBeVisible({ timeout: 8000 });
+      return;
+    } catch {
+      // Fall through to the manual create path below.
+    }
+    const newConversationButton = page.locator(".chat-sidebar-new");
+    await expect(newConversationButton).toBeEnabled({ timeout: 8000 });
+    await newConversationButton.click();
+    await expect(activeConversation).toBeVisible();
+  }
+}
+
 test.describe("Console Shell", () => {
   test.beforeEach(async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
@@ -97,6 +289,76 @@ test.describe("Console Shell", () => {
     await page.goto("/app");
     await expect(page.locator(".inline-topbar")).toBeVisible();
     await expect(page.locator(".inline-topbar-breadcrumb")).toContainText("仪表盘");
+  });
+
+  test("dashboard shows all projects and their configured models", async ({ page }) => {
+    await page.addInitScript(() => {
+      (
+        window as Window & {
+          __PLAYWRIGHT_PROJECTS__?: Array<{ id: string; name: string }>;
+        }
+      ).__PLAYWRIGHT_PROJECTS__ = [
+        {
+          id: "proj-seed",
+          name: "Seed Console Project",
+          default_chat_mode: "standard",
+        },
+        {
+          id: "proj-doctor",
+          name: "医生",
+          default_chat_mode: "omni_realtime",
+        },
+      ];
+    });
+
+    await page.route("**/api/v1/pipeline?project_id=proj-seed", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            { model_type: "llm", model_id: "qwen3.5-plus" },
+            { model_type: "tts", model_id: "qwen3-tts-flash" },
+          ],
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/pipeline?project_id=proj-doctor", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            { model_type: "llm", model_id: "qwen3.5-plus" },
+            { model_type: "realtime", model_id: "qwen3-omni-flash-realtime" },
+          ],
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations?project_id=proj-seed", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations?project_id=proj-doctor", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.goto("/app");
+
+    await expect(page.locator(".inline-topbar-project-select")).toBeVisible();
+    await expect(page.locator(".dashboard-project-card")).toHaveCount(2);
+    await expect(page.locator(".dashboard-project-card").filter({ hasText: "Seed Console Project" })).toContainText("Qwen3.5-Plus");
+    await expect(page.locator(".dashboard-project-card").filter({ hasText: "医生" })).toContainText("Qwen3-Omni-Flash-Realtime");
   });
 
   test("StatusBar visible on desktop", async ({ page }) => {
@@ -381,29 +643,18 @@ test.describe("Console Shell", () => {
   });
 
   test("chat mic button dictates into the input instead of sending immediately", async ({ page }) => {
-    const handle = await installWorkbenchApiMock(page, { authenticated: true });
-    let dictateCalls = 0;
+    await stubRealtimeDictationApis(page);
 
-    await stubBrowserVoiceApis(page);
-    await page.route("**/api/v1/chat/conversations/*/dictate", async (route) => {
-      dictateCalls += 1;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          text_input: "帮我整理成一段话",
-        }),
-      });
-    });
-
-    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.goto("/app/chat?project_id=proj-seed");
+    await ensureChatConversationReady(page, "proj-seed");
     await page.locator(".chat-mic-btn").click();
     await expect(page.locator(".chat-voice-indicator")).toContainText("听写中…再次点击完成");
+    await expect.poll(async () => page.evaluate(() => (window as Window & { __lastDictationBufferSize?: number }).__lastDictationBufferSize ?? 0)).toBe(1024);
+    await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue("帮我");
 
     await page.locator(".chat-mic-btn").click();
 
     await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue("帮我整理成一段话");
-    expect(dictateCalls).toBe(1);
     await expect(page.locator(".chat-message.is-user")).toHaveCount(0);
   });
 
@@ -657,7 +908,7 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".chat-message.is-assistant").last()).toContainText("历史回复");
 
     await page.evaluate(() => {
-      const select = document.querySelector(".chat-sidebar-header select") as HTMLSelectElement | null;
+      const select = document.querySelector(".inline-topbar-project-select") as HTMLSelectElement | null;
       select?.dispatchEvent(new Event("change", { bubbles: true }));
     });
 

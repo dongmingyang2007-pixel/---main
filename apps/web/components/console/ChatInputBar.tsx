@@ -3,7 +3,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslations } from "next-intl";
 
-import { cycleState } from "./chat-types";
+import { appendNaturalText, cycleState } from "./chat-types";
 
 export interface ChatInputBarProps {
   onSend: (
@@ -19,10 +19,10 @@ export interface ChatInputBarProps {
   isStandardMode: boolean;
   autoReadEnabled: boolean;
   onAutoReadToggle: () => void;
-  /** When called externally (e.g. from dictation), sets the input text. */
-  externalInputText?: string | null;
-  /** Acknowledge that the external text was consumed. */
-  onExternalInputTextConsumed?: () => void;
+  /** Streaming dictation text that should replace the current dictated draft. */
+  liveExternalInputText?: string | null;
+  /** Whether a streaming dictation session is active. */
+  isLiveExternalInputActive?: boolean;
 }
 
 export function ChatInputBar({
@@ -32,8 +32,8 @@ export function ChatInputBar({
   isStandardMode,
   autoReadEnabled,
   onAutoReadToggle,
-  externalInputText,
-  onExternalInputTextConsumed,
+  liveExternalInputText,
+  isLiveExternalInputActive = false,
 }: ChatInputBarProps) {
   const t = useTranslations("console-chat");
   const [input, setInput] = useState("");
@@ -44,19 +44,25 @@ export function ChatInputBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
+  const liveExternalBaseRef = useRef<string | null>(null);
 
-  // Accept dictated / external text into the input field
   useEffect(() => {
-    if (externalInputText != null && externalInputText !== "") {
-      setInput((prev) => {
-        const trimmed = prev.trim();
-        return trimmed ? `${trimmed} ${externalInputText}` : externalInputText;
-      });
-      onExternalInputTextConsumed?.();
-      // Focus the input so the user can review / edit before sending
-      inputRef.current?.focus();
+    if (!isLiveExternalInputActive) {
+      liveExternalBaseRef.current = null;
+      return;
     }
-  }, [externalInputText, onExternalInputTextConsumed]);
+
+    setInput((prev) => {
+      const base = liveExternalBaseRef.current ?? prev;
+      liveExternalBaseRef.current = base;
+      const draft = liveExternalInputText || "";
+      if (!draft) {
+        return base;
+      }
+      return appendNaturalText(base, draft);
+    });
+    inputRef.current?.focus();
+  }, [isLiveExternalInputActive, liveExternalInputText]);
 
   const handleImageFileSelected = useCallback(
     (file: File | null) => {
@@ -77,7 +83,7 @@ export function ChatInputBar({
 
   const handleSubmit = useCallback(() => {
     const text = input.trim();
-    if ((!text && !pendingImageFile) || isTyping || disabled) {
+    if ((!text && !pendingImageFile) || isTyping || disabled || isLiveExternalInputActive) {
       return;
     }
 
@@ -94,7 +100,7 @@ export function ChatInputBar({
 
     setInput("");
     setPendingImageFile(null);
-  }, [disabled, input, isTyping, onSend, pendingImageFile, searchState, thinkState]);
+  }, [disabled, input, isLiveExternalInputActive, isTyping, onSend, pendingImageFile, searchState, thinkState]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -138,7 +144,7 @@ export function ChatInputBar({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        disabled={isTyping || disabled}
+        disabled={isTyping || disabled || isLiveExternalInputActive}
       />
       <div className="chat-tool-chips">
         {isStandardMode ? (
@@ -160,7 +166,7 @@ export function ChatInputBar({
             type="button"
             className="chat-tool-chip"
             onClick={() => imageUploadRef.current?.click()}
-            disabled={isTyping || disabled}
+            disabled={isTyping || disabled || isLiveExternalInputActive}
           >
             <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <rect x={3} y={3} width={18} height={18} rx={2} ry={2} />
@@ -175,7 +181,7 @@ export function ChatInputBar({
             type="button"
             className="chat-tool-chip"
             onClick={() => imageCaptureRef.current?.click()}
-            disabled={isTyping || disabled}
+            disabled={isTyping || disabled || isLiveExternalInputActive}
           >
             <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -212,7 +218,7 @@ export function ChatInputBar({
       <button
         className="chat-send"
         onClick={handleSubmit}
-        disabled={(!input.trim() && !pendingImageFile) || isTyping || disabled}
+        disabled={(!input.trim() && !pendingImageFile) || isTyping || disabled || isLiveExternalInputActive}
       >
         {t("send")}
       </button>

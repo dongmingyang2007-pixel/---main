@@ -1,104 +1,73 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { apiPostFormData, isApiRequestError } from "@/lib/api";
-import { useAudioRecorder } from "@/hooks/useAudioRecorder";
-import { type DictationResponse, getApiErrorMessage } from "./chat-types";
+import { useRealtimeDictation } from "@/hooks/useRealtimeDictation";
 
 export interface StandardVoiceControlsProps {
   conversationId: string;
+  projectId: string;
   isTyping: boolean;
   disabled: boolean;
-  onDictationResult: (text: string) => void;
+  onDictationDraftChange: (text: string) => void;
+  onDictationStateChange: (active: boolean) => void;
   onError: (message: string) => void;
-}
-
-/** File extension matching the actual MIME type of the recorded blob. */
-function audioExtensionForBlob(blob: Blob): string {
-  const mime = blob.type.toLowerCase();
-  if (mime.includes("mp4") || mime.includes("m4a")) return "recording.mp4";
-  if (mime.includes("ogg")) return "recording.ogg";
-  // Default to webm (Chrome, Firefox default)
-  return "recording.webm";
 }
 
 export function StandardVoiceControls({
   conversationId,
+  projectId,
   isTyping,
   disabled,
-  onDictationResult,
+  onDictationDraftChange,
+  onDictationStateChange,
   onError,
 }: StandardVoiceControlsProps) {
   const t = useTranslations("console-chat");
-  const [voiceStatus, setVoiceStatus] = useState<
-    "idle" | "recording" | "sending"
-  >("idle");
   const [asrAvailable, setAsrAvailable] = useState(true);
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder();
-
-  const dictateVoiceInput = useCallback(
-    async (audioBlob: Blob) => {
-      setVoiceStatus("sending");
-
-      try {
-        const formData = new FormData();
-        formData.append("audio", audioBlob, audioExtensionForBlob(audioBlob));
-
-        const data = await apiPostFormData<DictationResponse>(
-          `/api/v1/chat/conversations/${conversationId}/dictate`,
-          formData,
-        );
-
-        const dictatedText = data.text_input.trim();
-        if (!dictatedText) {
-          onError(t("errors.dictationFailed"));
-          return;
-        }
-        onDictationResult(dictatedText);
-      } catch (error) {
-        const content = isApiRequestError(error)
-          ? getApiErrorMessage(error, t)
-          : t("errors.dictationFailed");
-        if (isApiRequestError(error) && error.code === "model_api_unconfigured") {
-          setAsrAvailable(false);
-        }
-        onError(content);
-      } finally {
-        setVoiceStatus("idle");
+  const dictation = useRealtimeDictation({
+    conversationId,
+    projectId,
+    onDraftChange: onDictationDraftChange,
+    onError: (message) => {
+      const friendlyMessage =
+        message === "model_api_unconfigured" ? t("errors.modelUnconfigured") : message;
+      if (message === "model_api_unconfigured") {
+        setAsrAvailable(false);
       }
+      onError(friendlyMessage);
     },
-    [conversationId, onDictationResult, onError, t],
-  );
+  });
+
+  useEffect(() => {
+    onDictationStateChange(dictation.isActive);
+  }, [dictation.isActive, onDictationStateChange]);
 
   const handleMicClick = useCallback(async () => {
-    if (isRecording) {
-      const blob = await stopRecording();
-      if (blob.size > 0) {
-        await dictateVoiceInput(blob);
-      } else {
-        setVoiceStatus("idle");
-      }
-    } else {
-      try {
-        await startRecording();
-        setVoiceStatus("recording");
-      } catch {
-        setVoiceStatus("idle");
-        onError(t("micPermissionDenied"));
-      }
+    if (dictation.isActive) {
+      dictation.disconnect();
+      return;
     }
-  }, [dictateVoiceInput, isRecording, onError, startRecording, stopRecording, t]);
+    try {
+      await dictation.connect();
+    } catch {
+      onError(t("micPermissionDenied"));
+    }
+  }, [dictation, onError, t]);
 
   if (!asrAvailable) return null;
+
+  const isRecording = dictation.isActive;
+  const isConnecting = dictation.state === "connecting" || dictation.state === "reconnecting";
+  const statusText = isConnecting ? t("realtimePreparing") : t("voiceRecording");
 
   return (
     <>
       <button
         className={`chat-mic-btn ${isRecording ? "is-recording" : ""}`}
         onClick={() => void handleMicClick()}
-        disabled={voiceStatus === "sending" || (isTyping && !isRecording) || disabled}
+        disabled={(isTyping && !isRecording) || disabled}
         title={isRecording ? t("voiceRecording") : t("voiceRecord")}
         type="button"
       >
@@ -133,12 +102,9 @@ export function StandardVoiceControls({
         )}
       </button>
 
-      {voiceStatus === "recording" && (
-        <div className="chat-voice-indicator">{t("voiceRecording")}</div>
-      )}
-      {voiceStatus === "sending" && (
-        <div className="chat-voice-indicator">{t("voiceSending")}</div>
-      )}
+      {isRecording ? (
+        <div className="chat-voice-indicator">{statusText}</div>
+      ) : null}
     </>
   );
 }

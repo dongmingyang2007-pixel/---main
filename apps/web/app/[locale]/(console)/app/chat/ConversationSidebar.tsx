@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format-time";
-import { buildProjectDisplayMap } from "@/lib/project-display";
 import { useProjectSelection } from "@/lib/useProjectSelection";
 import { useModal } from "@/components/ui/modal-dialog";
 
@@ -179,7 +178,6 @@ export function ConversationSidebar({
     projects,
     selectProject,
   } = useProjectSelection(loadConversations);
-  const projectLabels = useMemo(() => buildProjectDisplayMap(projects), [projects]);
 
   // Notify parent of project changes
   const prevProjectIdRef = useRef(selectedProjectId);
@@ -193,6 +191,10 @@ export function ConversationSidebar({
   // URL param sync: project_id
   useEffect(() => {
     if (!requestedProjectId || requestedProjectId === selectedProjectId) {
+      return;
+    }
+    if (projects.length === 0) {
+      void selectProject(requestedProjectId);
       return;
     }
     if (!projects.some((project) => project.id === requestedProjectId)) {
@@ -449,24 +451,6 @@ export function ConversationSidebar({
 
   return (
     <div className="chat-sidebar">
-      <div className="chat-sidebar-header">
-        <select
-          value={selectedProjectId}
-          onChange={(e) => {
-            void selectProject(e.target.value);
-          }}
-        >
-          {projects.length === 0 && (
-            <option value="">{t("selectAssistant")}</option>
-          )}
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {projectLabels.get(p.id) || p.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
       <div className="chat-search">
         <input
           type="text"

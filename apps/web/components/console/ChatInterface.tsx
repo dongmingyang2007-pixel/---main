@@ -52,7 +52,8 @@ export function ChatInterface({
   const [catalogItems, setCatalogItems] = useState<CatalogModelItem[]>([]);
   const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
-  const [dictationText, setDictationText] = useState<string | null>(null);
+  const [liveDictationText, setLiveDictationText] = useState("");
+  const [isLiveDictating, setIsLiveDictating] = useState(false);
   const [isStreamingActive, setIsStreamingActive] = useState(false);
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
@@ -559,6 +560,16 @@ export function ChatInterface({
   }, [conversationId]);
 
   useEffect(() => {
+    setLiveDictationText("");
+    setIsLiveDictating(false);
+  }, [conversationId, projectId]);
+
+  const handleLiveDictationDraftChange = useCallback((text: string) => {
+    setVoiceNotice(null);
+    setLiveDictationText(text);
+  }, []);
+
+  useEffect(() => {
     if (!conversationId || chatMode === "standard") {
       setVoiceSessionState("idle");
     }
@@ -609,14 +620,6 @@ export function ChatInterface({
     },
     [conversationId, projectDefaultMode],
   );
-
-  const handleDictationResult = useCallback((text: string) => {
-    setDictationText(text);
-  }, []);
-
-  const handleDictationTextConsumed = useCallback(() => {
-    setDictationText(null);
-  }, []);
 
   const handleStopGenerating = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -674,12 +677,14 @@ export function ChatInterface({
       )}
 
       <div className="chat-input-bar-voice">
-        {isStandardMode && conversationId ? (
+        {isStandardMode && conversationId && projectId ? (
           <StandardVoiceControls
             conversationId={conversationId}
+            projectId={projectId}
             isTyping={isTyping}
             disabled={noConversation}
-            onDictationResult={handleDictationResult}
+            onDictationDraftChange={handleLiveDictationDraftChange}
+            onDictationStateChange={setIsLiveDictating}
             onError={setVoiceNotice}
           />
         ) : null}
@@ -690,8 +695,8 @@ export function ChatInterface({
           isStandardMode={isStandardMode}
           autoReadEnabled={autoReadEnabled}
           onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
-          externalInputText={dictationText}
-          onExternalInputTextConsumed={handleDictationTextConsumed}
+          liveExternalInputText={liveDictationText}
+          isLiveExternalInputActive={isLiveDictating}
         />
       </div>
 

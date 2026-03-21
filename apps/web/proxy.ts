@@ -156,12 +156,6 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl, 301);
   }
 
-  // Bare /app → /app/assistants (temporary redirect)
-  if (strippedPath === "/app") {
-    const redirectUrl = new URL(`${localePrefix}/app/assistants`, request.url);
-    return NextResponse.redirect(redirectUrl, 302);
-  }
-
   // Auth check
   if (isProtectedConsolePath(strippedPath) && !hasAccessToken) {
     const loginUrl = new URL(`${localePrefix}/login`, request.url);
@@ -177,9 +171,7 @@ export function proxy(request: NextRequest) {
   const isLocalStack = process.env.QIHANG_LOCAL_STACK === "true";
   const useNonceCsp = process.env.NODE_ENV === "production" && !isLocalHost && !isLocalStack;
   let nonce: string | null = null;
-  let response: NextResponse;
-
-  response = NextResponse.next();
+  const response = NextResponse.next();
 
   // Generate nonce for CSP (production only)
   if (useNonceCsp) {

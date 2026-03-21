@@ -1,4 +1,5 @@
 """Tests for real-time voice features."""
+import base64
 from app.core.config import Settings
 
 
@@ -88,6 +89,7 @@ import asyncio
 import pytest
 from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
 from app.services.dashscope_client import UpstreamServiceError
+from app.services.asr_client import RealtimeTranscriptionBridge, transcribe_audio_realtime
 
 
 def test_session_initial_state():
@@ -203,6 +205,56 @@ def test_session_maps_audio_transcript_delta_to_response_text():
     assert session._current_response_text == "你好"
 
 
+def test_session_accumulates_partial_user_transcripts():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "conversation.item.input_audio_transcription.delta",
+                "delta": "你",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "conversation.item.input_audio_transcription.delta",
+                "delta": "好",
+            }
+        )
+    )
+
+    assert first == [{"type": "transcript.partial", "text": "你"}]
+    assert second == [{"type": "transcript.partial", "text": "你好"}]
+
+
+def test_session_maps_text_and_stash_partial_user_transcripts():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "conversation.item.input_audio_transcription.text",
+                "text": "今",
+                "stash": "天",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "conversation.item.input_audio_transcription.text",
+                "text": "今天",
+                "stash": "天气",
+            }
+        )
+    )
+
+    assert first == [{"type": "transcript.partial", "text": "今天"}]
+    assert second == [{"type": "transcript.partial", "text": "今天天气"}]
+
+
 def test_session_backfills_audio_transcript_done_when_delta_was_missing():
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
 
@@ -234,6 +286,39 @@ class _DummyUpstream:
 
     async def close(self) -> None:
         return None
+
+
+class _DummyAsyncConnect:
+    def __init__(self, ws) -> None:
+        self.ws = ws
+
+    async def __aenter__(self):
+        return self.ws
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class _DummyRealtimeAsrSocket:
+    def __init__(self, incoming_messages: list[str]) -> None:
+        self.sent_messages: list[str] = []
+        self._incoming_messages = list(incoming_messages)
+
+    async def send(self, message: str) -> None:
+        self.sent_messages.append(message)
+
+    async def recv(self) -> str:
+        if not self._incoming_messages:
+            raise RuntimeError("No queued realtime ASR messages")
+        return self._incoming_messages.pop(0)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._incoming_messages:
+            raise StopAsyncIteration
+        return self._incoming_messages.pop(0)
 
 
 def test_session_update_confirmation_is_resolved_by_listener():
@@ -271,6 +356,84 @@ def test_initial_session_update_surfaces_upstream_error():
 
     with pytest.raises(UpstreamServiceError, match="DashScope session error"):
         asyncio.run(session.send_initial_session_update("你是助手"))
+
+
+def test_transcribe_audio_realtime_encodes_each_raw_chunk_independently(monkeypatch):
+    monkeypatch.setattr("app.services.asr_client.settings.dashscope_api_key", "test-key")
+    ws = _DummyRealtimeAsrSocket([
+        '{"type":"session.updated"}',
+        '{"type":"conversation.item.input_audio_transcription.completed","transcript":"你好"}',
+        '{"type":"session.finished"}',
+    ])
+    monkeypatch.setattr(
+        "app.services.asr_client.websockets.connect",
+        lambda *args, **kwargs: _DummyAsyncConnect(ws),
+    )
+
+    audio_bytes = bytes(range(256)) * 50
+    result = asyncio.run(transcribe_audio_realtime(audio_bytes))
+
+    assert result == "你好"
+    sent_messages = [json.loads(message) for message in ws.sent_messages]
+    append_chunks = [
+        message["audio"]
+        for message in sent_messages
+        if message.get("type") == "input_audio_buffer.append"
+    ]
+    expected_chunks = [
+        base64.b64encode(audio_bytes[i : i + 8192]).decode("utf-8")
+        for i in range(0, len(audio_bytes), 8192)
+    ]
+    assert append_chunks == expected_chunks
+    assert sent_messages[-2] == {"type": "input_audio_buffer.commit"}
+    assert sent_messages[-1] == {"type": "session.finish"}
+
+
+def test_transcribe_audio_realtime_returns_empty_text_for_empty_audio_stream(monkeypatch):
+    monkeypatch.setattr("app.services.asr_client.settings.dashscope_api_key", "test-key")
+    ws = _DummyRealtimeAsrSocket([
+        '{"type":"session.updated"}',
+        '{"type":"error","error":{"message":"Error committing input audio buffer, maybe no invalid audio stream."}}',
+    ])
+    monkeypatch.setattr(
+        "app.services.asr_client.websockets.connect",
+        lambda *args, **kwargs: _DummyAsyncConnect(ws),
+    )
+
+    result = asyncio.run(transcribe_audio_realtime(b"\x00\x00" * 32))
+
+    assert result == ""
+
+
+def test_realtime_transcription_bridge_maps_text_and_stash_to_partial_events():
+    bridge = RealtimeTranscriptionBridge()
+    bridge._ws = _DummyRealtimeAsrSocket([
+        '{"type":"input_audio_buffer.speech_started"}',
+        '{"type":"conversation.item.input_audio_transcription.text","text":"今","stash":"天"}',
+        '{"type":"conversation.item.input_audio_transcription.text","text":"今天","stash":"天气"}',
+        '{"type":"conversation.item.input_audio_transcription.completed","transcript":"今天天气"}',
+        '{"type":"session.finished"}',
+    ])
+
+    async def scenario():
+        listener = asyncio.create_task(bridge._listen())
+        events = [
+            await bridge.next_event(),
+            await bridge.next_event(),
+            await bridge.next_event(),
+            await bridge.next_event(),
+        ]
+        await listener
+        return events
+
+    events = asyncio.run(scenario())
+
+    assert events == [
+        {"type": "transcript.partial", "text": "今天"},
+        {"type": "transcript.partial", "text": "今天天气"},
+        {"type": "transcript.final", "text": "今天天气"},
+        {"type": "session.closed", "text": ""},
+    ]
 
 
 def test_ai_output_activity_refreshes_idle_timer():

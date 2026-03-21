@@ -317,9 +317,10 @@ async def _build_and_call_llm(
             model=llm_model_id,
             enable_thinking=enable_thinking,
         )
+    reasoning_content = result.reasoning_content if enable_thinking is True else None
     return {
         "content": result.content,
-        "reasoning_content": result.reasoning_content,
+        "reasoning_content": reasoning_content,
     }
 
 
@@ -399,14 +400,15 @@ async def orchestrate_inference_stream(
 
     full_content = ""
     full_reasoning = ""
+    should_emit_reasoning = enable_thinking is True
 
     try:
         async for chunk in chat_completion_stream(
             messages,
             model=llm_model_id,
-            enable_thinking=enable_thinking or False,
+            enable_thinking=enable_thinking,
         ):
-            if chunk.reasoning_content:
+            if should_emit_reasoning and chunk.reasoning_content:
                 full_reasoning += chunk.reasoning_content
                 yield {"event": "reasoning", "data": {"content": chunk.reasoning_content}}
             if chunk.content:
@@ -421,7 +423,7 @@ async def orchestrate_inference_stream(
         "event": "message_done",
         "data": {
             "content": full_content,
-            "reasoning_content": full_reasoning or None,
+            "reasoning_content": (full_reasoning or None) if should_emit_reasoning else None,
         },
     }
 
@@ -518,8 +520,35 @@ async def orchestrate_synthetic_realtime_turn(
         project_id=project_id,
         audio_bytes=audio_bytes,
     )
+    return await orchestrate_synthetic_realtime_turn_from_text(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_text=user_text,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+        video_bytes=video_bytes,
+        video_mime_type=video_mime_type,
+        enable_thinking=enable_thinking,
+    )
 
-    if not user_text.strip():
+
+async def orchestrate_synthetic_realtime_turn_from_text(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_text: str,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+    video_bytes: bytes | None = None,
+    video_mime_type: str = "video/mp4",
+    enable_thinking: bool | None = None,
+) -> dict[str, str | None]:
+    normalized_user_text = user_text.strip()
+    if not normalized_user_text:
         return {"text_input": "", "text_response": ""}
 
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
@@ -529,7 +558,7 @@ async def orchestrate_synthetic_realtime_turn(
         workspace_id=workspace_id,
         project_id=project_id,
         conversation_id=conversation_id,
-        user_message=user_text,
+        user_message=normalized_user_text,
         recent_messages=recent_msgs,
         llm_model_id=llm_model_id,
         image_bytes=image_bytes,
@@ -539,7 +568,7 @@ async def orchestrate_synthetic_realtime_turn(
         enable_thinking=enable_thinking,
     )
     return {
-        "text_input": user_text,
+        "text_input": normalized_user_text,
         "text_response": llm_result["content"] or "",
         "reasoning_content": llm_result["reasoning_content"],
     }

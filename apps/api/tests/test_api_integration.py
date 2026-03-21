@@ -43,6 +43,7 @@ import app.routers.chat as chat_router
 import app.routers.memory as memory_router
 import app.routers.realtime as realtime_router
 import app.routers.uploads as uploads_router
+import app.services.dashscope_stream as dashscope_stream_service
 import app.services.memory_file_context as memory_file_context_service
 import app.services.orchestrator as orchestrator_service
 from app.core.config import settings
@@ -635,7 +636,7 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
         workspace_id: str,
         project_id: str,
         conversation_id: str,
-        audio_bytes: bytes,
+        user_text: str,
         image_bytes: bytes | None = None,
         image_mime_type: str = "image/jpeg",
         video_bytes: bytes | None = None,
@@ -644,7 +645,7 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
         assert workspace_id
         assert project_id
         assert conversation_id
-        assert audio_bytes == b"pcm-turn"
+        assert user_text == "你好"
         assert image_bytes is None
         assert video_bytes is None
         _ = image_mime_type
@@ -659,7 +660,28 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
     async def fake_persist(_session, user_text: str, ai_text: str) -> None:
         persisted_turns.append((user_text, ai_text))
 
-    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
     monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
     monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
 
@@ -714,7 +736,7 @@ def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypa
         workspace_id: str,
         project_id: str,
         conversation_id: str,
-        audio_bytes: bytes,
+        user_text: str,
         image_bytes: bytes | None = None,
         image_mime_type: str = "image/jpeg",
         video_bytes: bytes | None = None,
@@ -723,14 +745,35 @@ def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypa
         assert workspace_id
         assert project_id
         assert conversation_id
-        assert audio_bytes == b"pcm-turn"
+        assert user_text == "你好"
         _ = image_bytes
         _ = image_mime_type
         _ = video_bytes
         _ = video_mime_type
         raise realtime_router.UpstreamServiceError("boom")
 
-    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
 
     client = TestClient(main_module.app)
     register_user(client, "synthetic-turn-error@example.com", "Synthetic Turn Error")
@@ -757,6 +800,9 @@ def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypa
         websocket.send_bytes(b"pcm-turn")
         websocket.send_json({"type": "audio.stop"})
 
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "你好"}
+
         turn_error = websocket.receive_json()
         assert turn_error == {
             "type": "turn.error",
@@ -769,6 +815,118 @@ def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypa
             websocket.receive_json()
 
 
+def test_realtime_dictate_websocket_streams_partial_and_final_transcripts(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            assert model == "qwen3-asr-flash-realtime"
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            await self.events.put({"type": "transcript.partial", "text": "你"})
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好世界"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+
+    client = TestClient(main_module.app)
+    register_user(client, "realtime-dictate@example.com", "Realtime Dictate")
+    project = create_project(client, "Realtime Dictate Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Realtime Dictate Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/dictate", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+
+        ready = websocket.receive_json()
+        assert ready == {"type": "session.ready"}
+
+        websocket.send_bytes(b"pcm-turn")
+        partial = websocket.receive_json()
+        assert partial == {"type": "transcript.partial", "text": "你"}
+
+        websocket.send_json({"type": "audio.stop"})
+        final = websocket.receive_json()
+        assert final == {"type": "transcript.final", "text": "你好世界"}
+
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_realtime_dictate_websocket_surfaces_upstream_connect_failure(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            assert model == "qwen3-asr-flash-realtime"
+
+        async def connect(self) -> None:
+            raise realtime_router.UpstreamServiceError("boom")
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+
+    client = TestClient(main_module.app)
+    register_user(client, "realtime-dictate-upstream@example.com", "Realtime Dictate Upstream")
+    project = create_project(client, "Realtime Dictate Upstream Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Realtime Dictate Failure Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/dictate", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+
+        ready = websocket.receive_json()
+        assert ready == {"type": "session.ready"}
+
+        websocket.send_bytes(b"pcm-turn")
+        error = websocket.receive_json()
+        assert error == {
+            "type": "error",
+            "code": "upstream_unavailable",
+            "message": "AI 暂时无响应，请重试",
+        }
+
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
 def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     async def fake_orchestrate(
@@ -777,7 +935,7 @@ def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypat
         workspace_id: str,
         project_id: str,
         conversation_id: str,
-        audio_bytes: bytes,
+        user_text: str,
         image_bytes: bytes | None = None,
         image_mime_type: str = "image/jpeg",
         video_bytes: bytes | None = None,
@@ -786,7 +944,7 @@ def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypat
         assert workspace_id
         assert project_id
         assert conversation_id
-        assert audio_bytes == b"pcm-turn"
+        assert user_text == "你好"
         _ = image_bytes
         _ = image_mime_type
         _ = video_bytes
@@ -798,7 +956,28 @@ def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypat
         assert text == "这次先看文字。"
         raise realtime_router.UpstreamServiceError("tts boom")
 
-    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
     monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
 
     client = TestClient(main_module.app)
@@ -847,15 +1026,16 @@ def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypat
             websocket.receive_json()
 
 
-def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
+def test_composed_realtime_websocket_streams_partial_transcript_before_turn_completion(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
     async def fake_orchestrate(
         _db,
         *,
         workspace_id: str,
         project_id: str,
         conversation_id: str,
-        audio_bytes: bytes,
+        user_text: str,
         image_bytes: bytes | None = None,
         image_mime_type: str = "image/jpeg",
         video_bytes: bytes | None = None,
@@ -864,7 +1044,102 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
         assert workspace_id
         assert project_id
         assert conversation_id
-        assert audio_bytes == b"pcm-turn"
+        assert user_text == "你好"
+        _ = image_bytes
+        _ = image_mime_type
+        _ = video_bytes
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "我收到了。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "我收到了。"
+        return b""
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            await self.events.put({"type": "transcript.partial", "text": "你"})
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-partial@example.com", "Synthetic Partial")
+    project = create_project(client, "Synthetic Partial Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Partial Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        partial = websocket.receive_json()
+        assert partial == {"type": "transcript.partial", "text": "你"}
+
+        websocket.send_json({"type": "audio.stop"})
+        final = websocket.receive_json()
+        assert final == {"type": "transcript.final", "text": "你好"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "我收到了。"}
+
+        done = websocket.receive_json()
+        assert done == {"type": "response.done"}
+
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "看图"
         assert image_bytes is not None
         assert image_mime_type == "image/jpeg"
         assert video_bytes is None
@@ -876,8 +1151,34 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
         assert text == "已看到图片。"
         return b"fake-mp3"
 
-    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn", fake_orchestrate)
+    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+        assert user_text == "看图"
+        assert ai_text == "已看到图片。"
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "看图"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
     monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
 
     client = TestClient(main_module.app)
     register_user(client, "synthetic-clear@example.com", "Synthetic Clear")
@@ -910,11 +1211,11 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
         websocket.send_bytes(b"pcm-turn")
         websocket.send_json({"type": "audio.stop"})
 
-        cleared = websocket.receive_json()
-        assert cleared == {"type": "media.cleared"}
-
         transcript = websocket.receive_json()
         assert transcript == {"type": "transcript.final", "text": "看图"}
+
+        cleared = websocket.receive_json()
+        assert cleared == {"type": "media.cleared"}
 
 
 def test_composed_realtime_media_set_rejects_oversized_payload(monkeypatch) -> None:
@@ -2299,6 +2600,101 @@ def test_send_message_auto_enables_thinking_for_analysis_prompt(monkeypatch) -> 
 
     assert resp.status_code == 200
     assert captured["enable_thinking"] is True
+
+
+def test_stream_message_auto_disables_thinking_for_simple_greeting(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-stream-auto-greeting@example.com", "Chat Stream Auto Greeting")
+    project = create_project(client, "Chat Stream Auto Greeting Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion_stream(
+        messages,
+        model=None,
+        *,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        timeout=120.0,
+    ):
+        del messages, model, temperature, max_tokens, timeout
+        captured["enable_thinking"] = enable_thinking
+        yield dashscope_stream_service.StreamChunk(reasoning_content="不该显示的思考")
+        yield dashscope_stream_service.StreamChunk(content="你好呀")
+        yield dashscope_stream_service.StreamChunk(finish_reason="stop")
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(orchestrator_service, "chat_completion_stream", fake_chat_completion_stream)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        json={"content": "你好"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["enable_thinking"] is False
+    assert "event: reasoning" not in resp.text
+    assert '"reasoning_content": null' in resp.text
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json()[1]["content"] == "你好呀"
+    assert messages.json()[1]["reasoning_content"] is None
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_explicitly_sends_false_enable_thinking(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeStreamResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"你好"},"finish_reason":null}]}'
+            yield "data: [DONE]"
+
+    class FakeClient:
+        def stream(self, method, url, headers=None, json=None, timeout=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(dashscope_stream_service, "get_client", lambda: FakeClient())
+
+    chunks: list[dashscope_stream_service.StreamChunk] = []
+    async for chunk in dashscope_stream_service.chat_completion_stream(
+        [{"role": "user", "content": "你好"}],
+        model="qwen3.5-plus",
+        enable_thinking=False,
+    ):
+        chunks.append(chunk)
+
+    assert [chunk.content for chunk in chunks] == ["你好"]
+    assert isinstance(captured["json"], dict)
+    assert captured["json"]["enable_thinking"] is False
 
 
 def test_send_message_returns_explicit_error_when_model_api_is_unconfigured(monkeypatch) -> None:

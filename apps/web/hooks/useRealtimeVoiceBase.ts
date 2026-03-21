@@ -31,6 +31,8 @@ export interface RealtimeVoiceBaseConfig {
   sessionStartPayload?: Record<string, unknown>;
   /** "continuous" sends all PCM; "vad-gated" sends only during speech. */
   audioSendMode: "continuous" | "vad-gated";
+  /** Browser-side PCM chunk size in samples. Smaller values reduce ASR latency. */
+  audioChunkSamples?: number;
   vadConfig: {
     speechThreshold: number | "auto";
     interruptThresholdMs?: number;
@@ -100,8 +102,6 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     conversationId,
     projectId,
     wsPath,
-    audioSendMode,
-    vadConfig,
   } = config;
 
   const blobPlayback = useBlobPlayback(wsPath);
@@ -543,7 +543,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
-      processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processor = audioCtx.createScriptProcessor(configRef.current.audioChunkSamples ?? 4096, 1, 1);
       processorRef.current = processor;
       monitorGain = audioCtx.createGain();
       monitorGain.gain.value = 0;

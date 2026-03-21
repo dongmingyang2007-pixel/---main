@@ -17,6 +17,11 @@ export default defineConfig({
     ? undefined
     : {
         command: `npx next dev -p ${playwrightPort} -H localhost`,
+        env: {
+          ...process.env,
+          NEXT_PUBLIC_API_BASE_URL: baseURL,
+          INTERNAL_API_BASE_URL: "http://localhost:8000",
+        },
         url: baseURL,
         reuseExistingServer: false,
         timeout: 120000,

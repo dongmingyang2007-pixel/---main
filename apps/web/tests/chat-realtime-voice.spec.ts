@@ -7,9 +7,45 @@ async function switchToOmniRealtime(page: Page) {
   await page.getByRole("button", { name: /Omni 实时/ }).click();
 }
 
+async function forceSelectRealtimeProject(page: Page, projectId: string) {
+  await page.evaluate(({ nextProjectId }) => {
+    const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
+    if (!select) {
+      return;
+    }
+    if (!Array.from(select.options).some((option) => option.value === nextProjectId)) {
+      const option = document.createElement("option");
+      option.value = nextProjectId;
+      option.textContent = nextProjectId;
+      select.appendChild(option);
+    }
+  }, { nextProjectId: projectId });
+  await page.locator(".inline-topbar-project-select").selectOption(projectId);
+}
+
+async function ensureRealtimeConversationReady(page: Page, projectId: string) {
+  const activeConversation = page.locator(".chat-sidebar-item.is-active");
+  try {
+    await expect(activeConversation).toBeVisible({ timeout: 8000 });
+    return;
+  } catch {
+    await forceSelectRealtimeProject(page, projectId);
+    try {
+      await expect(activeConversation).toBeVisible({ timeout: 8000 });
+      return;
+    } catch {
+      // Fall through to the manual create path below.
+    }
+    const newConversationButton = page.locator(".chat-sidebar-new");
+    await expect(newConversationButton).toBeEnabled({ timeout: 8000 });
+    await newConversationButton.click();
+    await expect(activeConversation).toBeVisible();
+  }
+}
+
 async function installRealtimeVoiceMocks(
   page: Page,
-  scenario: "success" | "permission-denied" | "turn-error",
+  scenario: "success" | "permission-denied" | "turn-error" | "partial-first",
 ) {
   await page.evaluate(
     ({ activeScenario }) => {
@@ -198,6 +234,22 @@ async function installRealtimeVoiceMocks(
                   data: JSON.stringify({ type: "turn.error", message: "AI 暂时无响应，请重试" }),
                 });
               }, 90);
+            } else if (activeScenario === "partial-first") {
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.partial", text: "语" }),
+                });
+              }, 20);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.partial", text: "语音" }),
+                });
+              }, 80);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.final", text: "语音问题" }),
+                });
+              }, 160);
             }
             return;
           }
@@ -239,7 +291,7 @@ test.describe("Realtime Voice", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await installRealtimeVoiceMocks(page, "permission-denied");
-    await page.locator(".chat-sidebar-new").click();
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
     await switchToOmniRealtime(page);
     await expect(page.locator(".rt-entry")).toBeVisible();
 
@@ -253,7 +305,7 @@ test.describe("Realtime Voice", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await installRealtimeVoiceMocks(page, "success");
-    await page.locator(".chat-sidebar-new").click();
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
     await switchToOmniRealtime(page);
     await expect(page.locator(".rt-entry")).toBeVisible();
 
@@ -269,7 +321,7 @@ test.describe("Realtime Voice", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await installRealtimeVoiceMocks(page, "turn-error");
-    await page.locator(".chat-sidebar-new").click();
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
     await switchToOmniRealtime(page);
     await expect(page.locator(".rt-entry")).toBeVisible();
 
@@ -281,5 +333,21 @@ test.describe("Realtime Voice", () => {
     await expect(page.locator(".rt-pill-status")).toHaveText("聆听中");
     await expect(page.locator(".chat-voice-indicator.is-error")).toContainText("AI 暂时无响应，请重试");
     await expect(page.locator(".rt-entry-label")).toHaveCount(0);
+  });
+
+  test("partial transcripts appear in the chat pane before the final transcript lands", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await installRealtimeVoiceMocks(page, "partial-first");
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
+    await switchToOmniRealtime(page);
+    await expect(page.locator(".rt-entry")).toBeVisible();
+
+    await page.locator(".rt-entry").click();
+
+    await expect(page.locator(".chat-message.is-user").last()).toContainText("语");
+    await expect(page.locator(".chat-message.is-user").last()).toContainText("语音");
+    await expect(page.locator(".chat-message.is-user").last()).toContainText("语音问题");
   });
 });

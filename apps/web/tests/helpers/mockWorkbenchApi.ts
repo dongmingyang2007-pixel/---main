@@ -2,6 +2,7 @@ import type { Page, Route } from "@playwright/test";
 
 const APP_ORIGIN = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3100";
 const COOKIE_ORIGINS = expandLoopbackOrigins(APP_ORIGIN);
+const DEBUG_API_MOCK = process.env.PLAYWRIGHT_DEBUG_API_MOCK === "1";
 
 function expandLoopbackOrigins(origin: string): string[] {
   try {
@@ -708,9 +709,18 @@ function createMockDb(): MockDb {
 }
 
 async function fulfillJson(route: Route, payload: unknown, status = 200): Promise<void> {
+  const request = route.request();
+  const origin = request.headers()["origin"] || APP_ORIGIN;
   await route.fulfill({
     status,
     contentType: "application/json",
+    headers: {
+      "access-control-allow-origin": origin,
+      "access-control-allow-credentials": "true",
+      "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      "access-control-allow-headers": request.headers()["access-control-request-headers"] || "content-type,x-csrf-token,x-workspace-id",
+      vary: "Origin",
+    },
     body: JSON.stringify(payload),
   });
 }
@@ -751,15 +761,122 @@ export async function installWorkbenchApiMock(
   options: { authenticated?: boolean } = {},
 ): Promise<MockWorkbenchHandle> {
   const db = createMockDb();
+  const seedProjects = db.projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+  }));
   if (options.authenticated) {
     await setAuthenticatedCookies(page, db.workspaceId);
   }
+
+  await page.addInitScript(({ projects }) => {
+    const resolveProjects = () => {
+      const overriddenProjects = (
+        window as Window & {
+          __PLAYWRIGHT_PROJECTS__?: Array<{
+            id: string;
+            name: string;
+            default_chat_mode?: string;
+          }>;
+        }
+      ).__PLAYWRIGHT_PROJECTS__;
+      return Array.isArray(overriddenProjects) && overriddenProjects.length > 0
+        ? overriddenProjects
+        : projects;
+    };
+    const firstProjectId = resolveProjects()[0]?.id || "";
+    if (firstProjectId) {
+      (window as Window & { __PLAYWRIGHT_FORCE_PROJECT_ID__?: string })
+        .__PLAYWRIGHT_FORCE_PROJECT_ID__ = firstProjectId;
+    }
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : null;
+      const method = (init?.method || request?.method || "GET").toUpperCase();
+      const rawUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : request?.url || String(input);
+      const url = new URL(rawUrl, window.location.origin);
+
+      if (method === "GET" && url.pathname === "/api/v1/projects") {
+        return new Response(JSON.stringify({ items: resolveProjects() }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      }
+
+      return originalFetch(input, init);
+    };
+  }, { projects: seedProjects });
+
+  page.on("domcontentloaded", () => {
+    const url = page.url();
+    if (!url.includes("/app/chat")) {
+      return;
+    }
+    void (async () => {
+      try {
+        await page.locator(".inline-topbar-project-select").waitFor({ state: "visible", timeout: 5000 });
+        await page.evaluate(({ projectId, projectName }) => {
+          const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
+          if (!select) {
+            return;
+          }
+          if (!Array.from(select.options).some((option) => option.value === projectId)) {
+            const option = document.createElement("option");
+            option.value = projectId;
+            option.textContent = projectName;
+            select.appendChild(option);
+          }
+          if (select.value !== projectId) {
+            select.value = projectId;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }, {
+          projectId: db.projects[0]?.id || "",
+          projectName: db.projects[0]?.name || "",
+        });
+      } catch {
+        // Ignore pages that do not render the console chat sidebar.
+      }
+    })();
+  });
 
   const handleApiRoute = async (route: Route) => {
     const request = route.request();
     const url = new URL(request.url());
     const { pathname, searchParams } = url;
     const method = request.method().toUpperCase();
+
+    if (DEBUG_API_MOCK && (
+      pathname === "/api/v1/projects" ||
+      pathname === "/api/v1/chat/conversations" ||
+      pathname === "/api/v1/auth/csrf"
+    )) {
+      console.log("[mock-api]", method, url.href);
+    }
+
+    if (method === "OPTIONS") {
+      const origin = request.headers()["origin"] || APP_ORIGIN;
+      await route.fulfill({
+        status: 204,
+        headers: {
+          "access-control-allow-origin": origin,
+          "access-control-allow-credentials": "true",
+          "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+          "access-control-allow-headers": request.headers()["access-control-request-headers"] || "content-type,x-csrf-token,x-workspace-id",
+          "access-control-max-age": "600",
+          vary: "Origin",
+        },
+        body: "",
+      });
+      return;
+    }
 
     if (pathname === "/api/v1/auth/csrf" && method === "GET") {
       await fulfillJson(route, { csrf_token: "csrf-playwright-token" });

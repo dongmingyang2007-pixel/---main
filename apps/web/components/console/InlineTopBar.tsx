@@ -20,7 +20,11 @@ export function InlineTopBar() {
   );
   const projectLabels = useMemo(() => buildProjectDisplayMap(projects), [projects]);
 
-  const showProjectSelect = /^\/app\/(assistants|chat)(?:\/|$)/.test(pathname);
+  const showProjectSelect = /^\/app(?:\/(assistants|chat))?(?:\/|$)/.test(pathname);
+  const currentProjectLabel =
+    projectLabels.get(projectId) ||
+    projects.find((project) => project.id === projectId)?.name ||
+    t("statusbar.noProject");
 
   return (
     <div className="inline-topbar">
@@ -52,24 +56,32 @@ export function InlineTopBar() {
       </div>
 
       {showProjectSelect && projects.length > 0 ? (
-        <label className="inline-topbar-project">
-          <span className="inline-topbar-project-label">
-            {t("topbar.selectProject")}
-          </span>
-          <select
-            className="inline-topbar-project-select"
-            value={projectId}
-            onChange={(event) => {
-              void selectProject(event.target.value);
-            }}
-          >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {projectLabels.get(project.id) || project.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="inline-topbar-project" role="group" aria-label={t("topbar.selectProject")}>
+          <div className="inline-topbar-project-meta">
+            <span className="inline-topbar-project-label">
+              {t("topbar.currentProject")}
+            </span>
+            <span className="inline-topbar-project-count">{projects.length}</span>
+          </div>
+
+          <div className="inline-topbar-project-control">
+            <span className="inline-topbar-project-current">{currentProjectLabel}</span>
+            <select
+              className="inline-topbar-project-select"
+              aria-label={t("topbar.selectProject")}
+              value={projectId}
+              onChange={(event) => {
+                void selectProject(event.target.value);
+              }}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {projectLabels.get(project.id) || project.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       ) : null}
     </div>
   );

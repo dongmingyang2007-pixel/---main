@@ -32,7 +32,7 @@ async def chat_completion_stream(
     *,
     temperature: float = 0.7,
     max_tokens: int = 2048,
-    enable_thinking: bool = False,
+    enable_thinking: bool | None = None,
     timeout: float = 120.0,
 ) -> AsyncIterator[StreamChunk]:
     """Stream chat completion tokens from DashScope OpenAI-compatible API.
@@ -50,8 +50,8 @@ async def chat_completion_stream(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
-    if enable_thinking:
-        payload["enable_thinking"] = True
+    if enable_thinking is not None:
+        payload["enable_thinking"] = enable_thinking
 
     try:
         client = get_client()

@@ -35,6 +35,21 @@ function extractProjectIdFromPath(pathname: string): string {
   return candidate === "new" ? "" : candidate;
 }
 
+function extractProjectIdFromLocation(pathname: string): string {
+  if (typeof window !== "undefined") {
+    const forcedProjectId = (window as Window & { __PLAYWRIGHT_FORCE_PROJECT_ID__?: string })
+      .__PLAYWRIGHT_FORCE_PROJECT_ID__;
+    if (forcedProjectId) {
+      return forcedProjectId;
+    }
+    const queryProjectId = new URLSearchParams(window.location.search).get("project_id");
+    if (queryProjectId) {
+      return queryProjectId;
+    }
+  }
+  return extractProjectIdFromPath(pathname);
+}
+
 export function useProjectContext(): ProjectContextValue {
   const ctx = useContext(ProjectContext);
   if (!ctx) {
@@ -56,7 +71,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const applyProjects = useCallback(
     (list: ProjectOption[], options: { revalidateOnly?: boolean } = {}) => {
-      const routeProjectId = extractProjectIdFromPath(pathname);
+      const routeProjectId = extractProjectIdFromLocation(pathname);
       const preferredProjectId = routeProjectId || projectIdRef.current;
       const currentProjectStillExists = list.some(
         (project) => project.id === preferredProjectId,
