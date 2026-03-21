@@ -35,6 +35,7 @@ export function StandardVoiceControls({
   const [voiceStatus, setVoiceStatus] = useState<
     "idle" | "recording" | "sending"
   >("idle");
+  const [asrAvailable, setAsrAvailable] = useState(true);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
 
   const dictateVoiceInput = useCallback(
@@ -63,6 +64,7 @@ export function StandardVoiceControls({
             content = t("errors.inferenceTimeout");
           } else if (error.code === "model_api_unconfigured") {
             content = t("errors.modelUnconfigured");
+            setAsrAvailable(false);
           }
         }
         onError(content);
@@ -91,6 +93,8 @@ export function StandardVoiceControls({
       }
     }
   }, [dictateVoiceInput, isRecording, onError, startRecording, stopRecording, t]);
+
+  if (!asrAvailable) return null;
 
   return (
     <>
