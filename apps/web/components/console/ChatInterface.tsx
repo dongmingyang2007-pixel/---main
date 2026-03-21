@@ -7,63 +7,25 @@ import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import RealtimeVoice from "./RealtimeVoice";
 import SyntheticRealtimeVoice from "./SyntheticRealtimeVoice";
-
-type ChatMode = "standard" | "omni_realtime" | "synthetic_realtime";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  audioBase64?: string | null;
-  memories_extracted?: string;
-}
-
-interface ApiMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at?: string;
-}
-
-interface DictationResponse {
-  text_input: string;
-}
-
-interface SpeechResponse {
-  audio_response: string | null;
-}
-
-interface ImageMessageResponse {
-  message: ApiMessage;
-  text_input: string;
-  audio_response: string | null;
-}
-
-interface ProjectChatSettings {
-  id: string;
-  default_chat_mode: ChatMode;
-}
-
-interface PipelineConfigItem {
-  model_type:
-    | "llm"
-    | "asr"
-    | "tts"
-    | "vision"
-    | "realtime"
-    | "realtime_asr"
-    | "realtime_tts";
-  model_id: string;
-}
-
-interface PipelineResponse {
-  items: PipelineConfigItem[];
-}
-
-interface CatalogModelItem {
-  model_id: string;
-  capabilities: string[];
-}
+import {
+  type ChatMode,
+  type Message,
+  type ApiMessage,
+  type DictationResponse,
+  type SpeechResponse,
+  type ImageMessageResponse,
+  type ProjectChatSettings,
+  type PipelineConfigItem,
+  type PipelineResponse,
+  type CatalogModelItem,
+  type LiveTranscriptUpdate,
+  VOICE_ACTIVE_STATES,
+  createAudioPlayer,
+  getPipelineModelId,
+  modelSupportsCapability,
+  toMessage,
+  cycleState,
+} from "./chat-types";
 
 interface ChatInterfaceProps {
   conversationId?: string | null;
@@ -74,45 +36,55 @@ interface ChatInterfaceProps {
   }) => void;
 }
 
-const VOICE_ACTIVE_STATES = new Set([
-  "connecting",
-  "ready",
-  "listening",
-  "ai_speaking",
-  "reconnecting",
-]);
-
-function createAudioPlayer(base64Audio: string) {
-  const audioBytes = Uint8Array.from(atob(base64Audio), (c) =>
-    c.charCodeAt(0),
+function AnimatedMessageText({
+  text,
+  animate,
+  streaming = false,
+}: {
+  text: string;
+  animate: boolean;
+  streaming?: boolean;
+}) {
+  const segments = Array.from(text);
+  const shouldAnimate = animate && !streaming;
+  const [visibleCount, setVisibleCount] = useState(() =>
+    shouldAnimate ? 0 : segments.length,
   );
-  const blob = new Blob([audioBytes], { type: "audio/mp3" });
-  const url = URL.createObjectURL(blob);
-  return {
-    audio: new Audio(url),
-    url,
-  };
-}
 
-function getPipelineModelId(
-  items: PipelineConfigItem[],
-  modelType: PipelineConfigItem["model_type"],
-  fallback: string,
-) {
-  return items.find((item) => item.model_type === modelType)?.model_id || fallback;
-}
+  useEffect(() => {
+    if (!shouldAnimate || segments.length === 0) {
+      return;
+    }
 
-function modelSupportsCapability(
-  catalogItems: CatalogModelItem[],
-  modelId: string,
-  ...required: string[]
-) {
-  const entry = catalogItems.find((item) => item.model_id === modelId);
-  if (!entry) {
-    return false;
-  }
-  const capabilities = new Set((entry.capabilities || []).map((value) => value.toLowerCase()));
-  return required.every((value) => capabilities.has(value.toLowerCase()));
+    const msPerChar = segments.length > 240 ? 6 : segments.length > 120 ? 12 : 22;
+    let rafId = 0;
+    const start = performance.now();
+
+    const tick = (now: number) => {
+      const nextCount = Math.min(
+        segments.length,
+        Math.max(1, Math.floor((now - start) / msPerChar)),
+      );
+      setVisibleCount(nextCount);
+      if (nextCount < segments.length) {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [segments.length, shouldAnimate, text]);
+
+  const displayCount = shouldAnimate ? visibleCount : segments.length;
+  const visibleText = segments.slice(0, displayCount).join("");
+  const showCursor = streaming || (shouldAnimate && displayCount < segments.length);
+
+  return (
+    <>
+      {visibleText}
+      {showCursor ? <span className="chat-inline-cursor">▊</span> : null}
+    </>
+  );
 }
 
 export function ChatInterface({
@@ -141,17 +113,20 @@ export function ChatInterface({
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
 
-  function cycleState(current: "auto" | "on" | "off"): "auto" | "on" | "off" {
-    if (current === "auto") return "on";
-    if (current === "on") return "off";
-    return "auto";
-  }
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const runtimeMessageCounterRef = useRef(0);
+  const liveTurnIdsRef = useRef<{
+    userId: string | null;
+    assistantId: string | null;
+  }>({
+    userId: null,
+    assistantId: null,
+  });
   const voiceContextRef = useRef<{
     conversationId: string | null;
     projectId: string | null;
@@ -162,6 +137,11 @@ export function ChatInterface({
     chatMode: projectDefaultMode,
   });
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
+
+  const nextRuntimeMessageId = useCallback((prefix: string) => {
+    runtimeMessageCounterRef.current += 1;
+    return `${prefix}-${Date.now()}-${runtimeMessageCounterRef.current}`;
+  }, []);
 
   const releaseAudioPlayer = useCallback(() => {
     if (audioRef.current) {
@@ -305,9 +285,7 @@ export function ChatInterface({
       .then((data) => {
         if (!cancelled) {
           const list = Array.isArray(data) ? data : [];
-          setMessages(
-            list.map((m) => ({ id: m.id, role: m.role, content: m.content })),
-          );
+          setMessages(list.map(toMessage));
         }
       })
       .catch(() => {
@@ -354,8 +332,12 @@ export function ChatInterface({
         playMessageAudio(data.audio_response, message.id);
       } catch (error) {
         let content = t("errors.readAloudFailed");
-        if (isApiRequestError(error) && error.code === "inference_timeout") {
-          content = t("errors.inferenceTimeout");
+        if (isApiRequestError(error)) {
+          if (error.code === "inference_timeout") {
+            content = t("errors.inferenceTimeout");
+          } else if (error.code === "model_api_unconfigured") {
+            content = t("errors.modelUnconfigured");
+          }
         }
         setVoiceNotice(content);
       } finally {
@@ -420,6 +402,11 @@ export function ChatInterface({
       if (prompt) {
         formData.append("prompt", prompt);
       }
+      if (thinkState === "on") {
+        formData.append("enable_thinking", "true");
+      } else if (thinkState === "off") {
+        formData.append("enable_thinking", "false");
+      }
 
       const response = await apiPostFormData<ImageMessageResponse>(
         `/api/v1/chat/conversations/${conversationId}/image`,
@@ -430,7 +417,10 @@ export function ChatInterface({
         id: response.message?.id || `img-a-${Date.now()}`,
         role: "assistant",
         content: response.message?.content || "",
+        reasoningContent: response.message?.reasoning_content,
         audioBase64: response.audio_response,
+        animateOnMount: true,
+        isStreaming: false,
       };
       setMessages((prev) => [...prev, assistantMessage]);
       if (autoReadEnabled && assistantMessage.content.trim() && response.audio_response) {
@@ -442,6 +432,8 @@ export function ChatInterface({
       if (isApiRequestError(error)) {
         if (error.code === "inference_timeout") {
           content = t("errors.inferenceTimeout");
+        } else if (error.code === "model_api_unconfigured") {
+          content = t("errors.modelUnconfigured");
         } else if (error.code === "model_api_unavailable") {
           content = t("errors.modelUnavailable");
         }
@@ -466,6 +458,7 @@ export function ChatInterface({
     onConversationActivity,
     pendingImageFile,
     playMessageAudio,
+    thinkState,
     t,
   ]);
 
@@ -495,12 +488,17 @@ export function ChatInterface({
     try {
       const response = await apiPost<ApiMessage>(
         `/api/v1/chat/conversations/${conversationId}/messages`,
-        { content: text },
+        {
+          content: text,
+          enable_thinking:
+            thinkState === "on" ? true : thinkState === "off" ? false : undefined,
+        },
       );
       const aiMessage: Message = {
+        ...toMessage(response),
         id: response.id || `a-${Date.now()}`,
-        role: "assistant",
-        content: response.content,
+        animateOnMount: true,
+        isStreaming: false,
       };
       setMessages((prev) => [...prev, aiMessage]);
       if (autoReadEnabled && aiMessage.content.trim()) {
@@ -511,6 +509,8 @@ export function ChatInterface({
       if (isApiRequestError(error)) {
         if (error.code === "inference_timeout") {
           content = t("errors.inferenceTimeout");
+        } else if (error.code === "model_api_unconfigured") {
+          content = t("errors.modelUnconfigured");
         } else if (error.code === "model_api_unavailable") {
           content = t("errors.modelUnavailable");
         }
@@ -535,6 +535,7 @@ export function ChatInterface({
     isTyping,
     onConversationActivity,
     pendingImageFile,
+    thinkState,
     t,
   ]);
 
@@ -566,8 +567,12 @@ export function ChatInterface({
         inputRef.current?.focus();
       } catch (error) {
         let content = t("errors.dictationFailed");
-        if (isApiRequestError(error) && error.code === "inference_timeout") {
-          content = t("errors.inferenceTimeout");
+        if (isApiRequestError(error)) {
+          if (error.code === "inference_timeout") {
+            content = t("errors.inferenceTimeout");
+          } else if (error.code === "model_api_unconfigured") {
+            content = t("errors.modelUnconfigured");
+          }
         }
         setVoiceNotice(content);
       } finally {
@@ -597,6 +602,58 @@ export function ChatInterface({
     }
   }, [dictateVoiceInput, isRecording, startRecording, stopRecording, t]);
 
+  const handleLiveTranscriptUpdate = useCallback(
+    ({ role, text, final, action = "upsert" }: LiveTranscriptUpdate) => {
+      if (!conversationId) {
+        return;
+      }
+
+      const slot = role === "user" ? "userId" : "assistantId";
+      if (action === "discard") {
+        const currentId = liveTurnIdsRef.current[slot];
+        if (!currentId) {
+          return;
+        }
+        setMessages((prev) => prev.filter((message) => message.id !== currentId));
+        liveTurnIdsRef.current[slot] = null;
+        return;
+      }
+
+      if (!text.trim()) {
+        return;
+      }
+      const nextText = final ? text.trim() : text;
+
+      let messageId = liveTurnIdsRef.current[slot];
+      if (!messageId) {
+        messageId = nextRuntimeMessageId(role === "user" ? "rt-u" : "rt-a");
+        liveTurnIdsRef.current[slot] = messageId;
+      }
+
+      setMessages((prev) => {
+        const nextMessage: Message = {
+          id: messageId,
+          role,
+          content: nextText,
+          animateOnMount: false,
+          isStreaming: !final,
+        };
+        const index = prev.findIndex((message) => message.id === messageId);
+        if (index === -1) {
+          return [...prev, nextMessage];
+        }
+        const next = prev.slice();
+        next[index] = {
+          ...next[index],
+          content: nextText,
+          isStreaming: !final,
+        };
+        return next;
+      });
+    },
+    [conversationId, nextRuntimeMessageId],
+  );
+
   const handleRealtimeTurnComplete = useCallback(
     ({
       userText,
@@ -608,7 +665,6 @@ export function ChatInterface({
       if (!conversationId) {
         return;
       }
-      const nextMessages: Message[] = [];
       const normalizedUserText = userText.trim();
       const normalizedAssistantText = assistantText.trim();
 
@@ -617,11 +673,6 @@ export function ChatInterface({
           conversationId,
           previewText: normalizedUserText,
         });
-        nextMessages.push({
-          id: `rt-u-${Date.now()}`,
-          role: "user",
-          content: normalizedUserText,
-        });
       } else if (normalizedAssistantText) {
         onConversationActivity?.({
           conversationId,
@@ -629,20 +680,64 @@ export function ChatInterface({
         });
       }
 
-      if (normalizedAssistantText) {
-        const assistantMessage: Message = {
-          id: `rt-a-${Date.now()}`,
-          role: "assistant",
-          content: normalizedAssistantText,
-        };
-        nextMessages.push(assistantMessage);
-      }
+      setMessages((prev) => {
+        let next = prev.slice();
 
-      if (nextMessages.length > 0) {
-        setMessages((prev) => [...prev, ...nextMessages]);
-      }
+        if (normalizedUserText) {
+          const userId = liveTurnIdsRef.current.userId;
+          if (userId) {
+            const index = next.findIndex((message) => message.id === userId);
+            if (index >= 0) {
+              next[index] = {
+                ...next[index],
+                content: normalizedUserText,
+                isStreaming: false,
+              };
+            }
+          } else {
+            next = [
+              ...next,
+              {
+                id: nextRuntimeMessageId("rt-u"),
+                role: "user",
+                content: normalizedUserText,
+                animateOnMount: false,
+                isStreaming: false,
+              },
+            ];
+          }
+        }
+
+        if (normalizedAssistantText) {
+          const assistantId = liveTurnIdsRef.current.assistantId;
+          if (assistantId) {
+            const index = next.findIndex((message) => message.id === assistantId);
+            if (index >= 0) {
+              next[index] = {
+                ...next[index],
+                content: normalizedAssistantText,
+                isStreaming: false,
+              };
+            }
+          } else {
+            next = [
+              ...next,
+              {
+                id: nextRuntimeMessageId("rt-a"),
+                role: "assistant",
+                content: normalizedAssistantText,
+                animateOnMount: true,
+                isStreaming: false,
+              },
+            ];
+          }
+        }
+
+        return next;
+      });
+      liveTurnIdsRef.current = { userId: null, assistantId: null };
     },
-    [conversationId, onConversationActivity],
+    [conversationId, nextRuntimeMessageId, onConversationActivity],
   );
 
   const chatMode =
@@ -652,6 +747,7 @@ export function ChatInterface({
 
   useEffect(() => {
     setPendingImageFile(null);
+    liveTurnIdsRef.current = { userId: null, assistantId: null };
   }, [conversationId]);
 
   useEffect(() => {
@@ -784,7 +880,24 @@ export function ChatInterface({
             className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
           >
             <div className="chat-message-stack">
-              <div className="chat-bubble">{msg.content}</div>
+              {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
+                <div className="chat-reasoning" aria-label={t("reasoningLabel")}>
+                  <div className="chat-reasoning-label">{t("reasoningLabel")}</div>
+                  <div className="chat-reasoning-content">
+                    <AnimatedMessageText
+                      text={msg.reasoningContent.trim()}
+                      animate={Boolean(msg.animateOnMount)}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className="chat-bubble">
+                <AnimatedMessageText
+                  text={msg.content}
+                  animate={msg.role === "assistant" && Boolean(msg.animateOnMount)}
+                  streaming={Boolean(msg.isStreaming)}
+                />
+              </div>
               {msg.role === "assistant" && (
                 <div className="chat-message-actions">
                   <button
@@ -993,6 +1106,7 @@ export function ChatInterface({
           conversationId={conversationId}
           projectId={projectId}
           onTurnComplete={handleRealtimeTurnComplete}
+          onTranscriptUpdate={handleLiveTranscriptUpdate}
           onError={setVoiceNotice}
           onStateChange={setVoiceSessionState}
         />
@@ -1003,6 +1117,7 @@ export function ChatInterface({
           conversationId={conversationId}
           projectId={projectId}
           onTurnComplete={handleRealtimeTurnComplete}
+          onTranscriptUpdate={handleLiveTranscriptUpdate}
           onError={setVoiceNotice}
           onStateChange={setVoiceSessionState}
           allowVideoInput={syntheticVideoAvailable}
