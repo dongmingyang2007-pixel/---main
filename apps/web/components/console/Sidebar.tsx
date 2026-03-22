@@ -56,6 +56,8 @@ export function Sidebar() {
   const t = useTranslations("console");
   const { projects } = useProjectContext();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   const displayMap = buildProjectDisplayMap(projects);
 
@@ -64,8 +66,27 @@ export function Sidebar() {
     return pathname.startsWith(href);
   };
 
-  const handleExpand = useCallback(() => setIsExpanded(true), []);
-  const handleCollapse = useCallback(() => setIsExpanded(false), []);
+  const handleExpand = useCallback(() => {
+    if (isClosing) return;
+    setIsVisible(true);
+    setIsExpanded(true);
+    // Trigger entering → open animation on next frame
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setIsExpanded(true);
+      });
+    });
+  }, [isClosing]);
+
+  const handleCollapse = useCallback(() => {
+    setIsClosing(true);
+    // Wait for closing animation to finish, then unmount
+    setTimeout(() => {
+      setIsExpanded(false);
+      setIsVisible(false);
+      setIsClosing(false);
+    }, 200);
+  }, []);
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -124,19 +145,24 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Expanded overlay sidebar */}
-      {isExpanded && (
+      {/* Expanded overlay sidebar — always mounted when visible, animated */}
+      {isVisible && (
         <>
           {/* Backdrop overlay */}
           <div
-            className="glass-sidebar-overlay"
+            className={clsx("glass-sidebar-overlay", isClosing && "glass-sidebar-overlay--closing")}
             onClick={handleCollapse}
             aria-hidden="true"
           />
 
           {/* Expanded sidebar */}
           <nav
-            className={clsx("glass-sidebar", "glass-sidebar--expanded")}
+            className={clsx(
+              "glass-sidebar",
+              "glass-sidebar--expanded",
+              isClosing && "glass-sidebar--closing",
+              !isClosing && !isExpanded && "glass-sidebar--entering"
+            )}
             role="navigation"
             aria-label="Main expanded"
             onMouseLeave={handleCollapse}

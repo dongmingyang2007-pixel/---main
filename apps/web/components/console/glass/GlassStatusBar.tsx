@@ -25,7 +25,7 @@ export function GlassStatusBar() {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         borderTop: "1px solid rgba(255,255,255,0.04)",
-        zIndex: 50,
+        zIndex: 45,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",

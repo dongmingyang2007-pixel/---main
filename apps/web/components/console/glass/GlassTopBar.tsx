@@ -33,7 +33,7 @@ export function GlassTopBar() {
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
         borderBottom: "1px solid rgba(255,255,255,0.05)",
-        zIndex: 50,
+        zIndex: 45,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",

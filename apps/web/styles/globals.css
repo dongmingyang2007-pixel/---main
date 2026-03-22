@@ -11653,31 +11653,40 @@ button {
 
 .glass-sidebar--expanded {
   width: 260px;
-  z-index: 41;
+  z-index: 60;
   background: rgba(255,255,255,0.72);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-right: 1px solid rgba(255,255,255,0.7);
   box-shadow: 0 8px 32px rgba(0,0,0,0.08);
-  animation: glass-sidebar-slide-in 200ms ease-out;
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 220ms ease-out, opacity 220ms ease-out;
 }
 
-@keyframes glass-sidebar-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(-12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+.glass-sidebar--expanded.glass-sidebar--closing {
+  transform: translateX(-16px);
+  opacity: 0;
+  transition: transform 180ms ease-in, opacity 180ms ease-in;
+}
+
+.glass-sidebar--expanded.glass-sidebar--entering {
+  transform: translateX(-16px);
+  opacity: 0;
 }
 
 .glass-sidebar-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.08);
-  z-index: 39;
+  z-index: 55;
+  opacity: 1;
+  transition: opacity 200ms ease-out;
+}
+
+.glass-sidebar-overlay.glass-sidebar-overlay--closing {
+  opacity: 0;
+  transition: opacity 180ms ease-in;
 }
 
 /* Logo square */
