@@ -1,13 +1,10 @@
 "use client";
 
-import { Suspense, useState, useCallback, useRef } from "react";
+import { Suspense, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { ChatInterface } from "@/components/console/ChatInterface";
 import { PageTransition } from "@/components/console/PageTransition";
-import {
-  type ConversationSidebarHandle,
-} from "./ConversationSidebar";
 
 function ChatPageContent() {
   const searchParams = useSearchParams();
@@ -17,11 +14,10 @@ function ChatPageContent() {
 
   const [activeConversationId] = useState<string | null>(null);
   const [selectedProjectId] = useState<string>("");
-  const sidebarRef = useRef<ConversationSidebarHandle | null>(null);
 
   const handleConversationActivity = useCallback(
-    (payload: { conversationId: string; previewText: string }) => {
-      sidebarRef.current?.handleConversationActivity(payload);
+    (_payload: { conversationId: string; previewText: string }) => {
+      // Will be wired to sidebar when conversation list is re-added
     },
     [],
   );
