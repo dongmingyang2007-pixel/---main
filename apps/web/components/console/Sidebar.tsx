@@ -1,8 +1,11 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import clsx from "clsx";
 import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import { useProjectContext } from "@/lib/ProjectContext";
+import { buildProjectDisplayMap } from "@/lib/project-display";
 import {
   Tooltip,
   TooltipContent,
@@ -28,6 +31,14 @@ function SettingsIcon() {
   );
 }
 
+function FolderIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 /* ── Nav items ── */
 
 const NAV_ITEMS: NavItem[] = [
@@ -43,60 +54,168 @@ const NAV_ITEMS: NavItem[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const t = useTranslations("console");
+  const { projects } = useProjectContext();
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const displayMap = buildProjectDisplayMap(projects);
 
   const isActive = (href: string) => {
     if (href === "/app") return pathname === "/app";
     return pathname.startsWith(href);
   };
 
+  const handleExpand = useCallback(() => setIsExpanded(true), []);
+  const handleCollapse = useCallback(() => setIsExpanded(false), []);
+
   return (
     <TooltipProvider delayDuration={300}>
-      <nav className="sidebar-v2" role="navigation" aria-label="Main">
+      {/* Collapsed sidebar -- always visible */}
+      <nav
+        className={clsx("glass-sidebar", "glass-sidebar--collapsed")}
+        role="navigation"
+        aria-label="Main"
+        onMouseEnter={handleExpand}
+      >
         {/* Logo */}
-        <div className="sidebar-v2-logo">
-          <div className="sidebar-v2-logo-icon">铭</div>
-          <div className="sidebar-v2-logo-text">铭润科技</div>
-        </div>
+        <div className="glass-sidebar-logo">铭</div>
 
         {/* Nav items */}
-        <div className="sidebar-v2-nav">
+        <div className="glass-sidebar-nav">
           {NAV_ITEMS.map((item) => (
             <Tooltip key={item.href}>
               <TooltipTrigger asChild>
                 <Link
                   href={item.href}
                   prefetch={false}
-                  className={clsx("sidebar-v2-item", isActive(item.href) && "is-active")}
+                  className={clsx("glass-sidebar-nav-item", isActive(item.href) && "is-active")}
                   aria-current={isActive(item.href) ? "page" : undefined}
                 >
-                  <span className="sidebar-v2-icon">
+                  <span className="glass-sidebar-icon">
                     <item.Icon />
                   </span>
-                  <span className="sidebar-v2-label">{t(item.key)}</span>
                 </Link>
               </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8} className="sidebar-v2-tooltip">
+              <TooltipContent side="right" sideOffset={8}>
                 {t(item.key)}
               </TooltipContent>
             </Tooltip>
           ))}
         </div>
 
-        {/* User area */}
-        <div className="sidebar-v2-footer">
-          <Link
-            href="/app/settings"
-            prefetch={false}
-            className={clsx("sidebar-v2-user", isActive("/app/settings") && "is-active")}
-            aria-current={isActive("/app/settings") ? "page" : undefined}
-          >
-            <span className="sidebar-v2-icon">
-              <SettingsIcon />
-            </span>
-            <span className="sidebar-v2-label">{t("nav.settings")}</span>
-          </Link>
+        {/* Settings */}
+        <div className="glass-sidebar-footer">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                href="/app/settings"
+                prefetch={false}
+                className={clsx("glass-sidebar-nav-item", isActive("/app/settings") && "is-active")}
+                aria-current={isActive("/app/settings") ? "page" : undefined}
+              >
+                <span className="glass-sidebar-icon">
+                  <SettingsIcon />
+                </span>
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              {t("nav.settings")}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </nav>
+
+      {/* Expanded overlay sidebar */}
+      {isExpanded && (
+        <>
+          {/* Backdrop overlay */}
+          <div
+            className="glass-sidebar-overlay"
+            onClick={handleCollapse}
+            aria-hidden="true"
+          />
+
+          {/* Expanded sidebar */}
+          <nav
+            className={clsx("glass-sidebar", "glass-sidebar--expanded")}
+            role="navigation"
+            aria-label="Main expanded"
+            onMouseLeave={handleCollapse}
+          >
+            {/* Header */}
+            <div className="glass-sidebar-header">
+              <div className="glass-sidebar-logo">铭</div>
+              <div className="glass-sidebar-header-text">
+                <div className="glass-sidebar-brand">铭润科技</div>
+                <div className="glass-sidebar-subtitle">Personal AI Studio</div>
+              </div>
+            </div>
+
+            {/* Full nav items */}
+            <div className="glass-sidebar-nav-full">
+              {NAV_ITEMS.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  prefetch={false}
+                  className={clsx("glass-sidebar-nav-item-full", isActive(item.href) && "is-active")}
+                  aria-current={isActive(item.href) ? "page" : undefined}
+                  onClick={handleCollapse}
+                >
+                  <span className="glass-sidebar-icon">
+                    <item.Icon />
+                  </span>
+                  <span className="glass-sidebar-label">{t(item.key)}</span>
+                </Link>
+              ))}
+            </div>
+
+            {/* Divider */}
+            <div className="glass-sidebar-divider" />
+
+            {/* Projects section */}
+            <div className="glass-sidebar-projects">
+              <div className="glass-sidebar-projects-title">
+                Projects
+                {projects.length > 0 && (
+                  <span className="glass-sidebar-projects-count">{projects.length}</span>
+                )}
+              </div>
+              <div className="glass-sidebar-projects-list">
+                {projects.length === 0 ? (
+                  <div className="glass-sidebar-projects-empty">No projects yet</div>
+                ) : (
+                  projects.map((project) => (
+                    <div key={project.id} className="glass-sidebar-project-item">
+                      <span className="glass-sidebar-project-icon">
+                        <FolderIcon />
+                      </span>
+                      <span className="glass-sidebar-project-name">
+                        {displayMap.get(project.id) ?? project.name}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="glass-sidebar-footer-full">
+              <Link
+                href="/app/settings"
+                prefetch={false}
+                className={clsx("glass-sidebar-nav-item-full", isActive("/app/settings") && "is-active")}
+                aria-current={isActive("/app/settings") ? "page" : undefined}
+                onClick={handleCollapse}
+              >
+                <span className="glass-sidebar-icon">
+                  <SettingsIcon />
+                </span>
+                <span className="glass-sidebar-label">{t("nav.settings")}</span>
+              </Link>
+            </div>
+          </nav>
+        </>
+      )}
     </TooltipProvider>
   );
 }

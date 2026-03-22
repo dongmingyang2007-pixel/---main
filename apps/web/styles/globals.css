@@ -11160,6 +11160,295 @@ button {
   .sidebar-v2:hover .sidebar-v2-label { opacity: 0; transform: translateX(-8px); }
 }
 
+/* ── Glass Sidebar ──────────────────────────── */
+
+.glass-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.glass-sidebar--collapsed {
+  width: 56px;
+  z-index: 40;
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255,255,255,0.6);
+  align-items: center;
+  padding-top: 14px;
+}
+
+.glass-sidebar--expanded {
+  width: 260px;
+  z-index: 41;
+  background: rgba(255,255,255,0.72);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-right: 1px solid rgba(255,255,255,0.7);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+  animation: glass-sidebar-slide-in 200ms ease-out;
+}
+
+@keyframes glass-sidebar-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.glass-sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.08);
+  z-index: 39;
+}
+
+/* Logo square */
+.glass-sidebar-logo {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 9px;
+  background: var(--console-accent-gradient, linear-gradient(135deg, #6366f1, #818cf8));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: white;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Collapsed nav */
+.glass-sidebar-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 0 0;
+  align-items: center;
+}
+
+.glass-sidebar-nav-item {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--text-secondary, #64748b);
+  transition: background 150ms ease;
+}
+
+.glass-sidebar-nav-item:hover {
+  background: rgba(0,0,0,0.05);
+}
+
+.glass-sidebar-nav-item.is-active {
+  background: rgba(99,102,241,0.12);
+  color: var(--accent, #6366f1);
+}
+
+.glass-sidebar-icon {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.glass-sidebar-footer {
+  padding: 8px 0 14px;
+  display: flex;
+  justify-content: center;
+}
+
+/* Expanded header */
+.glass-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px 20px;
+}
+
+.glass-sidebar-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.glass-sidebar-brand {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary, #1e293b);
+  white-space: nowrap;
+}
+
+.glass-sidebar-subtitle {
+  font-size: 11px;
+  color: var(--text-tertiary, #94a3b8);
+  white-space: nowrap;
+}
+
+/* Expanded nav full */
+.glass-sidebar-nav-full {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px;
+}
+
+.glass-sidebar-nav-item-full {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text-secondary, #64748b);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 150ms ease;
+}
+
+.glass-sidebar-nav-item-full:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.glass-sidebar-nav-item-full.is-active {
+  background: rgba(99,102,241,0.12);
+  color: var(--accent, #6366f1);
+  font-weight: 600;
+}
+
+.glass-sidebar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Divider */
+.glass-sidebar-divider {
+  height: 1px;
+  margin: 8px 18px;
+  background: rgba(0,0,0,0.06);
+}
+
+/* Projects section */
+.glass-sidebar-projects {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 10px 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.glass-sidebar-projects-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.glass-sidebar-projects-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(99,102,241,0.1);
+  color: var(--accent, #6366f1);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.glass-sidebar-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.glass-sidebar-projects-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-tertiary, #94a3b8);
+  font-style: italic;
+}
+
+.glass-sidebar-project-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.glass-sidebar-project-item:hover {
+  background: rgba(0,0,0,0.03);
+}
+
+.glass-sidebar-project-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.glass-sidebar-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Expanded footer */
+.glass-sidebar-footer-full {
+  padding: 4px 10px 12px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  margin-top: auto;
+}
+
+/* Mobile: hide glass sidebar */
+@media (max-width: 767px) {
+  .glass-sidebar--collapsed,
+  .glass-sidebar--expanded,
+  .glass-sidebar-overlay {
+    display: none;
+  }
+}
+
+/* Touch device: prevent hover expand (the state-based approach handles this
+   naturally, but we keep this for safety) */
+@media (hover: none) {
+  .glass-sidebar-overlay {
+    display: none;
+  }
+}
+
 /* ── Reduced Motion ──────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
