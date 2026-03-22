@@ -3,8 +3,7 @@ from celery import Celery
 from app.core.config import settings
 
 
-celery_app = Celery("qihang", broker=settings.redis_url)
-celery_app.autodiscover_tasks(["app.tasks"])
+celery_app = Celery("qihang", broker=settings.redis_url, include=["app.tasks.worker_tasks"])
 celery_app.conf.task_routes = {
     "app.tasks.worker_tasks.process_data_item": {"queue": "data"},
     "app.tasks.worker_tasks.cleanup_deleted_dataset": {"queue": "cleanup"},
