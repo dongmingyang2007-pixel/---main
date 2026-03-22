@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DM_Sans, Inter, JetBrains_Mono, Sora, Noto_Sans_SC } from "next/font/google";
+import { DM_Sans, Inter, JetBrains_Mono, Sora } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -34,12 +34,8 @@ const sora = Sora({
   display: "swap",
 });
 
-const notoSansSC = Noto_Sans_SC({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  variable: "--font-noto-sans-sc",
-  display: "swap",
-});
+// Noto Sans SC is loaded via system fonts (PingFang SC / Noto Sans SC)
+// in the CSS font-stack rather than next/font to avoid 7MB+ download at build time.
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
@@ -97,7 +93,7 @@ export default async function LocaleLayout({
 
   return (
     <html lang={localeKey} suppressHydrationWarning>
-      <body className={`${dmSans.variable} ${inter.variable} ${jetbrainsMono.variable} ${sora.variable} ${notoSansSC.variable}`}>
+      <body className={`${dmSans.variable} ${inter.variable} ${jetbrainsMono.variable} ${sora.variable}`}>
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>

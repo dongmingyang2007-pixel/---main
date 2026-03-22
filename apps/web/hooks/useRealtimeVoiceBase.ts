@@ -39,6 +39,8 @@ export interface RealtimeVoiceBaseConfig {
     silenceCommitMs?: number;
     speechCooldownMs?: number;
   };
+  /** Half-duplex safety: suppress microphone capture while AI audio is actively playing. */
+  blockCaptureWhileAiSpeaking?: boolean;
   enableInterrupt: boolean;
   onError?: (msg: string) => void;
   onTurnComplete?: (payload: { userText: string; assistantText: string }) => void;
@@ -77,6 +79,9 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 const CALIBRATION_DURATION_MS = 2000;
 const CALIBRATION_MIN_THRESHOLD = 0.008;
 const CALIBRATION_P75_MULTIPLIER = 2.5;
+const SILENT_AUDIO_DATA_URL =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+const AUTOPLAY_BLOCKED_MESSAGE = "浏览器阻止了合成语音自动播放，请再次点击合成实时或检查静音设置";
 
 // ---------------------------------------------------------------------------
 // Playback strategy types (PCM via AudioContext  vs  Blob URL queue)
@@ -138,6 +143,8 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
   const isPlaybackActiveRef = useRef(false);
   const pumpPlaybackQueueRef = useRef<() => void>(() => undefined);
   const audioMimeRef = useRef<string>("audio/mpeg");
+  const blobPlaybackPrimedRef = useRef(false);
+  const autoplayBlockedNoticeShownRef = useRef(false);
 
   // Reconnect / session
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -406,6 +413,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     if (audioPlayerRef.current) return audioPlayerRef.current;
     const player = new Audio();
     player.preload = "auto";
+    (player as any).playsInline = true;
     player.onended = () => {
       if (playbackTimeoutRef.current) {
         clearTimeout(playbackTimeoutRef.current);
@@ -438,6 +446,43 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     return player;
   }, [clearAiPulse]);
 
+  const primeBlobPlayback = useCallback(async () => {
+    if (!blobPlayback || blobPlaybackPrimedRef.current) {
+      return;
+    }
+
+    const player = ensureAudioPlayer();
+    const previousMuted = player.muted;
+    const previousVolume = player.volume;
+    try {
+      player.muted = true;
+      player.volume = 0;
+      player.src = SILENT_AUDIO_DATA_URL;
+      const playPromise = player.play();
+      if (playPromise) {
+        await playPromise;
+      }
+      blobPlaybackPrimedRef.current = true;
+      autoplayBlockedNoticeShownRef.current = false;
+    } catch {
+      if (!autoplayBlockedNoticeShownRef.current) {
+        autoplayBlockedNoticeShownRef.current = true;
+        configRef.current.onError?.(AUTOPLAY_BLOCKED_MESSAGE);
+      }
+    } finally {
+      try {
+        player.pause();
+      } catch {
+        // Ignore pause races.
+      }
+      player.currentTime = 0;
+      player.removeAttribute("src");
+      player.load();
+      player.muted = previousMuted;
+      player.volume = previousVolume;
+    }
+  }, [blobPlayback, ensureAudioPlayer]);
+
   const pumpPlaybackQueue = useCallback(() => {
     if (isPlaybackActiveRef.current) return;
     const nextUrl = playbackQueueRef.current.shift();
@@ -457,20 +502,28 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       isPlaybackActiveRef.current = false;
       pumpPlaybackQueueRef.current();
     }, 15_000);
-    void player.play().catch(() => {
-      if (playbackTimeoutRef.current) {
-        clearTimeout(playbackTimeoutRef.current);
-        playbackTimeoutRef.current = null;
-      }
-      clearAiPulse();
-      setAiVolume(0);
-      if (activePlaybackUrlRef.current === nextUrl) {
-        URL.revokeObjectURL(nextUrl);
-        activePlaybackUrlRef.current = null;
-      }
-      isPlaybackActiveRef.current = false;
-      pumpPlaybackQueueRef.current();
-    });
+    void player.play()
+      .then(() => {
+        autoplayBlockedNoticeShownRef.current = false;
+      })
+      .catch(() => {
+        if (playbackTimeoutRef.current) {
+          clearTimeout(playbackTimeoutRef.current);
+          playbackTimeoutRef.current = null;
+        }
+        clearAiPulse();
+        setAiVolume(0);
+        if (activePlaybackUrlRef.current === nextUrl) {
+          URL.revokeObjectURL(nextUrl);
+          activePlaybackUrlRef.current = null;
+        }
+        isPlaybackActiveRef.current = false;
+        if (!autoplayBlockedNoticeShownRef.current) {
+          autoplayBlockedNoticeShownRef.current = true;
+          configRef.current.onError?.(AUTOPLAY_BLOCKED_MESSAGE);
+        }
+        pumpPlaybackQueueRef.current();
+      });
   }, [clearAiPulse, ensureAudioPlayer, pulseAiVolume]);
 
   const playBlobChunk = useCallback((audioData: ArrayBuffer) => {
@@ -582,6 +635,17 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         const cfg = configRef.current;
         const mode = cfg.audioSendMode;
         const vad = cfg.vadConfig;
+        const shouldBlockCapture =
+          Boolean(cfg.blockCaptureWhileAiSpeaking) &&
+          (stateRef.current === "ai_speaking" || isPlaybackActiveRef.current);
+
+        if (shouldBlockCapture) {
+          speechActiveRef.current = false;
+          hasSegmentAudioRef.current = false;
+          interruptStartRef.current = 0;
+          setUserVolume(0);
+          return;
+        }
 
         // ------ Adaptive calibration phase ------
         if (calibratingRef.current) {
@@ -793,6 +857,11 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         setState("ai_speaking");
         return;
       }
+      if (event.data instanceof Blob) {
+        playAudioChunk(await event.data.arrayBuffer());
+        setState("ai_speaking");
+        return;
+      }
 
       const msg = JSON.parse(event.data);
       const cfg = configRef.current;
@@ -969,6 +1038,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         clearTurnBuffers();
         setTranscript([]);
         resetTimerTracking();
+        autoplayBlockedNoticeShownRef.current = false;
       }
 
       setState(mode === "reconnect" ? "reconnecting" : "connecting");
@@ -1122,9 +1192,11 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     // PCM playback mode needs an AudioContext primed before connect
     if (!blobPlayback) {
       await ensurePlaybackContext();
+    } else {
+      await primeBlobPlayback();
     }
     openConnection("connect");
-  }, [blobPlayback, ensurePlaybackContext, openConnection, state]);
+  }, [blobPlayback, ensurePlaybackContext, openConnection, primeBlobPlayback, state]);
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
