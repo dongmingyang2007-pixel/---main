@@ -9471,8 +9471,8 @@ button {
 
 /* ── Model Picker Modal ─────────────────────── */
 
-.model-picker-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.25); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-.model-picker-card { background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: var(--radius-card); box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.3) inset; border: 1px solid rgba(255,255,255,0.4); width: 100%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; margin: 16px; }
+.model-picker-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.25); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); padding: 40px 16px; }
+.model-picker-card { background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: var(--console-radius-lg, 16px); box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.3) inset; border: 1px solid rgba(255,255,255,0.4); width: 100%; max-width: 600px; max-height: calc(100vh - 80px); display: flex; flex-direction: column; }
 .model-picker-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid rgba(0,0,0,0.06); }
 .model-picker-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .model-picker-close { width: 28px; height: 28px; border: none; background: none; font-size: 18px; color: var(--console-text-muted, var(--text-secondary)); cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: background 150ms, color 150ms; }
