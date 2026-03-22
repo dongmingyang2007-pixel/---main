@@ -137,7 +137,7 @@
   --radius: var(--radius-md);
 }
 
-/* ── Console warm cream tokens ─────────────────── */
+/* ── Console glassmorphism tokens ─────────────────── */
 [data-theme="console"] {
   /* ── Glass Background ── */
   --console-bg: linear-gradient(135deg, #e8f0fe 0%, #ede8f8 50%, #fce8e8 100%);
