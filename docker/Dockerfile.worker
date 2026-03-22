@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY apps/api /app
 
 ENV PYTHONPATH=/app
-CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "-l", "INFO"]
+CMD ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "-l", "INFO", "-Q", "celery,data,cleanup,inference"]
