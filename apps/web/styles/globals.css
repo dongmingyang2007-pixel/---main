@@ -10663,6 +10663,125 @@ button {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
 }
 
+/* ── Glass dashboard ─────────────────────────────────────── */
+.dashboard-glass-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--console-surface, rgba(255,255,255,0.45));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--console-border, rgba(0,0,0,0.06));
+  border-radius: var(--console-radius-lg, 18px);
+  width: fit-content;
+}
+
+.dashboard-glass-tab {
+  padding: 7px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: calc(var(--console-radius-lg, 18px) - 3px);
+  color: var(--console-text-secondary, var(--text-secondary));
+  text-decoration: none;
+  transition: background 150ms, color 150ms;
+}
+
+.dashboard-glass-tab:hover {
+  background: rgba(255,255,255,0.5);
+  color: var(--console-text-primary, var(--text-primary));
+}
+
+.dashboard-glass-tab.is-active {
+  background: var(--console-accent-gradient, linear-gradient(135deg, #6366f1, #8b5cf6));
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+}
+
+.dashboard-glass-grid {
+  display: grid;
+  grid-template-columns: 240px 1fr 240px;
+  gap: 18px;
+  align-items: start;
+}
+
+.dashboard-glass-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dashboard-glass-col-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-glass-col-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--console-text-primary, var(--text-primary));
+  margin: 0;
+}
+
+.dashboard-glass-col-sub {
+  font-size: 11px;
+  color: var(--console-text-secondary, var(--text-secondary));
+  margin: 0;
+}
+
+.dashboard-glass-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--console-accent, var(--accent));
+  display: block;
+  margin-bottom: 2px;
+}
+
+.dashboard-glass-center-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.dashboard-glass-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.dashboard-glass-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-glass-slot-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dashboard-glass-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--console-text-secondary, var(--text-secondary));
+}
+
+.dashboard-glass-empty-sub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
 .chat-page {
   height: 100%;
 }
@@ -11169,6 +11288,7 @@ button {
 @media (max-width: 1023px) {
   .console-page-header-v2,
   .dashboard-command-grid,
+  .dashboard-glass-grid,
   .assistant-overview-grid,
   .discover-layout {
     grid-template-columns: 1fr;
@@ -11198,6 +11318,10 @@ button {
 
   /* Dashboard */
   .dashboard-command-grid { grid-template-columns: 1fr; }
+  .dashboard-glass-grid { grid-template-columns: 1fr; }
+  .dashboard-glass-center-head { flex-direction: column; }
+  .dashboard-glass-actions { width: 100%; }
+  .dashboard-glass-actions .glass-button { flex: 1; }
   .dashboard-project-card-head { flex-direction: column; }
   .dashboard-project-actions { width: 100%; justify-content: stretch; }
   .dashboard-project-actions .dashboard-chat-btn,
