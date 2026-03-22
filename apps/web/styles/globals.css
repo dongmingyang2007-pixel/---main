@@ -8359,7 +8359,7 @@ button {
   display: flex;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-base);
+  background: transparent;
 }
 
 .graph-main {
@@ -10292,10 +10292,26 @@ button {
 }
 
 .memory-detail-panel {
-  flex: 1;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  max-width: 90%;
   padding: 24px;
   overflow-y: auto;
-  background: var(--bg-base);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(255,255,255,0.6);
+  box-shadow: -4px 0 24px rgba(0,0,0,0.08);
+  z-index: 10;
+  animation: memory-detail-slide-in 200ms ease-out;
+}
+
+@keyframes memory-detail-slide-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
 .memory-detail-empty {
@@ -12261,3 +12277,46 @@ button {
 .chat-markdown a { color: var(--console-accent, #6366f1); text-decoration: underline; text-underline-offset: 2px; }
 .chat-markdown a:hover { opacity: 0.8; }
 .chat-markdown img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+
+/* ── Chat Memory Card ──────────────────────── */
+.chat-memory-card {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(139,92,246,0.06));
+  border: 1px solid rgba(99,102,241,0.12);
+  font-size: 12px;
+}
+
+.chat-memory-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chat-memory-card-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(99,102,241,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--console-accent, #6366f1);
+  flex-shrink: 0;
+}
+
+.chat-memory-card-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--console-accent, #6366f1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-memory-card-body {
+  color: var(--console-text-secondary, #374151);
+  line-height: 1.5;
+  padding-left: 28px;
+}

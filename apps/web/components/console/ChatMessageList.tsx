@@ -688,12 +688,19 @@ export const ChatMessageList = forwardRef<
               </div>
             ) : null}
             {msg.role === "assistant" && msg.memories_extracted && (
-              <div className="chat-memory-indicator">
-                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-                  <circle cx={12} cy={12} r={3} />
-                  <path d="M12 2v4m0 12v4" />
-                </svg>
-                {t("memory.remembered")}：{msg.memories_extracted}
+              <div className="chat-memory-card">
+                <div className="chat-memory-card-header">
+                  <div className="chat-memory-card-icon">
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10A10 10 0 0 1 2 12 10 10 0 0 1 12 2z" />
+                      <path d="M12 8v4l3 3" />
+                    </svg>
+                  </div>
+                  <span className="chat-memory-card-label">{t("memory.remembered")}</span>
+                </div>
+                <div className="chat-memory-card-body">
+                  {msg.memories_extracted}
+                </div>
               </div>
             )}
           </div>
