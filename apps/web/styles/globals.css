@@ -10781,6 +10781,8 @@ button {
   background: transparent;
 }
 
+/* ── Glass-themed workspace header ──────────── */
+
 .chat-workspace-header {
   display: flex;
   align-items: flex-start;
@@ -10788,8 +10790,9 @@ button {
   gap: 18px;
   padding: 20px 22px 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, white), color-mix(in srgb, var(--bg-surface) 92%, white));
+  background: rgba(255,255,255,0.35);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .chat-workspace-copy {
@@ -10839,27 +10842,120 @@ button {
   color: var(--accent);
 }
 
+/* ── Glass mode switcher ────────────────────── */
+
 .chat-mode-switcher {
   padding: 0;
   justify-content: flex-end;
   background: transparent;
 }
 
+.chat-mode-chip {
+  background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-color: color-mix(in srgb, var(--accent) 12%, var(--border));
+}
+
+.chat-mode-chip.is-active {
+  background: var(--console-accent-gradient, var(--accent));
+  color: white;
+  border-color: transparent;
+}
+
+.chat-mode-chip.is-active svg { stroke: white; }
+
+/* ── Glass messages area ────────────────────── */
+
 .chat-messages {
   padding: 22px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 95%, white), color-mix(in srgb, var(--bg-base) 98%, white));
 }
 
+/* ── AI avatar ──────────────────────────────── */
+
+.chat-avatar-ai {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 8px;
+  background: var(--console-accent-gradient, linear-gradient(135deg, #6366f1, #8b5cf6));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.chat-avatar-ai-char {
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+  line-height: 1;
+}
+
+/* ── Glass user bubbles ─────────────────────── */
+
+.chat-message.is-user .chat-bubble {
+  background: var(--console-accent-gradient, var(--accent));
+  color: #ffffff;
+  border-radius: 18px 18px 6px 18px;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18);
+  border: none;
+}
+
+/* ── Glass assistant bubbles ────────────────── */
+
+.chat-message.is-assistant .chat-bubble {
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--accent) 8%, var(--border));
+  border-radius: 18px 18px 18px 6px;
+}
+
+/* ── Glass input bar ────────────────────────── */
+
 .chat-input-bar-voice {
   gap: 10px;
   padding: 14px 18px 18px;
   border-top: 1px solid color-mix(in srgb, var(--accent) 8%, var(--border));
-  background: color-mix(in srgb, var(--bg-surface) 94%, white);
+  background: rgba(255,255,255,0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .chat-input {
   min-height: 44px;
   border-radius: 16px;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ── Gradient send button ───────────────────── */
+
+.chat-send {
+  background: var(--console-accent-gradient, var(--accent));
+  border-radius: 14px;
+  padding: 10px 22px;
+}
+
+/* ── Tool chips accent active state ─────────── */
+
+.chat-tool-chip[data-state="on"] {
+  background: var(--console-accent, var(--accent));
+  border-color: var(--console-accent, var(--accent));
+}
+
+/* ── Stop generating glass style ────────────── */
+
+.chat-stop-btn {
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .assistant-profile-v2 {

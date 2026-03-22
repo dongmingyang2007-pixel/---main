@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 
-import { apiPost, isApiRequestError } from "@/lib/api";
+import { apiPost } from "@/lib/api";
 import {
   type Message,
   type SpeechResponse,
@@ -312,6 +312,11 @@ export const ChatMessageList = forwardRef<
           key={msg.id}
           className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
         >
+          {msg.role === "assistant" && (
+            <div className="chat-avatar-ai" aria-hidden="true">
+              <span className="chat-avatar-ai-char">{"\u94ED"}</span>
+            </div>
+          )}
           <div className="chat-message-stack">
             {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
               <div className="chat-reasoning" aria-label={t("reasoningLabel")}>
@@ -331,7 +336,11 @@ export const ChatMessageList = forwardRef<
                 streaming={Boolean(msg.isStreaming)}
               />
             </div>
-            {msg.role === "assistant" && (
+            {msg.role === "assistant" &&
+            (msg.content.trim() ||
+              msg.audioBase64 ||
+              loadingReadAloudId === msg.id ||
+              readingMessageId === msg.id) ? (
               <div className="chat-message-actions">
                 <button
                   className={`chat-audio-btn ${readingMessageId === msg.id ? "is-active" : ""}`}
@@ -357,7 +366,7 @@ export const ChatMessageList = forwardRef<
                   </span>
                 </button>
               </div>
-            )}
+            ) : null}
             {msg.role === "assistant" && msg.memories_extracted && (
               <div className="chat-memory-indicator">
                 <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
