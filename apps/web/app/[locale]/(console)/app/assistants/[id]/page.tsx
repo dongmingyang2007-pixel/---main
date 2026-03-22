@@ -21,7 +21,7 @@ import { MODEL_PICKER_SELECTION_KEY } from "@/lib/discover-labels";
 import { apiGet, apiPatch } from "@/lib/api";
 import { uploadKnowledgeFiles } from "@/lib/knowledge-upload";
 
-type ProfileTab = "overview" | "personality" | "knowledge" | "models";
+
 type ChatMode = "standard" | "omni_realtime" | "synthetic_realtime";
 type PipelineType =
   | "llm"
@@ -821,7 +821,6 @@ export default function AssistantDetailPage() {
 
   const openKnowledgeManager = useCallback(() => {
     setKnowledgeError("");
-    setActiveTab("knowledge");
     setKnowledgeOpen(true);
     void loadKnowledgeItems();
   }, [loadKnowledgeItems]);
