@@ -11659,20 +11659,38 @@ button {
   -webkit-backdrop-filter: blur(24px);
   border-right: 1px solid rgba(255,255,255,0.7);
   box-shadow: 0 8px 32px rgba(0,0,0,0.08);
-  transform: translateX(0);
-  opacity: 1;
-  transition: transform 220ms ease-out, opacity 220ms ease-out;
 }
 
+/* Enter animation */
+.glass-sidebar--expanded.glass-sidebar--opening {
+  animation: sidebar-slide-in 220ms ease-out forwards;
+}
+
+/* Exit animation */
 .glass-sidebar--expanded.glass-sidebar--closing {
-  transform: translateX(-16px);
-  opacity: 0;
-  transition: transform 180ms ease-in, opacity 180ms ease-in;
+  animation: sidebar-slide-out 220ms ease-in forwards;
 }
 
-.glass-sidebar--expanded.glass-sidebar--entering {
-  transform: translateX(-16px);
-  opacity: 0;
+@keyframes sidebar-slide-in {
+  from {
+    transform: translateX(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes sidebar-slide-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-20px);
+    opacity: 0;
+  }
 }
 
 .glass-sidebar-overlay {
@@ -11680,13 +11698,21 @@ button {
   inset: 0;
   background: rgba(0,0,0,0.08);
   z-index: 55;
-  opacity: 1;
-  transition: opacity 200ms ease-out;
+  animation: sidebar-overlay-in 200ms ease-out forwards;
 }
 
 .glass-sidebar-overlay.glass-sidebar-overlay--closing {
-  opacity: 0;
-  transition: opacity 180ms ease-in;
+  animation: sidebar-overlay-out 200ms ease-in forwards;
+}
+
+@keyframes sidebar-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sidebar-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* Logo square */

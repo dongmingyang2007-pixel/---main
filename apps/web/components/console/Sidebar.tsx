@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import clsx from "clsx";
 import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
@@ -55,9 +55,9 @@ export function Sidebar() {
   const pathname = usePathname();
   const t = useTranslations("console");
   const { projects } = useProjectContext();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
-  const [isClosing, setIsClosing] = useState(false);
+  const [showExpanded, setShowExpanded] = useState(false);
+  const [animState, setAnimState] = useState<"idle" | "opening" | "closing">("idle");
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const displayMap = buildProjectDisplayMap(projects);
 
@@ -67,25 +67,21 @@ export function Sidebar() {
   };
 
   const handleExpand = useCallback(() => {
-    if (isClosing) return;
-    setIsVisible(true);
-    setIsExpanded(true);
-    // Trigger entering → open animation on next frame
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setIsExpanded(true);
-      });
-    });
-  }, [isClosing]);
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setShowExpanded(true);
+    setAnimState("opening");
+  }, []);
 
   const handleCollapse = useCallback(() => {
-    setIsClosing(true);
-    // Wait for closing animation to finish, then unmount
-    setTimeout(() => {
-      setIsExpanded(false);
-      setIsVisible(false);
-      setIsClosing(false);
-    }, 200);
+    setAnimState("closing");
+    closeTimer.current = setTimeout(() => {
+      setShowExpanded(false);
+      setAnimState("idle");
+      closeTimer.current = null;
+    }, 220);
   }, []);
 
   return (
@@ -145,12 +141,15 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Expanded overlay sidebar — always mounted when visible, animated */}
-      {isVisible && (
+      {/* Expanded overlay sidebar — animated */}
+      {showExpanded && (
         <>
           {/* Backdrop overlay */}
           <div
-            className={clsx("glass-sidebar-overlay", isClosing && "glass-sidebar-overlay--closing")}
+            className={clsx(
+              "glass-sidebar-overlay",
+              animState === "closing" && "glass-sidebar-overlay--closing"
+            )}
             onClick={handleCollapse}
             aria-hidden="true"
           />
@@ -160,8 +159,8 @@ export function Sidebar() {
             className={clsx(
               "glass-sidebar",
               "glass-sidebar--expanded",
-              isClosing && "glass-sidebar--closing",
-              !isClosing && !isExpanded && "glass-sidebar--entering"
+              animState === "opening" && "glass-sidebar--opening",
+              animState === "closing" && "glass-sidebar--closing"
             )}
             role="navigation"
             aria-label="Main expanded"
