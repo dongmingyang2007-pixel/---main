@@ -5771,7 +5771,8 @@ button {
 
 .console-shell-main {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -6594,6 +6595,12 @@ button {
   grid-template-columns: 1fr 1.2fr 0.7fr;
   gap: 16px;
   margin-top: 16px;
+}
+
+.assistant-detail-models-panel {
+  max-height: calc(100vh - 48px - 28px - 100px - 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .assistant-detail-compact-stat {
