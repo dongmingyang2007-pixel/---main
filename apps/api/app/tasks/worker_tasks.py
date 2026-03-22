@@ -554,6 +554,28 @@ AI：{ai_response}
             if not facts:
                 return
 
+            # Save extracted facts to the AI message's metadata for frontend display
+            try:
+                ai_msg = (
+                    db.query(Message)
+                    .filter(
+                        Message.conversation_id == conversation_id,
+                        Message.role == "assistant",
+                    )
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                if ai_msg:
+                    existing_meta = ai_msg.metadata_json or {}
+                    existing_meta["extracted_facts"] = [
+                        {"fact": f.get("fact", ""), "category": f.get("category", ""), "importance": f.get("importance", 0)}
+                        for f in facts
+                    ]
+                    ai_msg.metadata_json = existing_meta
+                    db.flush()
+            except Exception:  # noqa: BLE001
+                pass  # Non-fatal: display data only
+
             for fact in facts:
                 importance = fact.get("importance", 0)
                 if importance < 0.7:

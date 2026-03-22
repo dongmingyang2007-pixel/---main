@@ -12320,3 +12320,61 @@ button {
   line-height: 1.5;
   padding-left: 28px;
 }
+
+/* ── Chat Memory Facts ─────────────────────── */
+.chat-memory-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 28px;
+}
+
+.chat-memory-fact {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.5);
+  border: 1px solid rgba(99,102,241,0.08);
+}
+
+.chat-memory-fact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.chat-memory-fact-category {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--console-accent, #6366f1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-memory-fact-score {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.chat-memory-fact-score.is-high {
+  background: rgba(16,185,129,0.12);
+  color: #059669;
+}
+
+.chat-memory-fact-score.is-medium {
+  background: rgba(245,158,11,0.12);
+  color: #d97706;
+}
+
+.chat-memory-fact-score.is-low {
+  background: rgba(156,163,175,0.12);
+  color: #6b7280;
+}
+
+.chat-memory-fact-text {
+  font-size: 12px;
+  color: var(--console-text-secondary, #374151);
+  line-height: 1.5;
+}

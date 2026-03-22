@@ -1,12 +1,30 @@
 export type ChatMode = "standard" | "omni_realtime" | "synthetic_realtime";
 
+export interface SearchSource {
+  index: number;
+  title: string;
+  url: string;
+  domain: string;
+  site_name?: string | null;
+  summary?: string | null;
+  icon?: string | null;
+}
+
+export interface ExtractedFact {
+  fact: string;
+  category: string;
+  importance: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   reasoningContent?: string | null;
+  sources?: SearchSource[];
   audioBase64?: string | null;
   memories_extracted?: string;
+  extracted_facts?: ExtractedFact[];
   animateOnMount?: boolean;
   isStreaming?: boolean;
 }
@@ -16,6 +34,10 @@ export interface ApiMessage {
   role: "user" | "assistant";
   content: string;
   reasoning_content?: string | null;
+  metadata_json?: {
+    sources?: unknown;
+    [key: string]: unknown;
+  };
   created_at?: string;
 }
 
@@ -153,12 +175,80 @@ export function modelSupportsCapability(
   return required.every((value) => capabilities.has(value.toLowerCase()));
 }
 
+export function normalizeSearchSources(value: unknown): SearchSource[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const candidate = item as Record<string, unknown>;
+    const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+    const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
+    if (!title || !url) {
+      return [];
+    }
+    const index =
+      typeof candidate.index === "number" && Number.isFinite(candidate.index)
+        ? candidate.index
+        : 0;
+    const domain =
+      typeof candidate.domain === "string" && candidate.domain.trim()
+        ? candidate.domain.trim()
+        : (() => {
+            try {
+              return new URL(url).hostname;
+            } catch {
+              return "";
+            }
+          })();
+
+    return [
+      {
+        index,
+        title,
+        url,
+        domain,
+        site_name:
+          typeof candidate.site_name === "string" && candidate.site_name.trim()
+            ? candidate.site_name.trim()
+            : null,
+        summary:
+          typeof candidate.summary === "string" && candidate.summary.trim()
+            ? candidate.summary.trim()
+            : null,
+        icon:
+          typeof candidate.icon === "string" && candidate.icon.trim()
+            ? candidate.icon.trim()
+            : null,
+      },
+    ];
+  });
+}
+
 export function toMessage(message: ApiMessage): Message {
+  const meta = message.metadata_json;
+  const rawFacts = meta?.extracted_facts;
+  const extractedFacts: ExtractedFact[] | undefined =
+    Array.isArray(rawFacts)
+      ? rawFacts
+          .filter((f: unknown): f is Record<string, unknown> => typeof f === "object" && f !== null)
+          .map((f) => ({
+            fact: String(f.fact ?? ""),
+            category: String(f.category ?? ""),
+            importance: typeof f.importance === "number" ? f.importance : 0,
+          }))
+      : undefined;
+
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     reasoningContent: message.reasoning_content,
+    sources: normalizeSearchSources(meta?.sources),
+    extracted_facts: extractedFacts,
     animateOnMount: false,
     isStreaming: false,
   };
@@ -177,7 +267,7 @@ export function getApiErrorMessage(
   if (error.code === "model_api_unavailable") {
     return t("errors.modelUnavailable");
   }
-  return error.message || t("errors.generic");
+  return t("errors.generic");
 }
 
 export function cycleState(current: "auto" | "on" | "off"): "auto" | "on" | "off" {
