@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   forwardRef,
   useCallback,
   useEffect,
@@ -10,9 +11,13 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 import { apiPost } from "@/lib/api";
 import {
   type Message,
+  type SearchSource,
   type SpeechResponse,
   createAudioPlayer,
 } from "./chat-types";
@@ -65,9 +70,257 @@ function AnimatedMessageText({
   const showCursor = streaming || (shouldAnimate && displayCount < segments.length);
 
   return (
-    <>
-      {visibleText}
+    <div className="chat-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--console-accent, #6366f1)", textDecoration: "underline" }}>
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {visibleText}
+      </ReactMarkdown>
       {showCursor ? <span className="chat-inline-cursor">&#x2588;</span> : null}
+    </div>
+  );
+}
+
+const CITATION_PATTERN = /\[ref_(\d+)\]/g;
+
+type CitationPart =
+  | { kind: "text"; value: string }
+  | { kind: "citation"; index: number; raw: string };
+
+function getSourceDisplayIndex(source: SearchSource, fallbackIndex: number): number {
+  return source.index > 0 ? source.index : fallbackIndex;
+}
+
+function getSourceCardId(messageId: string, sourceIndex: number): string {
+  return `chat-source-${messageId}-${sourceIndex}`;
+}
+
+function parseCitationParts(text: string): CitationPart[] {
+  const parts: CitationPart[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(CITATION_PATTERN)) {
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      parts.push({ kind: "text", value: text.slice(lastIndex, start) });
+    }
+    parts.push({
+      kind: "citation",
+      index: Number.parseInt(match[1] || "0", 10),
+      raw: match[0],
+    });
+    lastIndex = start + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ kind: "text", value: text.slice(lastIndex) });
+  }
+
+  return parts.length ? parts : [{ kind: "text", value: text }];
+}
+
+function buildCitationSnippetMap(text: string): Map<number, string> {
+  const snippets = new Map<number, string>();
+  const blocks = text
+    .split(/\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  for (const block of blocks) {
+    const indices = Array.from(block.matchAll(CITATION_PATTERN)).map((match) =>
+      Number.parseInt(match[1] || "0", 10),
+    );
+    if (!indices.length) {
+      continue;
+    }
+    const cleaned = block.replace(CITATION_PATTERN, "").replace(/\s+/g, " ").trim();
+    if (!cleaned) {
+      continue;
+    }
+    for (const index of indices) {
+      if (!snippets.has(index)) {
+        snippets.set(index, cleaned);
+      }
+    }
+  }
+
+  return snippets;
+}
+
+function formatSourceDomain(source: SearchSource): string {
+  const siteName = source.site_name?.trim();
+  const domain = source.domain.trim();
+  if (siteName && domain && siteName !== domain) {
+    return `${siteName} · ${domain}`;
+  }
+  return siteName || domain;
+}
+
+function getSourceIconUrl(source: SearchSource): string | null {
+  const explicitIcon = source.icon?.trim();
+  if (explicitIcon) {
+    return explicitIcon;
+  }
+
+  try {
+    return new URL("/favicon.ico", source.url).toString();
+  } catch {
+    return null;
+  }
+}
+
+function resolveSourceSummary(
+  source: SearchSource,
+  citationSnippets: Map<number, string>,
+  fallbackIndex: number,
+): string | null {
+  const explicitSummary = source.summary?.trim();
+  if (explicitSummary) {
+    return explicitSummary;
+  }
+  return citationSnippets.get(getSourceDisplayIndex(source, fallbackIndex)) || null;
+}
+
+function SourceFavicon({
+  source,
+}: {
+  source: SearchSource;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const iconUrl = getSourceIconUrl(source);
+  const fallbackLabel = (source.site_name || source.domain || source.title || "?")
+    .trim()
+    .charAt(0)
+    .toUpperCase();
+
+  return (
+    <span className="chat-source-favicon" aria-hidden="true">
+      {iconUrl && !imageFailed ? (
+        <img
+          className="chat-source-favicon-img"
+          src={iconUrl}
+          alt=""
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <span className="chat-source-favicon-fallback">{fallbackLabel || "?"}</span>
+      )}
+    </span>
+  );
+}
+
+function CitationAnchor({
+  messageId,
+  source,
+  displayIndex,
+  previewSummary,
+}: {
+  messageId: string;
+  source: SearchSource;
+  displayIndex: number;
+  previewSummary: string;
+}) {
+  return (
+    <span className="chat-citation-anchor-wrap">
+      <a
+        className="chat-citation-anchor"
+        href={`#${getSourceCardId(messageId, displayIndex)}`}
+        title={source.title}
+      >
+        [{displayIndex}]
+      </a>
+      <span className="chat-citation-preview" role="tooltip">
+        <span className="chat-citation-preview-title">{source.title}</span>
+        <span className="chat-citation-preview-meta">{formatSourceDomain(source)}</span>
+        <span className="chat-citation-preview-summary">{previewSummary}</span>
+      </span>
+    </span>
+  );
+}
+
+function AssistantMessageBody({
+  message,
+  t,
+}: {
+  message: Message;
+  t: (key: string) => string;
+}) {
+  const sources = message.sources ?? [];
+  if (!sources.length || message.isStreaming) {
+    return (
+      <AnimatedMessageText
+        text={message.content}
+        animate={Boolean(message.animateOnMount)}
+        streaming={Boolean(message.isStreaming)}
+      />
+    );
+  }
+
+  const citationParts = parseCitationParts(message.content);
+  const citationSnippets = buildCitationSnippetMap(message.content);
+  const sourceEntries = new Map(
+    sources.map((source, index) => {
+      const displayIndex = getSourceDisplayIndex(source, index + 1);
+      const previewSummary =
+        resolveSourceSummary(source, citationSnippets, index + 1) ||
+        t("sourceNoSummary");
+      return [displayIndex, { source, displayIndex, previewSummary }];
+    }),
+  );
+  const hasCitationAnchors = citationParts.some((part) => part.kind === "citation");
+
+  return (
+    <>
+      {citationParts.map((part, index) => {
+        if (part.kind === "text") {
+          return <Fragment key={`text-${index}`}>{part.value}</Fragment>;
+        }
+
+        const entry = sourceEntries.get(part.index);
+        if (!entry) {
+          return <Fragment key={`raw-${index}`}>{part.raw}</Fragment>;
+        }
+
+        return (
+          <CitationAnchor
+            key={`cite-${index}`}
+            messageId={message.id}
+            source={entry.source}
+            displayIndex={entry.displayIndex}
+            previewSummary={entry.previewSummary}
+          />
+        );
+      })}
+      {!hasCitationAnchors ? (
+        <span className="chat-citation-inline-list">
+          {" "}
+          {t("sourceReferencePrefix")}{" "}
+          {sources.map((source, index) => {
+            const displayIndex = getSourceDisplayIndex(source, index + 1);
+            return (
+              <Fragment key={`${source.url}-${displayIndex}`}>
+                {index > 0 ? " " : null}
+                <CitationAnchor
+                  messageId={message.id}
+                  source={source}
+                  displayIndex={displayIndex}
+                  previewSummary={
+                    resolveSourceSummary(source, citationSnippets, index + 1) ||
+                    t("sourceNoSummary")
+                  }
+                />
+              </Fragment>
+            );
+          })}
+        </span>
+      ) : null}
     </>
   );
 }
@@ -91,7 +344,12 @@ export interface ChatMessageListHandle {
   updateReasoning: (id: string, updater: (prev: string) => string) => void;
   finalizeMessage: (
     tempId: string,
-    final: { id: string; isStreaming: boolean; memories_extracted?: string },
+    final: {
+      id: string;
+      isStreaming: boolean;
+      memories_extracted?: string;
+      sources?: SearchSource[];
+    },
   ) => void;
   setMessages: (msgs: Message[]) => void;
   replaceMessages: (updater: (prev: Message[]) => Message[]) => void;
@@ -265,7 +523,12 @@ export const ChatMessageList = forwardRef<
       },
       finalizeMessage(
         tempId: string,
-        final: { id: string; isStreaming: boolean; memories_extracted?: string },
+        final: {
+          id: string;
+          isStreaming: boolean;
+          memories_extracted?: string;
+          sources?: SearchSource[];
+        },
       ) {
         onMessagesChange(
           messagesRef.current.map((m) =>
@@ -308,6 +571,10 @@ export const ChatMessageList = forwardRef<
       )}
 
       {messages.map((msg) => (
+        (() => {
+          const assistantSources = msg.role === "assistant" ? msg.sources ?? [] : [];
+          const citationSnippets = buildCitationSnippetMap(msg.content);
+          return (
         <div
           key={msg.id}
           className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
@@ -330,12 +597,61 @@ export const ChatMessageList = forwardRef<
               </div>
             ) : null}
             <div className="chat-bubble">
-              <AnimatedMessageText
-                text={msg.content}
-                animate={msg.role === "assistant" && Boolean(msg.animateOnMount)}
-                streaming={Boolean(msg.isStreaming)}
-              />
+              {msg.role === "assistant" ? (
+                <AssistantMessageBody message={msg} t={t} />
+              ) : (
+                <AnimatedMessageText
+                  text={msg.content}
+                  animate={Boolean(msg.animateOnMount)}
+                  streaming={Boolean(msg.isStreaming)}
+                />
+              )}
             </div>
+            {msg.role === "assistant" && assistantSources.length ? (
+              <div className="chat-sources" aria-label={t("sourcesLabel")}>
+                {assistantSources.map((source, index) => {
+                  const displayIndex = getSourceDisplayIndex(source, index + 1);
+                  const summary =
+                    resolveSourceSummary(source, citationSnippets, index + 1) ||
+                    t("sourceNoSummary");
+
+                  return (
+                    <article
+                      key={`${source.url}-${displayIndex}`}
+                      id={getSourceCardId(msg.id, displayIndex)}
+                      className="chat-source-card"
+                    >
+                      <div className="chat-source-head">
+                        <div className="chat-source-head-main">
+                          <SourceFavicon source={source} />
+                          <div className="chat-source-head-copy">
+                            <a
+                              className="chat-source-title"
+                              href={source.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {source.title}
+                            </a>
+                            <div className="chat-source-domain">{formatSourceDomain(source)}</div>
+                          </div>
+                        </div>
+                        <span className="chat-source-index">[{displayIndex}]</span>
+                      </div>
+                      <a
+                        className="chat-source-url"
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {source.url}
+                      </a>
+                      <div className="chat-source-summary">{summary}</div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
             {msg.role === "assistant" &&
             (msg.content.trim() ||
               msg.audioBase64 ||
@@ -378,6 +694,8 @@ export const ChatMessageList = forwardRef<
             )}
           </div>
         </div>
+          );
+        })()
       ))}
 
       {isTyping && (
