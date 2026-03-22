@@ -6,7 +6,7 @@ import { useLocale } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 
 import { PageTransition } from "@/components/console/PageTransition";
-import { PanelLayout } from "@/components/console/PanelLayout";
+import { GlassCard } from "@/components/console/glass";
 import { apiGet, logout } from "@/lib/api";
 import { useDeveloperMode } from "@/lib/developer-mode";
 
@@ -22,7 +22,6 @@ export default function SettingsPage() {
   const [deleteMsg, setDeleteMsg] = useState("");
 
   const targetLocale = locale === "zh" ? "en" : "zh";
-  const targetLabel = locale === "zh" ? "English" : "中文";
 
   useEffect(() => {
     void apiGet<UserMe>("/api/v1/auth/me")
@@ -30,148 +29,274 @@ export default function SettingsPage() {
       .catch(() => {});
   }, []);
 
+  const sectionTitle: React.CSSProperties = {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "var(--console-text-primary, var(--text-primary))",
+    marginBottom: 4,
+  };
+
+  const sectionDesc: React.CSSProperties = {
+    fontSize: 12,
+    color: "var(--console-text-secondary, var(--text-secondary))",
+    lineHeight: 1.5,
+  };
+
+  const label: React.CSSProperties = {
+    fontSize: 12,
+    fontWeight: 500,
+    color: "var(--console-text-secondary, var(--text-secondary))",
+    marginBottom: 2,
+  };
+
+  const value: React.CSSProperties = {
+    fontSize: 13,
+    color: "var(--console-text-primary, var(--text-primary))",
+  };
+
   return (
-    <PanelLayout>
-      <PageTransition>
-        <div className="p-6 space-y-6">
-          <div>
-            <p className="text-xs font-semibold tracking-widest text-[var(--text-secondary)] uppercase">
-              {t("kicker")}
-            </p>
-            <h1 className="mt-2 text-2xl font-bold">{t("title")}</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">{t("description")}</p>
+    <PageTransition>
+      <div className="console-page-shell" style={{ padding: "28px 32px" }}>
+        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+          {/* Page Header */}
+          <div style={{ marginBottom: 28 }}>
+            <p style={{
+              fontSize: 11,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--console-accent, var(--accent))",
+              marginBottom: 6,
+            }}>{t("kicker")}</p>
+            <h1 style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: "var(--console-text-primary, var(--text-primary))",
+              marginBottom: 4,
+            }}>{t("title")}</h1>
+            <p style={{
+              fontSize: 13,
+              color: "var(--console-text-secondary, var(--text-secondary))",
+            }}>{t("description")}</p>
           </div>
 
-          {/* Account */}
-          <section className="console-panel">
-            <div className="console-panel-header">
-              <div>
-                <h2 className="console-panel-title">{t("settings.account")}</h2>
-              </div>
-            </div>
-            <div className="console-panel-body">
-              <div className="console-key-item">
-                <div className="console-key-label">{t("settings.email")}</div>
-                <div className="console-key-value font-mono">
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Account */}
+            <GlassCard>
+              <div style={sectionTitle}>{t("settings.account")}</div>
+              <div style={{ marginTop: 12 }}>
+                <div style={label}>{t("settings.email")}</div>
+                <div style={{ ...value, fontFamily: "var(--font-mono, monospace)" }}>
                   {user ? user.email : t("settings.loadingUser")}
                 </div>
               </div>
               {user?.display_name && (
-                <div className="console-key-item mt-3">
-                  <div className="console-key-label">{t("settings.name")}</div>
-                  <div className="console-key-value">{user.display_name}</div>
+                <div style={{ marginTop: 10 }}>
+                  <div style={label}>{t("settings.name")}</div>
+                  <div style={value}>{user.display_name}</div>
                 </div>
               )}
-            </div>
-          </section>
+            </GlassCard>
 
-          {/* Language */}
-          <section className="console-panel">
-            <div className="console-panel-header">
-              <div>
-                <h2 className="console-panel-title">{t("settings.language")}</h2>
-                <p className="console-panel-description">{t("settings.languageDesc")}</p>
+            {/* Language */}
+            <GlassCard>
+              <div style={sectionTitle}>{t("settings.language")}</div>
+              <p style={{ ...sectionDesc, marginBottom: 14 }}>{t("settings.languageDesc")}</p>
+              <div style={{ display: "flex", gap: 0, borderRadius: 9999, overflow: "hidden", border: "1px solid var(--console-border, var(--border))", width: "fit-content" }}>
+                <Link
+                  href={pathname}
+                  locale="en"
+                  style={{
+                    padding: "6px 18px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textDecoration: "none",
+                    transition: "all 0.15s ease",
+                    ...(locale === "en"
+                      ? {
+                          background: "linear-gradient(135deg, var(--console-accent, var(--accent)), color-mix(in srgb, var(--console-accent, var(--accent)) 80%, white))",
+                          color: "#fff",
+                        }
+                      : {
+                          background: "transparent",
+                          color: "var(--console-text-secondary, var(--text-secondary))",
+                        }),
+                  }}
+                >
+                  English
+                </Link>
+                <Link
+                  href={pathname}
+                  locale="zh"
+                  style={{
+                    padding: "6px 18px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textDecoration: "none",
+                    transition: "all 0.15s ease",
+                    ...(locale === "zh"
+                      ? {
+                          background: "linear-gradient(135deg, var(--console-accent, var(--accent)), color-mix(in srgb, var(--console-accent, var(--accent)) 80%, white))",
+                          color: "#fff",
+                        }
+                      : {
+                          background: "transparent",
+                          color: "var(--console-text-secondary, var(--text-secondary))",
+                        }),
+                  }}
+                >
+                  中文
+                </Link>
               </div>
-            </div>
-            <div className="console-panel-body">
-              <Link
-                href={pathname}
-                locale={targetLocale}
-                className="console-button-secondary inline-flex items-center gap-2"
-              >
-                {t("settings.switchTo")} {targetLabel}
-              </Link>
-            </div>
-          </section>
+            </GlassCard>
 
-          {/* Developer Mode */}
-          <section className="console-panel">
-            <div className="console-panel-header">
-              <div>
-                <h2 className="console-panel-title">{t("settings.developerMode")}</h2>
-                <p className="console-panel-description">{t("settings.developerModeDesc")}</p>
-              </div>
-            </div>
-            <div className="console-panel-body">
-              <label className="flex items-center gap-3 cursor-pointer select-none">
+            {/* Developer Mode */}
+            <GlassCard>
+              <div style={sectionTitle}>{t("settings.developerMode")}</div>
+              <p style={{ ...sectionDesc, marginBottom: 14 }}>{t("settings.developerModeDesc")}</p>
+              <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer", userSelect: "none" }}>
                 <button
                   role="switch"
                   aria-checked={isDeveloperMode}
                   onClick={toggleDeveloperMode}
-                  className={[
-                    "relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warning)]",
-                    isDeveloperMode
-                      ? "bg-[var(--warning)]"
-                      : "bg-[var(--border)]",
-                  ].join(" ")}
+                  style={{
+                    position: "relative",
+                    display: "inline-flex",
+                    height: 24,
+                    width: 44,
+                    flexShrink: 0,
+                    borderRadius: 9999,
+                    border: "none",
+                    cursor: "pointer",
+                    transition: "background 0.2s ease",
+                    background: isDeveloperMode
+                      ? "var(--console-accent, var(--warning))"
+                      : "var(--console-border, var(--border))",
+                    padding: 0,
+                  }}
                 >
                   <span
-                    className={[
-                      "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition duration-200 ease-in-out",
-                      isDeveloperMode ? "translate-x-5" : "translate-x-0",
-                    ].join(" ")}
+                    style={{
+                      display: "inline-block",
+                      height: 20,
+                      width: 20,
+                      borderRadius: 9999,
+                      background: "white",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                      transform: isDeveloperMode ? "translateX(22px)" : "translateX(2px)",
+                      transition: "transform 0.2s ease",
+                      marginTop: 2,
+                    }}
                   />
                 </button>
-                <span className="text-sm">
+                <span style={{ fontSize: 13, color: "var(--console-text-primary, var(--text-primary))" }}>
                   {isDeveloperMode ? t("settings.developerModeOn") : t("settings.developerModeOff")}
                 </span>
               </label>
-            </div>
-          </section>
+            </GlassCard>
 
-          {/* Subscription */}
-          <section className="console-panel">
-            <div className="console-panel-header">
-              <div>
-                <h2 className="console-panel-title">{t("settings.subscription")}</h2>
-                <p className="console-panel-description">{t("settings.subscriptionDesc")}</p>
-              </div>
-              <div className="flex-none">
-                <span className="inline-flex items-center px-2.5 py-1 rounded text-xs font-semibold bg-[var(--warning)] text-white">
+            {/* Subscription */}
+            <GlassCard>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={sectionTitle}>{t("settings.subscription")}</div>
+                <span style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "3px 10px",
+                  borderRadius: 9999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: "linear-gradient(135deg, var(--console-accent, var(--accent)), color-mix(in srgb, var(--console-accent, var(--accent)) 80%, white))",
+                  color: "#fff",
+                }}>
                   {t("settings.freePlan")}
                 </span>
               </div>
-            </div>
-            <div className="console-panel-body">
-              <div className="console-kicker mb-3">{t("settings.quotasKicker")}</div>
-              <ul className="site-feature-list">
+              <p style={{ ...sectionDesc, marginBottom: 14 }}>{t("settings.subscriptionDesc")}</p>
+              <div style={{
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                color: "var(--console-text-secondary, var(--text-secondary))",
+                marginBottom: 8,
+              }}>{t("settings.quotasKicker")}</div>
+              <ul style={{
+                margin: 0,
+                paddingLeft: 16,
+                fontSize: 13,
+                lineHeight: 1.8,
+                color: "var(--console-text-primary, var(--text-primary))",
+                listStyleType: "disc",
+              }}>
                 <li>{t("settings.quota1")}</li>
                 <li>{t("settings.quota2")}</li>
                 <li>{t("settings.quota3")}</li>
               </ul>
-            </div>
-          </section>
+            </GlassCard>
 
-          {/* Danger Zone */}
-          <section className="console-panel">
-            <div className="console-panel-header">
-              <div>
-                <h2 className="console-panel-title">{t("settings.dangerZone")}</h2>
-                <p className="console-panel-description">{t("settings.dangerZoneDesc")}</p>
-              </div>
-            </div>
-            <div className="console-panel-body">
-              <div className="console-actions">
+            {/* Danger Zone */}
+            <div
+              style={{
+                background: "rgba(239,68,68,0.04)",
+                backdropFilter: "blur(20px)",
+                WebkitBackdropFilter: "blur(20px)",
+                border: "1px solid rgba(239,68,68,0.15)",
+                borderRadius: "var(--console-radius-lg, 16px)",
+                padding: 20,
+              }}
+            >
+              <div style={{ ...sectionTitle, color: "rgb(220,60,60)" }}>{t("settings.dangerZone")}</div>
+              <p style={{ ...sectionDesc, marginBottom: 16 }}>{t("settings.dangerZoneDesc")}</p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
-                  className="console-button"
                   onClick={() => void logout()}
+                  style={{
+                    padding: "7px 18px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    borderRadius: 9999,
+                    border: "1px solid var(--console-border, var(--border))",
+                    background: "var(--console-surface, rgba(255,255,255,0.06))",
+                    color: "var(--console-text-primary, var(--text-primary))",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
                 >
                   {t("settings.logout")}
                 </button>
                 <button
-                  className="console-button-danger"
                   onClick={() => setDeleteMsg(t("settings.deleteConfirm"))}
+                  style={{
+                    padding: "7px 18px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    borderRadius: 9999,
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    background: "rgba(239,68,68,0.08)",
+                    color: "rgb(220,60,60)",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
                 >
                   {t("settings.deleteData")}
                 </button>
               </div>
               {deleteMsg ? (
-                <div className="console-inline-notice is-success mt-4">{deleteMsg}</div>
+                <div style={{
+                  marginTop: 14,
+                  padding: "8px 14px",
+                  borderRadius: 10,
+                  fontSize: 13,
+                  background: "rgba(239,68,68,0.08)",
+                  color: "rgb(220,60,60)",
+                  border: "1px solid rgba(239,68,68,0.15)",
+                }}>{deleteMsg}</div>
               ) : null}
             </div>
-          </section>
+          </div>
         </div>
-      </PageTransition>
-    </PanelLayout>
+      </div>
+    </PageTransition>
   );
 }

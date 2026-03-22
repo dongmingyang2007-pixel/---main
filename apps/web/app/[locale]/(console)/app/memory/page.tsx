@@ -102,6 +102,50 @@ export default function MemoryPage() {
     await createMemory(content, category);
   };
 
+  const glassBtn: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 14px",
+    fontSize: 12,
+    fontWeight: 500,
+    borderRadius: 9999,
+    border: "1px solid var(--console-border, var(--border))",
+    background: "var(--console-surface, rgba(255,255,255,0.06))",
+    color: "var(--console-text-secondary, var(--text-secondary))",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+  };
+
+  const glassBtnPrimary: React.CSSProperties = {
+    ...glassBtn,
+    background: "linear-gradient(135deg, var(--console-accent, var(--accent)), color-mix(in srgb, var(--console-accent, var(--accent)) 80%, white))",
+    color: "#fff",
+    border: "1px solid transparent",
+  };
+
+  const viewBtnBase: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "5px 12px",
+    fontSize: 12,
+    fontWeight: 500,
+    border: "none",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    background: "transparent",
+    color: "var(--console-text-secondary, var(--text-secondary))",
+  };
+
+  const viewBtnActive: React.CSSProperties = {
+    ...viewBtnBase,
+    background: "linear-gradient(135deg, var(--console-accent, var(--accent)), color-mix(in srgb, var(--console-accent, var(--accent)) 80%, white))",
+    color: "#fff",
+  };
+
   return (
     <motion.div
       className="memory-page"
@@ -110,20 +154,48 @@ export default function MemoryPage() {
       transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
     >
       {/* ── Top bar ── */}
-      <div className="memory-topbar">
-        <div className="memory-topbar-left">
-          <span className="memory-topbar-title">{t("memory.title")}</span>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "14px 20px",
+        borderBottom: "1px solid var(--console-border, var(--border))",
+        background: "var(--console-surface, rgba(255,255,255,0.03))",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+        flexWrap: "wrap",
+        gap: 10,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{
+            fontSize: 15,
+            fontWeight: 700,
+            color: "var(--console-text-primary, var(--text-primary))",
+          }}>{t("memory.title")}</span>
           {!loading && (
-            <span className="memory-topbar-count">
+            <span style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: 9999,
+              background: "var(--console-surface, rgba(255,255,255,0.06))",
+              border: "1px solid var(--console-border, var(--border))",
+              color: "var(--console-text-secondary, var(--text-secondary))",
+            }}>
               {memoryCount}
               {t("memory.countUnit")}
             </span>
           )}
-          <div className="memory-view-toggle">
+          <div style={{
+            display: "flex",
+            borderRadius: 9999,
+            overflow: "hidden",
+            border: "1px solid var(--console-border, var(--border))",
+          }}>
             <button
               type="button"
-              className={`memory-view-btn${view === "graph" ? " active" : ""}`}
               onClick={() => setView("graph")}
+              style={view === "graph" ? viewBtnActive : viewBtnBase}
             >
               <svg
                 width="14"
@@ -145,8 +217,8 @@ export default function MemoryPage() {
             </button>
             <button
               type="button"
-              className={`memory-view-btn${view === "list" ? " active" : ""}`}
               onClick={() => setView("list")}
+              style={view === "list" ? viewBtnActive : viewBtnBase}
             >
               <svg
                 width="14"
@@ -170,10 +242,10 @@ export default function MemoryPage() {
           </div>
         </div>
 
-        <div className="memory-topbar-actions">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"
-            className="memory-action-btn"
+            style={glassBtn}
             onClick={handleExport}
           >
             <svg
@@ -194,7 +266,7 @@ export default function MemoryPage() {
           </button>
           <button
             type="button"
-            className="memory-action-btn"
+            style={glassBtn}
             onClick={handleImport}
           >
             <svg
@@ -215,7 +287,7 @@ export default function MemoryPage() {
           </button>
           <button
             type="button"
-            className="memory-action-btn primary"
+            style={glassBtnPrimary}
             onClick={() => void handleNewMemory()}
           >
             <svg
