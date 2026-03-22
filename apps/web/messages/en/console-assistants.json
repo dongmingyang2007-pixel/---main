@@ -64,7 +64,7 @@
     "title": "Version History",
     "description": "View model versions, roll back to a previous version, and compare metrics.",
     "loading": "Loading...",
-    "noVersions": "No model versions yet. Complete a training run first.",
+    "noVersions": "No model versions yet.",
     "current": "Current",
     "rollback": "Rollback",
     "rollingBack": "Rolling back...",
@@ -230,7 +230,10 @@
     },
     "modelSyncFailed": "The model changed, but assistant metadata sync failed. The page has been reloaded to the real saved state.",
     "noFiles": "No knowledge files",
-    "customPersonality": "Custom"
+    "customPersonality": "Custom",
+    "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete this assistant? This action cannot be undone.",
+    "deleteCardConfirm": "Are you sure you want to delete \"{name}\"? This action cannot be undone."
   },
   "canvas": {
     "model": "Base Model",
@@ -249,7 +252,7 @@
     "expandAdvanced": "Show advanced options",
     "collapseAdvanced": "Hide advanced options",
     "tryChat": "Try Chat",
-    "saveAndTrain": "Save & Train",
+    "saveAndTrain": "Save",
     "noDatasets": "No knowledge bases yet. Click Manage to add.",
     "noSkills": "No skills yet. Click Add.",
     "clickToRename": "Click to rename"

@@ -236,6 +236,8 @@
   "dashboard.recentChats": "最近对话",
   "dashboard.recentChatsSub": "跨项目查看最近发生的会话。",
   "dashboard.noChats": "暂无对话记录",
+  "dashboard.deleteConv": "删除对话",
+  "dashboard.deleteConvConfirm": "确定删除这个对话吗？",
   "time.justNow": "刚刚",
   "time.minutesAgo": "{n}分钟前",
   "time.hoursAgo": "{n}小时前",

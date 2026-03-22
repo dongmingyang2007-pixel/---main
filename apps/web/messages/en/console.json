@@ -236,6 +236,8 @@
   "dashboard.recentChats": "Recent Conversations",
   "dashboard.recentChatsSub": "Recent activity across all projects.",
   "dashboard.noChats": "No conversations yet",
+  "dashboard.deleteConv": "Delete conversation",
+  "dashboard.deleteConvConfirm": "Delete this conversation?",
   "time.justNow": "Just now",
   "time.minutesAgo": "{n}m ago",
   "time.hoursAgo": "{n}h ago",

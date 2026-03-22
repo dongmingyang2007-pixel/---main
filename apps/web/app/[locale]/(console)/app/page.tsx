@@ -10,7 +10,7 @@ import type {
   PipelineConfigItem,
   PipelineResponse,
 } from "@/components/console/chat-types";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiDelete } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/format-time";
 import { buildProjectDisplayMap } from "@/lib/project-display";
 
@@ -427,23 +427,61 @@ export default function DashboardPage() {
             ) : (
               <div className="dashboard-recent-list">
                 {activeProjectRecentChats.map((chat) => (
-                  <Link
+                  <div
                     key={chat.id}
-                    href={`/app/chat?project_id=${chat.projectId}&conv=${chat.id}`}
                     className="dashboard-recent-item"
+                    style={{ display: "flex", alignItems: "center" }}
                   >
-                    <div className="dashboard-recent-copy">
-                      <span className="dashboard-recent-text">
-                        {chat.title || t("dashboard.noChats")}
+                    <Link
+                      href={`/app/chat?project_id=${chat.projectId}&conv=${chat.id}`}
+                      className="dashboard-recent-item-link"
+                      style={{ display: "flex", flex: 1, minWidth: 0, alignItems: "center", textDecoration: "none", color: "inherit" }}
+                    >
+                      <div className="dashboard-recent-copy">
+                        <span className="dashboard-recent-text">
+                          {chat.title || t("dashboard.noChats")}
+                        </span>
+                        <span className="dashboard-recent-project">
+                          {projectLabels.get(chat.projectId) || chat.projectName}
+                        </span>
+                      </div>
+                      <span className="dashboard-recent-time">
+                        {formatRelativeTime(chat.updated_at, t)}
                       </span>
-                      <span className="dashboard-recent-project">
-                        {projectLabels.get(chat.projectId) || chat.projectName}
-                      </span>
-                    </div>
-                    <span className="dashboard-recent-time">
-                      {formatRelativeTime(chat.updated_at, t)}
-                    </span>
-                  </Link>
+                    </Link>
+                    <button
+                      type="button"
+                      title={t("dashboard.deleteConv")}
+                      onClick={async () => {
+                        if (!window.confirm(t("dashboard.deleteConvConfirm"))) return;
+                        try {
+                          await apiDelete(`/api/v1/chat/conversations/${chat.id}`);
+                          setRecentChats((prev) => prev.filter((c) => c.id !== chat.id));
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 4,
+                        marginLeft: 4,
+                        borderRadius: 4,
+                        color: "var(--console-text-secondary, var(--text-secondary))",
+                        opacity: 0.4,
+                        transition: "opacity 0.15s, color 0.15s",
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = "var(--console-text-secondary, var(--text-secondary))"; }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

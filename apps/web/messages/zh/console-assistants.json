@@ -64,7 +64,7 @@
     "title": "版本历史",
     "description": "查看模型版本、回滚到历史版本并对比指标。",
     "loading": "加载中...",
-    "noVersions": "尚无模型版本。请先完成训练流程。",
+    "noVersions": "尚无模型版本。",
     "current": "当前使用",
     "rollback": "回滚",
     "rollingBack": "回滚中...",
@@ -230,7 +230,10 @@
     },
     "modelSyncFailed": "模型已经切换，但助手元数据同步失败。已重新载入当前真实配置。",
     "noFiles": "暂无知识文件",
-    "customPersonality": "自定义"
+    "customPersonality": "自定义",
+    "delete": "删除",
+    "deleteConfirm": "确定要删除这个助手吗？此操作不可撤销。",
+    "deleteCardConfirm": "确定要删除「{name}」吗？此操作不可撤销。"
   },
   "canvas": {
     "model": "基座模型",
@@ -249,7 +252,7 @@
     "expandAdvanced": "展开高级选项",
     "collapseAdvanced": "收起高级选项",
     "tryChat": "试用对话",
-    "saveAndTrain": "保存并训练",
+    "saveAndTrain": "保存",
     "noDatasets": "暂无知识库，点击管理添加",
     "noSkills": "暂无技能，点击添加",
     "clickToRename": "点击修改名称"

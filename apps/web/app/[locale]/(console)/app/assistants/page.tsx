@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 
 import { PageTransition } from "@/components/console/PageTransition";
 import { GlassCard } from "@/components/console/glass";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiDelete } from "@/lib/api";
 import { useProjectSelection } from "@/lib/useProjectSelection";
 
 type Project = { id: string; name: string; description?: string; created_at: string };
@@ -131,7 +131,42 @@ export default function AssistantsPage() {
                   href={`/app/assistants/${project.id}`}
                   className="assistants-glass-card-link"
                 >
-                  <GlassCard hover className="assistants-glass-card">
+                  <GlassCard hover className="assistants-glass-card" style={{ position: "relative" }}>
+                    <button
+                      type="button"
+                      title={t("profile.delete")}
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!window.confirm(t("profile.deleteCardConfirm", { name: project.name }))) return;
+                        try {
+                          await apiDelete(`/api/v1/projects/${project.id}`);
+                          setItems((prev) => prev.filter((p) => p.id !== project.id));
+                        } catch {
+                          // ignore
+                        }
+                      }}
+                      style={{
+                        position: "absolute",
+                        top: 8,
+                        right: 8,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 4,
+                        borderRadius: 4,
+                        color: "var(--console-text-secondary, var(--text-secondary))",
+                        opacity: 0.5,
+                        transition: "opacity 0.15s, color 0.15s",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "#ef4444"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; e.currentTarget.style.color = "var(--console-text-secondary, var(--text-secondary))"; }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                       <div
                         style={{
