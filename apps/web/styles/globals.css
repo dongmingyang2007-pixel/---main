@@ -9899,9 +9899,7 @@ button {
 .memory-page {
   display: flex;
   flex-direction: column;
-  /* Break out of .console-shell-content padding and fill its full area */
-  margin: -28px;
-  height: calc(100% + 56px);
+  height: calc(100vh - 48px - 28px);
   overflow: hidden;
 }
 
@@ -9910,8 +9908,8 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-surface);
+  border-bottom: 1px solid rgba(255,255,255,0.5);
+  background: transparent;
   flex-shrink: 0;
 }
 
