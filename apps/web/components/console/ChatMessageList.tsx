@@ -13,6 +13,9 @@ import { useTranslations } from "next-intl";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 import { apiPost } from "@/lib/api";
 import {
@@ -72,7 +75,8 @@ function AnimatedMessageText({
   return (
     <div className="chat-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           a: ({ href, children }) => (
             <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--console-accent, #6366f1)", textDecoration: "underline" }}>
