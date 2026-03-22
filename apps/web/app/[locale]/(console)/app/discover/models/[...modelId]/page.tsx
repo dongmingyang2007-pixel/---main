@@ -134,10 +134,12 @@ function ModelDetailPageContent() {
           <ArrowLeftIcon />
           {backLabel}
         </Link>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 24 }}>
-          <div style={{ width: "40%", height: 20, borderRadius: 8, background: "var(--border)" }} />
-          <div style={{ width: "60%", height: 14, borderRadius: 6, background: "var(--border)" }} />
-          <div style={{ width: "80%", height: 14, borderRadius: 6, background: "var(--border)" }} />
+        <div className="model-detail-glass-wrap">
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ width: "40%", height: 20, borderRadius: 8, background: "var(--border)" }} />
+            <div style={{ width: "60%", height: 14, borderRadius: 6, background: "var(--border)" }} />
+            <div style={{ width: "80%", height: 14, borderRadius: 6, background: "var(--border)" }} />
+          </div>
         </div>
       </div>
     );
@@ -150,9 +152,11 @@ function ModelDetailPageContent() {
           <ArrowLeftIcon />
           {backLabel}
         </Link>
-        <p style={{ color: "var(--text-secondary)", marginTop: 24 }}>
-          {t("modelDetail.notFound")}
-        </p>
+        <div className="model-detail-glass-wrap">
+          <p style={{ color: "var(--text-secondary)" }}>
+            {t("modelDetail.notFound")}
+          </p>
+        </div>
       </div>
     );
   }
@@ -188,102 +192,104 @@ function ModelDetailPageContent() {
         {backLabel}
       </Link>
 
-      <div className="model-detail-header">
-        <div
-          className="model-detail-logo"
-          style={{ background: providerStyle.bg, color: "white" }}
-        >
-          {providerStyle.label}
-        </div>
-        <div>
-          <h1 className="model-detail-name">{currentModel.display_name}</h1>
-          <div className="model-detail-provider">
-            {providerDisplayLabel(currentModel.provider, currentModel.provider_display, locale, t)}
+      <div className="model-detail-glass-wrap">
+        <div className="model-detail-header">
+          <div
+            className="model-detail-logo"
+            style={{ color: "white" }}
+          >
+            {providerStyle.label}
           </div>
-          <div className="model-detail-tags">
-            {currentModel.official_category ? (
-              <span className="model-card-tag highlight">
-                {categoryLabel(currentModel.official_category_key, currentModel.official_category, locale, t)}
-              </span>
-            ) : null}
-            {currentModel.official_group ? (
-              <span className="model-card-tag">
-                {groupLabel(currentModel.official_group_key, currentModel.official_group, locale, t)}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {pickerMode ? (
-        <button
-          className={`model-detail-cta${actionable ? "" : " is-disabled"}`}
-          disabled={!actionable}
-          onClick={handleUseModel}
-        >
-          {selectableInConsole ? t("modelDetail.useModel") : t("modelDetail.browseOnly")}
-        </button>
-      ) : (
-        <div
-          className={`model-detail-status${selectableInConsole ? " is-available" : " is-unavailable"}`}
-        >
-          {statusLabel}
-        </div>
-      )}
-
-      {currentModel.description ? (
-        <div className="model-detail-section">
-          <div className="model-detail-section-title">{t("modelDetail.description")}</div>
-          <div className="model-detail-desc">{currentModel.description}</div>
-        </div>
-      ) : null}
-
-      <div className="model-detail-section">
-        <div className="model-detail-section-title">{t("modelDetail.capabilities")}</div>
-
-        <div className="model-modality-grid">
-          {sections.map((section) => (
-            <div key={section.title} className="model-modality-card">
-              <div className="model-modality-label">{section.title}</div>
-              <div className="model-modality-items">
-                {section.items.length > 0 ? section.items.map((item) => (
-                  <span key={item} className="model-modality-item supported">
-                    <CheckIcon />
-                    {labelForToken(item, t)}
-                  </span>
-                )) : (
-                  <span className="model-modality-item unsupported">
-                    {t("modelDetail.notDeclared")}
-                  </span>
-                )}
-              </div>
+          <div>
+            <h1 className="model-detail-name">{currentModel.display_name}</h1>
+            <div className="model-detail-provider">
+              {providerDisplayLabel(currentModel.provider, currentModel.provider_display, locale, t)}
             </div>
-          ))}
+            <div className="model-detail-tags">
+              {currentModel.official_category ? (
+                <span className="model-card-tag highlight">
+                  {categoryLabel(currentModel.official_category_key, currentModel.official_category, locale, t)}
+                </span>
+              ) : null}
+              {currentModel.official_group ? (
+                <span className="model-card-tag">
+                  {groupLabel(currentModel.official_group_key, currentModel.official_group, locale, t)}
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
-      </div>
 
-      {currentModel.aliases?.length ? (
+        {pickerMode ? (
+          <button
+            className={`model-detail-cta${actionable ? "" : " is-disabled"}`}
+            disabled={!actionable}
+            onClick={handleUseModel}
+          >
+            {selectableInConsole ? t("modelDetail.useModel") : t("modelDetail.browseOnly")}
+          </button>
+        ) : (
+          <div
+            className={`model-detail-status${selectableInConsole ? " is-available" : " is-unavailable"}`}
+          >
+            {statusLabel}
+          </div>
+        )}
+
+        {currentModel.description ? (
+          <div className="model-detail-section">
+            <div className="model-detail-section-title">{t("modelDetail.description")}</div>
+            <div className="model-detail-desc">{currentModel.description}</div>
+          </div>
+        ) : null}
+
         <div className="model-detail-section">
-          <div className="model-detail-section-title">{t("modelDetail.aliases")}</div>
-          <div className="model-modality-items">
-            {currentModel.aliases.map((alias) => (
-              <span key={alias} className="model-modality-item supported">
-                <CheckIcon />
-                {alias}
-              </span>
+          <div className="model-detail-section-title">{t("modelDetail.capabilities")}</div>
+
+          <div className="model-modality-grid">
+            {sections.map((section) => (
+              <div key={section.title} className="model-modality-card">
+                <div className="model-modality-label">{section.title}</div>
+                <div className="model-modality-items">
+                  {section.items.length > 0 ? section.items.map((item) => (
+                    <span key={item} className="model-modality-item supported">
+                      <CheckIcon />
+                      {labelForToken(item, t)}
+                    </span>
+                  )) : (
+                    <span className="model-modality-item unsupported">
+                      {t("modelDetail.notDeclared")}
+                    </span>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         </div>
-      ) : null}
 
-      {currentModel.official_url ? (
-        <div className="model-detail-section">
-          <div className="model-detail-section-title">{t("modelDetail.officialSource")}</div>
-          <a className="model-detail-source" href={currentModel.official_url} target="_blank" rel="noreferrer">
-            {t("modelDetail.openOfficialSource")}
-          </a>
-        </div>
-      ) : null}
+        {currentModel.aliases?.length ? (
+          <div className="model-detail-section">
+            <div className="model-detail-section-title">{t("modelDetail.aliases")}</div>
+            <div className="model-modality-items">
+              {currentModel.aliases.map((alias) => (
+                <span key={alias} className="model-modality-item supported">
+                  <CheckIcon />
+                  {alias}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {currentModel.official_url ? (
+          <div className="model-detail-section">
+            <div className="model-detail-section-title">{t("modelDetail.officialSource")}</div>
+            <a className="model-detail-source" href={currentModel.official_url} target="_blank" rel="noreferrer">
+              {t("modelDetail.openOfficialSource")}
+            </a>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

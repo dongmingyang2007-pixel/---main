@@ -10280,12 +10280,25 @@ button {
 }
 .discover-topbar-title { font-size: 17px; font-weight: 700; color: var(--text-primary); }
 .discover-search {
-  padding: 8px 14px 8px 34px; border: 1px solid var(--border); border-radius: 24px;
-  font-size: 12px; background: var(--bg-card, #fff); outline: none; width: 260px; color: var(--text-primary);
+  padding: 8px 14px 8px 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
+  border-radius: 999px;
+  font-size: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, white), var(--bg-card));
+  outline: none;
+  width: 260px;
+  color: var(--text-primary);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239a8a7a' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: 12px center;
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  box-shadow: 0 4px 12px rgba(42, 32, 24, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.discover-search:focus { border-color: var(--accent); }
+.discover-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+}
 
 .discover-tabs {
   display: flex; gap: 4px; margin-bottom: 24px;
@@ -11349,7 +11362,7 @@ button {
 
 .discover-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1.58fr);
+  grid-template-columns: 200px 1fr;
   gap: 18px;
   align-items: start;
 }
@@ -11374,22 +11387,30 @@ button {
 .discover-category-stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .discover-category-chip {
   width: 100%;
   justify-content: flex-start;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
-  background: color-mix(in srgb, var(--bg-base) 97%, white);
-  padding: 10px 12px;
+  background: transparent;
+  padding: 8px 10px;
   text-align: left;
+  font-size: 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.discover-category-chip:hover {
+  background: rgba(99,102,241,0.04);
 }
 
 .discover-category-chip.active {
-  background: color-mix(in srgb, var(--accent) 12%, white);
+  background: rgba(99,102,241,0.08);
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .discover-picker-meta {
@@ -11421,16 +11442,32 @@ button {
 }
 
 .discover-grid {
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .model-card {
   display: flex;
-  min-height: 220px;
+  min-height: 200px;
   flex-direction: column;
   border-radius: 22px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 96%, white), var(--bg-surface));
+}
+
+.model-card-logo {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border-radius: 6px;
+  font-size: 9px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #6366f1));
+}
+
+.model-card-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .model-card-btn {
@@ -11439,6 +11476,54 @@ button {
   align-self: flex-start;
   border-radius: 999px;
   padding: 8px 14px;
+}
+
+/* ── Model Detail Glass ────────────────── */
+.model-detail {
+  max-width: 800px;
+}
+
+.model-detail-glass-wrap {
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
+  border-radius: 26px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, white), var(--bg-card));
+  box-shadow: 0 18px 40px rgba(42, 32, 24, 0.05);
+  padding: 24px;
+  margin-top: 16px;
+}
+
+.model-detail-logo {
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #6366f1));
+}
+
+.model-detail-desc {
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 8%, var(--border));
+  background: color-mix(in srgb, var(--bg-base) 94%, white);
+}
+
+.model-modality-card {
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 8%, var(--border));
+  background: color-mix(in srgb, var(--bg-base) 94%, white);
+}
+
+.model-detail-source {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+}
+
+.model-detail-cta {
+  border-radius: 999px;
+}
+
+.model-detail-status {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
+  background: color-mix(in srgb, var(--bg-base) 94%, white);
 }
 
 /* ── Console Responsive: Tablet + Mobile ────── */

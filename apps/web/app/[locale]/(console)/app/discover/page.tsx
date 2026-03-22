@@ -4,6 +4,12 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { Link } from "@/i18n/navigation";
+import {
+  ConsoleEmptyState,
+  ConsolePageHeader,
+  ConsoleRailList,
+  ConsoleSectionBlock,
+} from "@/components/console/ConsolePrimitives";
 import { apiGet, isApiRequestError } from "@/lib/api";
 import { getProviderStyle } from "@/lib/model-utils";
 import {
@@ -170,63 +176,63 @@ function DiscoverPageContent() {
 
   const showPacks = !pickerMode && (effectiveTab === "all" || effectiveTab === "packs");
   const showModels = effectiveTab === "all" || effectiveTab === "models" || pickerMode;
+  const activeCategoryLabel =
+    activeCategory === "all"
+      ? t("discover.tabAll")
+      : categoryLabel(
+          activeCategory,
+          taxonomy.find((item) => item.key === activeCategory)?.label || activeCategory,
+          locale,
+          t,
+        );
+  const pickerCategoryLabel = pickerCategory
+    ? categoryLabel(pickerCategory, pickerCategory, locale, t)
+    : null;
 
   return (
     <div className="discover-page">
-      <div className="discover-topbar">
-        <h1 className="discover-topbar-title">
-          {pickerMode ? t("discover.modelsOfficial") : t("discover.title")}
-        </h1>
-        <input
-          className="discover-search"
-          type="text"
-          placeholder={t("discover.search")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
+      <ConsolePageHeader
+        eyebrow={pickerMode ? t("discover.tabModels") : t("discover.title")}
+        title={pickerMode ? t("discover.modelsOfficial") : t("discover.title")}
+        description={pickerMode ? t("discover.viewDetail") : t("discover.search")}
+        actions={
+          <input
+            className="discover-search"
+            type="text"
+            placeholder={t("discover.search")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        }
+      />
 
-      {!pickerMode ? (
-        <div className="discover-tabs">
-          {(
-            [
-              ["all", t("discover.tabAll")],
-              ["packs", t("discover.tabPacks")],
-              ["models", t("discover.tabModels")],
-            ] as [Tab, string][]
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              className={`discover-tab${effectiveTab === key ? " active" : ""}`}
-              onClick={() => setTab(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="discover-layout">
+        <ConsoleRailList
+          title={t("discover.filterTitle")}
+          description={activeCategoryLabel}
+          className="discover-filter-rail"
+        >
+          {!pickerMode ? (
+            <div className="discover-tabs discover-tabs-rail">
+              {(
+                [
+                  ["all", t("discover.tabAll")],
+                  ["packs", t("discover.tabPacks")],
+                  ["models", t("discover.tabModels")],
+                ] as [Tab, string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={`discover-tab${effectiveTab === key ? " active" : ""}`}
+                  onClick={() => setTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
-      {showPacks && (
-        <section>
-          <div className="discover-section-header">
-            <h2 className="discover-section-title">{t("discover.hotPacks")}</h2>
-          </div>
-          <div className="discover-empty-state">
-            <svg width={40} height={40} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4, marginBottom: 12 }}>
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            </svg>
-            <p>{t("discover.noPacksYet")}</p>
-          </div>
-        </section>
-      )}
-
-      {showModels && (
-        <section>
-          <div className="discover-section-header">
-            <h2 className="discover-section-title">{t("discover.modelsOfficial")}</h2>
-          </div>
-
-          <div className="discover-category-row">
+          <div className="discover-category-stack">
             <button
               className={`discover-category-chip${activeCategory === "all" ? " active" : ""}`}
               onClick={() => setActiveCategory("all")}
@@ -243,90 +249,131 @@ function DiscoverPageContent() {
               </button>
             ))}
           </div>
+        </ConsoleRailList>
 
-          {loadingModels ? (
-            <div className="discover-grid">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="model-card" style={{ minHeight: 160, opacity: 0.4 }}>
-                  <div style={{ width: "60%", height: 14, borderRadius: 6, background: "var(--border)", marginBottom: 12 }} />
-                  <div style={{ width: "80%", height: 10, borderRadius: 6, background: "var(--border)", marginBottom: 8 }} />
-                  <div style={{ width: "50%", height: 10, borderRadius: 6, background: "var(--border)" }} />
-                </div>
-              ))}
-            </div>
-          ) : errorMessage ? (
-            <div className="discover-empty-state">
-              <p>{t("discover.loadFailed")}</p>
-              <p style={{ color: "var(--text-secondary)" }}>{errorMessage}</p>
-            </div>
-          ) : filteredModels.length === 0 ? (
-            <div className="discover-empty-state">
-              <p>{t("discover.noModelsFound")}</p>
-            </div>
-          ) : (
-            <div className="discover-grid">
-              {filteredModels.map((model) => {
-                const prov = getProviderStyle(model.provider);
-                const secondaryTag = [...(model.supported_tools ?? []), ...(model.supported_features ?? [])][0];
-                const detailParams = new URLSearchParams();
-                if (pickerMode) {
-                  detailParams.set("picker", "1");
-                }
-                if (pickerCategory) {
-                  detailParams.set("category", pickerCategory);
-                }
-                if (currentModelId) {
-                  detailParams.set("current_model_id", currentModelId);
-                }
-                if (from) {
-                  detailParams.set("from", from);
-                }
-                const detailHref = `/app/discover/models/${encodeURIComponent(model.canonical_model_id)}${detailParams.size ? `?${detailParams.toString()}` : ""}`;
-
-                return (
-                  <Link
-                    key={model.canonical_model_id}
-                    href={detailHref}
-                    className="model-card"
-                  >
-                    <div className="model-card-header">
-                      <div
-                        className="model-card-logo"
-                        style={{ background: prov.bg, color: "white" }}
-                      >
-                        {prov.label}
-                      </div>
-                      <div>
-                        <div className="model-card-name">{model.display_name}</div>
-                        <div className="model-card-provider">
-                          {providerDisplayLabel(model.provider, model.provider_display, locale, t)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="model-card-tags">
-                      <span className="model-card-tag highlight">
-                        {categoryLabel(model.official_category_key, model.official_category, locale, t)}
-                      </span>
-                      {secondaryTag ? (
-                        <span className="model-card-tag">
-                          {capabilityLabel(secondaryTag, t)}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="model-card-desc">
-                      {model.description || model.display_name}
-                    </div>
-
-                    <span className="model-card-btn">{t("discover.viewDetail")}</span>
+        <div className="discover-main">
+          {pickerMode ? (
+            <ConsoleSectionBlock
+              title={pickerCategoryLabel || t("discover.modelsOfficial")}
+              description={currentModelId || t("dashboard.modelFallback")}
+              className="discover-picker-context"
+              action={
+                from ? (
+                  <Link href={from} className="dashboard-ghost-btn" data-testid="discover-picker-context">
+                    {t("discover.pickerReturn")}
                   </Link>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      )}
+                ) : (
+                  <div data-testid="discover-picker-context" />
+                )
+              }
+            >
+              <div className="discover-picker-meta">
+                <div className="discover-picker-item">
+                  <span className="discover-picker-item-label">{t("discover.pickerSlot")}</span>
+                  <strong>{pickerCategoryLabel || t("discover.tabModels")}</strong>
+                </div>
+                <div className="discover-picker-item">
+                  <span className="discover-picker-item-label">{t("discover.pickerModel")}</span>
+                  <strong>{currentModelId || t("dashboard.modelFallback")}</strong>
+                </div>
+              </div>
+            </ConsoleSectionBlock>
+          ) : null}
+
+          {showModels ? (
+            <ConsoleSectionBlock
+              title={t("discover.modelsOfficial")}
+              description={activeCategoryLabel}
+            >
+              {loadingModels ? (
+                <div className="discover-grid">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="model-card" style={{ minHeight: 160, opacity: 0.4 }}>
+                      <div style={{ width: "60%", height: 14, borderRadius: 6, background: "var(--border)", marginBottom: 12 }} />
+                      <div style={{ width: "80%", height: 10, borderRadius: 6, background: "var(--border)", marginBottom: 8 }} />
+                      <div style={{ width: "50%", height: 10, borderRadius: 6, background: "var(--border)" }} />
+                    </div>
+                  ))}
+                </div>
+              ) : errorMessage ? (
+                <ConsoleEmptyState
+                  title={t("discover.loadFailed")}
+                  description={errorMessage}
+                />
+              ) : filteredModels.length === 0 ? (
+                <ConsoleEmptyState title={t("discover.noModelsFound")} />
+              ) : (
+                <div className="discover-grid">
+                  {filteredModels.map((model) => {
+                    const prov = getProviderStyle(model.provider);
+                    const secondaryTag = [...(model.supported_tools ?? []), ...(model.supported_features ?? [])][0];
+                    const detailParams = new URLSearchParams();
+                    if (pickerMode) {
+                      detailParams.set("picker", "1");
+                    }
+                    if (pickerCategory) {
+                      detailParams.set("category", pickerCategory);
+                    }
+                    if (currentModelId) {
+                      detailParams.set("current_model_id", currentModelId);
+                    }
+                    if (from) {
+                      detailParams.set("from", from);
+                    }
+                    const detailHref = `/app/discover/models/${encodeURIComponent(model.canonical_model_id)}${detailParams.size ? `?${detailParams.toString()}` : ""}`;
+
+                    return (
+                      <Link
+                        key={model.canonical_model_id}
+                        href={detailHref}
+                        className="model-card"
+                      >
+                        <div className="model-card-header">
+                          <div
+                            className="model-card-logo"
+                            style={{ background: prov.bg, color: "white" }}
+                          >
+                            {prov.label}
+                          </div>
+                          <div>
+                            <div className="model-card-name">{model.display_name}</div>
+                            <div className="model-card-provider">
+                              {providerDisplayLabel(model.provider, model.provider_display, locale, t)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="model-card-tags">
+                          <span className="model-card-tag highlight">
+                            {categoryLabel(model.official_category_key, model.official_category, locale, t)}
+                          </span>
+                          {secondaryTag ? (
+                            <span className="model-card-tag">
+                              {capabilityLabel(secondaryTag, t)}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="model-card-desc">
+                          {model.description || model.display_name}
+                        </div>
+
+                        <span className="model-card-btn">{t("discover.viewDetail")}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </ConsoleSectionBlock>
+          ) : null}
+
+          {showPacks ? (
+            <ConsoleSectionBlock title={t("discover.hotPacks")}>
+              <ConsoleEmptyState title={t("discover.noPacksYet")} />
+            </ConsoleSectionBlock>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
