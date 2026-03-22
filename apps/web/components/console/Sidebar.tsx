@@ -119,6 +119,33 @@ export function Sidebar() {
           ))}
         </div>
 
+        {/* New assistant button */}
+        <div style={{ padding: "8px 0" }}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                href="/app/assistants/new"
+                prefetch={false}
+                className="glass-sidebar-nav-item"
+                style={{
+                  background: "var(--console-accent-soft, rgba(99,102,241,0.1))",
+                  color: "var(--console-accent, #6366f1)",
+                }}
+              >
+                <span className="glass-sidebar-icon" style={{ color: "var(--console-accent, #6366f1)" }}>
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </span>
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8}>
+              {t("sidebar.newProject")}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
         {/* Settings */}
         <div className="glass-sidebar-footer">
           <Tooltip>
@@ -200,24 +227,61 @@ export function Sidebar() {
             {/* Projects section */}
             <div className="glass-sidebar-projects">
               <div className="glass-sidebar-projects-title">
-                Projects
+                {t("sidebar.projects")}
                 {projects.length > 0 && (
                   <span className="glass-sidebar-projects-count">{projects.length}</span>
                 )}
+                <Link
+                  href="/app/assistants/new"
+                  prefetch={false}
+                  onClick={handleCollapse}
+                  style={{
+                    marginLeft: "auto",
+                    width: 20,
+                    height: 20,
+                    borderRadius: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--console-accent, #6366f1)",
+                    background: "var(--console-accent-soft, rgba(99,102,241,0.1))",
+                    textDecoration: "none",
+                    fontSize: 14,
+                    lineHeight: 1,
+                  }}
+                  title={t("sidebar.newProject")}
+                >
+                  +
+                </Link>
               </div>
               <div className="glass-sidebar-projects-list">
                 {projects.length === 0 ? (
-                  <div className="glass-sidebar-projects-empty">No projects yet</div>
+                  <Link
+                    href="/app/assistants/new"
+                    prefetch={false}
+                    onClick={handleCollapse}
+                    className="glass-sidebar-projects-empty"
+                    style={{ textDecoration: "none", color: "var(--console-text-faint, #9ca3af)" }}
+                  >
+                    {t("sidebar.noProjects")}
+                  </Link>
                 ) : (
                   projects.map((project) => (
-                    <div key={project.id} className="glass-sidebar-project-item">
+                    <Link
+                      key={project.id}
+                      href={`/app/assistants/${project.id}`}
+                      prefetch={false}
+                      onClick={handleCollapse}
+                      className="glass-sidebar-project-item"
+                      style={{ textDecoration: "none", color: "inherit" }}
+                    >
                       <span className="glass-sidebar-project-icon">
                         <FolderIcon />
                       </span>
                       <span className="glass-sidebar-project-name">
                         {displayMap.get(project.id) ?? project.name}
                       </span>
-                    </div>
+                    </Link>
                   ))
                 )}
               </div>
