@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useReducer } from "react";
+import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
@@ -189,7 +190,7 @@ export function ModelPickerModal({
 
   if (!open) return null;
 
-  return (
+  const modalContent = (
     <div className="model-picker-overlay" onClick={onClose}>
       <div className="model-picker-card" onClick={(e) => e.stopPropagation()}>
         <div className="model-picker-header">
@@ -258,4 +259,7 @@ export function ModelPickerModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return modalContent;
+  return createPortal(modalContent, document.body);
 }
