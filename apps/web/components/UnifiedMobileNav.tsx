@@ -71,20 +71,21 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex flex-col bg-[var(--bg-base)]"
+          className="fixed inset-0 z-50 flex flex-col bg-white/85 backdrop-blur-xl"
+          style={{ WebkitBackdropFilter: "blur(20px)" }}
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: -20 }}
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+          <div className="flex items-center justify-between p-4 border-b border-black/[0.06]">
             <span className="text-sm font-semibold text-[var(--text-primary)]">
               {brandName}
             </span>
             <button
               onClick={closeMenu}
-              className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              className="p-2 text-[var(--console-text-muted,var(--text-secondary))] hover:text-[var(--text-primary)]"
               aria-label={tCommon("nav.closeMenu")}
             >
               <svg
@@ -111,8 +112,8 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
                   className={clsx(
                     "flex items-center rounded-lg px-4 py-3 text-sm transition-colors",
                     pathname === item.href
-                      ? "bg-[var(--brand-soft)] text-[var(--brand-v2)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)]",
+                      ? "bg-[var(--console-accent-soft,var(--brand-soft))] text-[var(--console-accent,var(--brand-v2))] font-medium"
+                      : "text-[var(--console-text-muted,var(--text-secondary))] hover:bg-black/[0.03] hover:text-[var(--text-primary)]",
                   )}
                 >
                   {tCommon(item.key)}
@@ -129,8 +130,8 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
                   className={clsx(
                     "flex items-center justify-between rounded-lg px-4 py-3 text-sm transition-colors",
                     isConsoleActive(item.href)
-                      ? "bg-[var(--brand-soft)] text-[var(--brand-v2)] font-medium"
-                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)]",
+                      ? "bg-[var(--console-accent-soft,var(--brand-soft))] text-[var(--console-accent,var(--brand-v2))] font-medium"
+                      : "text-[var(--console-text-muted,var(--text-secondary))] hover:bg-black/[0.03] hover:text-[var(--text-primary)]",
                   )}
                 >
                   <span>{tConsole(`nav.${item.navKey}`)}</span>
@@ -144,19 +145,19 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
 
           {/* Auth Section */}
           <div className="px-4 pb-2">
-            <div className="border-t border-[var(--border)] pt-4 flex flex-col gap-1">
+            <div className="border-t border-black/[0.06] pt-4 flex flex-col gap-1">
               {loggedIn ? (
                 <>
                   <Link
                     href="/app/settings"
                     onClick={closeMenu}
-                    className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)] transition-colors"
+                    className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--console-text-muted,var(--text-secondary))] hover:bg-black/[0.03] hover:text-[var(--text-primary)] transition-colors"
                   >
                     {tCommon("user.settings")}
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)] transition-colors text-left"
+                    className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--console-text-muted,var(--text-secondary))] hover:bg-black/[0.03] hover:text-[var(--text-primary)] transition-colors text-left"
                   >
                     {tCommon("user.logout")}
                   </button>
@@ -165,7 +166,7 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
                 <Link
                   href="/login"
                   onClick={closeMenu}
-                  className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)] transition-colors"
+                  className="flex items-center rounded-lg px-4 py-3 text-sm text-[var(--console-text-muted,var(--text-secondary))] hover:bg-black/[0.03] hover:text-[var(--text-primary)] transition-colors"
                 >
                   {tCommon("user.login")}
                 </Link>
@@ -175,11 +176,11 @@ export function UnifiedMobileNav({ mode }: UnifiedMobileNavProps) {
 
           {/* Footer */}
           {mode === "console" && (
-            <div className="mt-auto p-4 border-t border-[var(--border)]">
+            <div className="mt-auto p-4 border-t border-black/[0.06]">
               <Link
                 href="/"
                 onClick={closeMenu}
-                className="block text-center text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                className="block text-center text-sm text-[var(--console-text-muted,var(--text-secondary))] hover:text-[var(--text-primary)]"
               >
                 {tCommon("user.backToSite")}
               </Link>
