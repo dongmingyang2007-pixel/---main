@@ -531,6 +531,7 @@ export default function AssistantDetailPage() {
   const projectId = Array.isArray(params.id) ? params.id[0] : params.id;
   const t = useTranslations("console-assistants");
 
+  const [modelsExpanded, setModelsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<ProfileTab>("overview");
   const [project, setProject] = useState<ProjectData | null>(null);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -680,13 +681,6 @@ export default function AssistantDetailPage() {
     }
     return catalogModelsById.get(modelId)?.display_name || formatted;
   };
-
-  const tabs: { key: ProfileTab; label: string }[] = [
-    { key: "overview", label: t("profile.tab.overview") },
-    { key: "personality", label: t("profile.tab.personality") },
-    { key: "knowledge", label: t("profile.tab.knowledge") },
-    { key: "models", label: t("profile.tab.models") },
-  ];
 
   const modeOptions: {
     key: ChatMode;
@@ -879,7 +873,7 @@ export default function AssistantDetailPage() {
         default_chat_mode: nextMode,
       });
       setProject(nextProject);
-      setActiveTab("models");
+      setModelsExpanded(true);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "Chat mode update failed");
     } finally {
@@ -929,7 +923,7 @@ export default function AssistantDetailPage() {
 
       await loadData();
       setPickerCategory(null);
-      setActiveTab("models");
+      setModelsExpanded(true);
     } catch (error) {
       await loadData();
       setPageError(error instanceof Error ? error.message : "Model change failed");
@@ -1009,15 +1003,15 @@ export default function AssistantDetailPage() {
 
   return (
     <PageTransition>
-      <div className="console-page-shell" style={{ padding: "28px 32px", maxWidth: 920 }}>
-        {/* Hero card */}
+      <div className="console-page-shell" style={{ padding: "28px 32px", maxWidth: 1120 }}>
+        {/* Compact header bar */}
         <GlassCard className="assistant-detail-hero">
-          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div className="assistant-detail-compact-header">
             <div
               style={{
-                width: 56,
-                height: 56,
-                borderRadius: "var(--console-radius-lg, 16px)",
+                width: 48,
+                height: 48,
+                borderRadius: "var(--console-radius-md, 12px)",
                 background: `linear-gradient(135deg, ${colorVal}, color-mix(in srgb, ${colorVal} 70%, white))`,
                 display: "flex",
                 alignItems: "center",
@@ -1025,18 +1019,18 @@ export default function AssistantDetailPage() {
                 flexShrink: 0,
               }}
             >
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 8V4H8" />
                 <rect x="8" y="8" width="8" height="8" rx="1" />
                 <path d="M2 12h2M20 12h2M12 2v2M12 20v2" />
                 <circle cx="12" cy="12" r="2" />
               </svg>
             </div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 500, color: "var(--console-text-secondary, var(--text-secondary))", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                  {t("title")}
-                </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h1 style={{ fontSize: 18, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))", margin: 0, whiteSpace: "nowrap" }}>
+                  {project?.name || "---"}
+                </h1>
                 <span style={{
                   fontSize: 10,
                   fontWeight: 600,
@@ -1044,55 +1038,35 @@ export default function AssistantDetailPage() {
                   borderRadius: 20,
                   background: "rgba(34,197,94,0.12)",
                   color: "#16a34a",
+                  flexShrink: 0,
                 }}>Active</span>
               </div>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))", marginBottom: 4 }}>
-                {project?.name || "---"}
-              </h1>
-              <p style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.5, marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.4, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {personalityExcerpt || t("canvas.personalityUnset")}
               </p>
-
-              {/* Stat mini cards */}
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-                <div className="assistant-detail-stat">
-                  <span className="assistant-detail-stat-val">{formatDate(project?.created_at || "")}</span>
-                  <span className="assistant-detail-stat-label">{t("graph.createdAt")}</span>
-                </div>
-                <div className="assistant-detail-stat">
-                  <span className="assistant-detail-stat-val">{conversationCount}</span>
-                  <span className="assistant-detail-stat-label">{t("profile.stat.conversations")}</span>
-                </div>
-                <div className="assistant-detail-stat">
-                  <span className="assistant-detail-stat-val">{knowledgeItems.length}</span>
-                  <span className="assistant-detail-stat-label">{t("profile.card.knowledge")}</span>
-                </div>
-              </div>
-
-              {/* Action buttons */}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Link href={`/app/chat?project_id=${projectId}`} style={{ textDecoration: "none" }}>
-                  <GlassButton variant="primary">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                    {t("profile.startChat")}
-                  </GlassButton>
-                </Link>
-                <GlassButton
-                  variant="secondary"
-                  onClick={() => {
-                    setSettingsError("");
-                    setSettingsOpen(true);
-                  }}
-                >
+            </div>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <Link href={`/app/chat?project_id=${projectId}`} style={{ textDecoration: "none" }}>
+                <GlassButton variant="primary">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                   </svg>
-                  {t("profile.settings")}
+                  {t("profile.startChat")}
                 </GlassButton>
-              </div>
+              </Link>
+              <GlassButton
+                variant="secondary"
+                onClick={() => {
+                  setSettingsError("");
+                  setSettingsOpen(true);
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                {t("profile.settings")}
+              </GlassButton>
             </div>
           </div>
         </GlassCard>
@@ -1103,238 +1077,186 @@ export default function AssistantDetailPage() {
           </div>
         ) : null}
 
-        {/* Tabs */}
-        <div className="assistant-detail-tabs">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`assistant-detail-tab${activeTab === tab.key ? " is-active" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {/* Three-column body grid */}
+        <div className="assistant-detail-body-grid">
+          {/* Left column: Personality + Knowledge */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Personality card */}
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
+                <button
+                  type="button"
+                  className="assistant-detail-action-link"
+                  onClick={() => {
+                    setSettingsError("");
+                    setSettingsOpen(true);
+                  }}
+                >
+                  {t("profile.edit")}
+                </button>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--console-accent, #6366f1)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: 6,
+                }}>
+                  {meta.tags.length > 0
+                    ? meta.tags.join(", ")
+                    : t("profile.customPersonality")}
+                </div>
+                <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.6, whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
+                  {meta.personality || t("canvas.personalityUnset")}
+                </div>
+              </div>
+            </GlassCard>
 
-        {/* Overview tab */}
-        {activeTab === "overview" ? (
-          <div className="assistant-detail-overview-grid">
-            <div className="assistant-detail-overview-left">
-              {/* Personality card */}
-              <GlassCard>
-                <div className="assistant-detail-section-header">
-                  <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
-                  <button
-                    type="button"
-                    className="assistant-detail-action-link"
-                    onClick={() => {
-                      setActiveTab("personality");
-                      setSettingsError("");
-                      setSettingsOpen(true);
-                    }}
-                  >
-                    {t("profile.edit")}
-                  </button>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <div style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: "var(--console-accent, #6366f1)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                    marginBottom: 6,
-                  }}>
-                    {meta.tags.length > 0
-                      ? meta.tags.join(", ")
-                      : t("profile.customPersonality")}
+            {/* Knowledge card */}
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
+                <button
+                  type="button"
+                  className="assistant-detail-action-link"
+                  onClick={openKnowledgeManager}
+                >
+                  {t("profile.manage")}
+                </button>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                {knowledgeItems.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", textAlign: "center", padding: "12px 0" }}>
+                    {t("profile.noFiles")}
                   </div>
-                  <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.6 }}>
-                    {personalityExcerpt || t("canvas.personalityUnset")}
+                ) : (
+                  <div className="assistant-knowledge-list">
+                    {knowledgeItems.slice(0, 5).map((item) => (
+                      <a
+                        key={item.id}
+                        href={item.download_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="assistant-knowledge-item"
+                      >
+                        <span className="assistant-knowledge-name">{item.filename}</span>
+                        <span className="assistant-knowledge-size">
+                          {formatFileSize(item.size_bytes)}
+                        </span>
+                      </a>
+                    ))}
+                    {knowledgeItems.length > 5 ? (
+                      <button
+                        type="button"
+                        className="assistant-detail-action-link"
+                        style={{ marginTop: 4, fontSize: 11 }}
+                        onClick={openKnowledgeManager}
+                      >
+                        +{knowledgeItems.length - 5} more...
+                      </button>
+                    ) : null}
                   </div>
-                </div>
-              </GlassCard>
+                )}
+              </div>
+            </GlassCard>
+          </div>
 
-              {/* Model Pipeline card */}
-              <GlassCard>
-                <div className="assistant-detail-section-header">
-                  <div>
-                    <h3 className="assistant-detail-section-title">{t("profile.card.models")}</h3>
-                    <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>{t("profile.defaultMode")}</p>
-                  </div>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ marginBottom: 12 }}>
-                    <span className="profile-model-badge">
-                      {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
-                    </span>
-                  </div>
-                  {modelRows.map((row) => (
-                    <div key={row.key} className="profile-model-row" data-testid={`assistant-model-row-${row.key}`}>
-                      <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
-                      <div className="profile-model-info">
-                        <div className="profile-model-label">{row.label}</div>
-                        <div className="profile-model-name-row">
-                          <div className="profile-model-name">{displayModelName(row.modelId)}</div>
-                          {!row.changeable && row.statusLabel ? (
-                            <span className="profile-model-badge">{row.statusLabel}</span>
-                          ) : null}
-                        </div>
-                        {row.helperText ? (
-                          <div className="profile-model-helper">{row.helperText}</div>
-                        ) : null}
-                      </div>
-                      {row.changeable ? (
-                        <button
-                          type="button"
-                          className="assistant-detail-action-link"
-                          data-testid={`assistant-model-change-${row.key}`}
-                          onClick={() => {
-                            setActiveTab("models");
-                            setPickerCategory(row.changeTargetType || null);
-                          }}
-                        >
-                          {t("profile.change")}
-                        </button>
+          {/* Center column: Model Pipeline */}
+          <GlassCard>
+            <div className="assistant-detail-section-header">
+              <div>
+                <h3 className="assistant-detail-section-title">{t("profile.card.models")}</h3>
+              </div>
+              <span className="profile-model-badge">
+                {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
+              </span>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              {/* Show current default mode's model rows */}
+              {(project?.default_chat_mode === "omni_realtime"
+                ? omniModeRows
+                : project?.default_chat_mode === "synthetic_realtime"
+                  ? syntheticModeRows
+                  : standardModeRows
+              ).map((row) => (
+                <div key={row.key} className="profile-model-row" data-testid={`assistant-model-row-${row.key}`}>
+                  <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
+                  <div className="profile-model-info">
+                    <div className="profile-model-label">{row.shortLabel || row.label}</div>
+                    <div className="profile-model-name-row">
+                      <div className="profile-model-name">{displayModelName(row.modelId)}</div>
+                      {!row.changeable && row.statusLabel ? (
+                        <span className="profile-model-badge">{row.statusLabel}</span>
                       ) : null}
                     </div>
-                  ))}
-                </div>
-              </GlassCard>
-
-              {/* Knowledge card */}
-              <GlassCard>
-                <div className="assistant-detail-section-header">
-                  <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
-                  <button
-                    type="button"
-                    className="assistant-detail-action-link"
-                    onClick={openKnowledgeManager}
-                  >
-                    {t("profile.manage")}
-                  </button>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  {knowledgeItems.length === 0 ? (
-                    <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", textAlign: "center", padding: "16px 0" }}>
-                      {t("profile.noFiles")}
-                    </div>
-                  ) : (
-                    <div className="assistant-knowledge-list">
-                      {knowledgeItems.slice(0, 4).map((item) => (
-                        <a
-                          key={item.id}
-                          href={item.download_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="assistant-knowledge-item"
-                        >
-                          <span className="assistant-knowledge-name">{item.filename}</span>
-                          <span className="assistant-knowledge-size">
-                            {formatFileSize(item.size_bytes)}
-                          </span>
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </GlassCard>
-            </div>
-
-            <div className="assistant-detail-overview-right">
-              {/* Activity card */}
-              <GlassCard>
-                <h3 className="assistant-detail-section-title">{t("profile.card.activity")}</h3>
-                <div className="profile-stat-row" style={{ marginTop: 12 }}>
-                  <div className="profile-stat-block">
-                    <div className="profile-stat-num">{conversationCount}</div>
-                    <div className="profile-stat-label">{t("profile.stat.conversations")}</div>
                   </div>
-                  <div className="profile-stat-block">
-                    <div className="profile-stat-num">{knowledgeItems.length}</div>
-                    <div className="profile-stat-label">{t("profile.card.knowledge")}</div>
-                  </div>
-                  <div className="profile-stat-block">
-                    <div className="profile-stat-num">&mdash;</div>
-                    <div className="profile-stat-label">{t("profile.stat.hours")}</div>
-                  </div>
-                </div>
-              </GlassCard>
-            </div>
-          </div>
-        ) : null}
-
-        {/* Personality tab */}
-        {activeTab === "personality" ? (
-          <GlassCard>
-            <div className="assistant-detail-section-header">
-              <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
-              <button
-                type="button"
-                className="assistant-detail-action-link"
-                onClick={() => {
-                  setSettingsError("");
-                  setSettingsOpen(true);
-                }}
-              >
-                {t("profile.edit")}
-              </button>
-            </div>
-            <div style={{ marginTop: 12, fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-              {meta.personality || t("canvas.personalityUnset")}
-            </div>
-          </GlassCard>
-        ) : null}
-
-        {/* Knowledge tab */}
-        {activeTab === "knowledge" ? (
-          <GlassCard>
-            <div className="assistant-detail-section-header">
-              <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
-              <button
-                type="button"
-                className="assistant-detail-action-link"
-                onClick={openKnowledgeManager}
-              >
-                {t("profile.manage")}
-              </button>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              {knowledgeLoading ? (
-                <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))" }}>{t("versions.loading")}</div>
-              ) : knowledgeItems.length === 0 ? (
-                <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", textAlign: "center", padding: "16px 0" }}>
-                  {t("profile.noFiles")}
-                </div>
-              ) : (
-                <div className="assistant-knowledge-list is-detailed">
-                  {knowledgeItems.map((item) => (
-                    <a
-                      key={item.id}
-                      href={item.download_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="assistant-knowledge-item"
+                  {row.changeable ? (
+                    <button
+                      type="button"
+                      className="assistant-detail-action-link"
+                      data-testid={`assistant-model-change-${row.key}`}
+                      onClick={() => setPickerCategory(row.changeTargetType || null)}
                     >
-                      <div className="assistant-knowledge-content">
-                        <div className="assistant-knowledge-name">{item.filename}</div>
-                        <div className="assistant-knowledge-size">
-                          {formatFileSize(item.size_bytes)}
-                        </div>
-                      </div>
-                      <span className="assistant-knowledge-link">{t("graph.viewDetail")}</span>
-                    </a>
-                  ))}
+                      {t("profile.change")}
+                    </button>
+                  ) : null}
                 </div>
-              )}
+              ))}
+            </div>
+            <div style={{ marginTop: 12, borderTop: "1px solid var(--console-border, rgba(0,0,0,0.06))", paddingTop: 10 }}>
+              <button
+                type="button"
+                className="assistant-detail-action-link"
+                style={{ fontSize: 12 }}
+                onClick={() => setModelsExpanded((prev) => !prev)}
+              >
+                {modelsExpanded ? t("profile.hideAllModels") : t("profile.viewAllModels")}
+              </button>
             </div>
           </GlassCard>
-        ) : null}
 
-        {/* Models tab */}
-        {activeTab === "models" ? (
+          {/* Right column: Activity + Meta */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <GlassCard>
+              <h3 className="assistant-detail-section-title">{t("profile.card.activity")}</h3>
+              <div style={{ marginTop: 10 }}>
+                <div className="assistant-detail-compact-stat">
+                  <span className="assistant-detail-compact-stat-label">{t("profile.stat.conversations")}</span>
+                  <span className="assistant-detail-compact-stat-val">{conversationCount}</span>
+                </div>
+                <div className="assistant-detail-compact-stat">
+                  <span className="assistant-detail-compact-stat-label">{t("profile.card.knowledge")}</span>
+                  <span className="assistant-detail-compact-stat-val">{knowledgeItems.length}</span>
+                </div>
+                <div className="assistant-detail-compact-stat">
+                  <span className="assistant-detail-compact-stat-label">{t("profile.stat.hours")}</span>
+                  <span className="assistant-detail-compact-stat-val">&mdash;</span>
+                </div>
+              </div>
+            </GlassCard>
+            <GlassCard>
+              <h3 className="assistant-detail-section-title">{t("graph.createdAt")}</h3>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--console-text-primary, var(--text-primary))", marginTop: 6 }}>
+                {formatDate(project?.created_at || "")}
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, color: "var(--console-text-secondary, var(--text-secondary))" }}>
+                  {t("profile.defaultMode")}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--console-text-primary, var(--text-primary))", marginTop: 2 }}>
+                  {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        </div>
+
+        {/* Expanded full model configuration */}
+        {modelsExpanded ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
             <GlassCard>
               <div className="assistant-detail-section-header">
                 <div>

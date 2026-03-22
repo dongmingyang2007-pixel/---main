@@ -60,6 +60,7 @@
   "dateGroup.earlier": "Earlier",
   "tool.search": "Search",
   "tool.think": "Deep Think",
+  "toolbar.messages": "{count} messages",
   "stopGenerating": "Stop generating",
   "reasoningLabel": "Thinking",
   "memory.remembered": "Remembered",

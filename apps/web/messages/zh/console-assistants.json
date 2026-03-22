@@ -177,6 +177,8 @@
     "edit": "编辑",
     "change": "更换",
     "manage": "管理",
+    "viewAllModels": "查看全部模型配置",
+    "hideAllModels": "收起模型配置",
     "defaultMode": "默认对话模式",
     "stat": {
       "conversations": "对话",

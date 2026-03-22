@@ -177,6 +177,8 @@
     "edit": "Edit",
     "change": "Change",
     "manage": "Manage",
+    "viewAllModels": "View all model config",
+    "hideAllModels": "Hide model config",
     "defaultMode": "Default chat mode",
     "stat": {
       "conversations": "Conversations",
