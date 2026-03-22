@@ -6520,6 +6520,164 @@ button {
   overflow: hidden;
 }
 
+/* ── Assistants Glass Grid ──────────────────── */
+
+.assistants-glass-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.assistants-glass-create-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 140px;
+  border: 2px dashed rgba(99,102,241,0.25);
+  border-radius: var(--console-radius-lg, 16px);
+  background: transparent;
+  color: var(--console-accent, #6366f1);
+  text-decoration: none;
+  transition: border-color 150ms, background 150ms;
+  cursor: pointer;
+}
+.assistants-glass-create-card:hover {
+  border-color: rgba(99,102,241,0.5);
+  background: rgba(99,102,241,0.04);
+}
+
+.assistants-glass-card-link {
+  text-decoration: none;
+  display: block;
+}
+
+.assistants-glass-card {
+  min-height: 140px;
+  transition: box-shadow 150ms, transform 150ms;
+}
+.assistants-glass-card-link:hover .assistants-glass-card {
+  box-shadow: var(--console-shadow-raised, 0 4px 24px rgba(0,0,0,0.06));
+  transform: translateY(-1px);
+}
+
+@media (max-width: 1100px) {
+  .assistants-glass-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 800px) {
+  .assistants-glass-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+  .assistants-glass-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Assistant Detail Glass ────────────────── */
+
+.assistant-detail-hero {
+  margin-bottom: 0;
+}
+
+.assistant-detail-stat {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px;
+  border-radius: var(--console-radius-md, 12px);
+  background: rgba(99,102,241,0.04);
+  border: 1px solid rgba(99,102,241,0.08);
+  min-width: 80px;
+}
+.assistant-detail-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--console-text-primary, var(--text-primary));
+}
+.assistant-detail-stat-label {
+  font-size: 10px;
+  color: var(--console-text-secondary, var(--text-secondary));
+  margin-top: 1px;
+}
+
+.assistant-detail-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 20px 0 16px;
+  padding: 4px;
+  background: var(--console-surface, rgba(255,255,255,0.45));
+  border-radius: var(--console-radius-lg, 16px);
+  border: 1px solid var(--console-border, rgba(0,0,0,0.06));
+}
+
+.assistant-detail-tab {
+  flex: 1;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--console-text-secondary, var(--text-secondary));
+  background: transparent;
+  border: none;
+  border-radius: var(--console-radius-md, 12px);
+  cursor: pointer;
+  transition: background 150ms, color 150ms, box-shadow 150ms;
+}
+.assistant-detail-tab:hover {
+  color: var(--console-text-primary, var(--text-primary));
+  background: rgba(99,102,241,0.04);
+}
+.assistant-detail-tab.is-active {
+  background: white;
+  color: var(--console-accent, #6366f1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.assistant-detail-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 16px;
+}
+.assistant-detail-overview-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.assistant-detail-overview-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.assistant-detail-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.assistant-detail-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--console-text-primary, var(--text-primary));
+}
+.assistant-detail-action-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--console-accent, #6366f1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+  transition: opacity 150ms;
+}
+.assistant-detail-action-link:hover {
+  opacity: 0.7;
+}
+
+@media (max-width: 768px) {
+  .assistant-detail-overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Wizard: Creation Flow ──────────────────── */
 
 .wizard-shell {

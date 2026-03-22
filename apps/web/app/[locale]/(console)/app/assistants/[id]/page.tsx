@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 
 import { ModelPickerModal } from "@/components/console/ModelPickerModal";
 import { PageTransition } from "@/components/console/PageTransition";
-import { PanelLayout } from "@/components/console/PanelLayout";
+import { GlassCard, GlassButton } from "@/components/console/glass";
 import { StepIdentity } from "@/components/console/wizard/StepIdentity";
 import { StepPersonality } from "@/components/console/wizard/StepPersonality";
 import {
@@ -987,124 +987,147 @@ export default function AssistantDetailPage() {
 
   if (loading) {
     return (
-      <PanelLayout>
-        <PageTransition>
-          <div className="assistant-profile">
-            <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)" }}>
-              Loading...
-            </div>
+      <PageTransition>
+        <div className="console-page-shell" style={{ padding: "28px 32px" }}>
+          <div style={{ padding: "40px", textAlign: "center", color: "var(--console-text-secondary, var(--text-secondary))" }}>
+            Loading...
           </div>
-        </PageTransition>
-      </PanelLayout>
+        </div>
+      </PageTransition>
     );
   }
 
+  const SLOT_COLOR_MAP: Record<string, string> = {
+    llm: "var(--console-slot-brain, #6366f1)",
+    asr: "var(--console-slot-asr, #22c55e)",
+    tts: "var(--console-slot-tts, #f97316)",
+    vision: "var(--console-slot-vision, #3b82f6)",
+    realtime: "var(--console-slot-realtime, #a855f7)",
+    realtime_asr: "var(--console-slot-realtime-asr, #06b6d4)",
+    realtime_tts: "var(--console-slot-realtime-tts, #ec4899)",
+  };
+
   return (
-    <PanelLayout>
-      <PageTransition>
-        <div className="assistant-profile">
-          <div className="assistant-profile-header">
+    <PageTransition>
+      <div className="console-page-shell" style={{ padding: "28px 32px", maxWidth: 920 }}>
+        {/* Hero card */}
+        <GlassCard className="assistant-detail-hero">
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
             <div
-              className="assistant-profile-avatar"
               style={{
+                width: 56,
+                height: 56,
+                borderRadius: "var(--console-radius-lg, 16px)",
                 background: `linear-gradient(135deg, ${colorVal}, color-mix(in srgb, ${colorVal} 70%, white))`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
               }}
             >
-              <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 8V4H8" />
                 <rect x="8" y="8" width="8" height="8" rx="1" />
                 <path d="M2 12h2M20 12h2M12 2v2M12 20v2" />
                 <circle cx="12" cy="12" r="2" />
               </svg>
             </div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: "var(--console-text-secondary, var(--text-secondary))", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  {t("title")}
+                </span>
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 20,
+                  background: "rgba(34,197,94,0.12)",
+                  color: "#16a34a",
+                }}>Active</span>
+              </div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))", marginBottom: 4 }}>
+                {project?.name || "---"}
+              </h1>
+              <p style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.5, marginBottom: 16 }}>
+                {personalityExcerpt || t("canvas.personalityUnset")}
+              </p>
 
-            <div className="assistant-profile-info">
-              <h1 className="assistant-profile-name">{project?.name || "---"}</h1>
-              {personalityExcerpt ? (
-                <div className="assistant-profile-tagline">{personalityExcerpt}</div>
-              ) : null}
-              <div className="assistant-profile-meta">
-                <span className="assistant-profile-meta-item">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
+              {/* Stat mini cards */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+                <div className="assistant-detail-stat">
+                  <span className="assistant-detail-stat-val">{formatDate(project?.created_at || "")}</span>
+                  <span className="assistant-detail-stat-label">{t("graph.createdAt")}</span>
+                </div>
+                <div className="assistant-detail-stat">
+                  <span className="assistant-detail-stat-val">{conversationCount}</span>
+                  <span className="assistant-detail-stat-label">{t("profile.stat.conversations")}</span>
+                </div>
+                <div className="assistant-detail-stat">
+                  <span className="assistant-detail-stat-val">{knowledgeItems.length}</span>
+                  <span className="assistant-detail-stat-label">{t("profile.card.knowledge")}</span>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Link href={`/app/chat?project_id=${projectId}`} style={{ textDecoration: "none" }}>
+                  <GlassButton variant="primary">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    {t("profile.startChat")}
+                  </GlassButton>
+                </Link>
+                <GlassButton
+                  variant="secondary"
+                  onClick={() => {
+                    setSettingsError("");
+                    setSettingsOpen(true);
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
-                  {formatDate(project?.created_at || "")}
-                </span>
-                <span className="assistant-profile-meta-item">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  {conversationCount} {t("profile.stat.conversations")}
-                </span>
-                <span className="assistant-profile-meta-item">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <polygon points="12 6 9 12 15 12" fill="none" />
-                    <line x1="12" y1="12" x2="12" y2="18" />
-                  </svg>
-                  0 {t("profile.stat.memories")}
-                </span>
+                  {t("profile.settings")}
+                </GlassButton>
               </div>
             </div>
-
-            <div className="assistant-profile-actions">
-              <Link href={`/app/chat?project_id=${projectId}`} className="profile-btn primary">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                {t("profile.startChat")}
-              </Link>
-              <button
-                type="button"
-                className="profile-btn"
-                onClick={() => {
-                  setSettingsError("");
-                  setSettingsOpen(true);
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-                {t("profile.settings")}
-              </button>
-            </div>
           </div>
+        </GlassCard>
 
-          {pageError ? (
-            <div className="console-inline-notice is-error" style={{ marginBottom: "16px" }}>
-              {pageError}
-            </div>
-          ) : null}
-
-          <div className="assistant-profile-tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                className={`profile-tab${activeTab === tab.key ? " active" : ""}`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {pageError ? (
+          <div className="console-inline-notice is-error" style={{ marginTop: 16 }}>
+            {pageError}
           </div>
+        ) : null}
 
-          {activeTab === "overview" ? (
-            <div className="profile-grid">
-              <div className="profile-card">
-                <div className="profile-card-title">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
-                  </svg>
-                  {t("profile.card.personality")}
+        {/* Tabs */}
+        <div className="assistant-detail-tabs">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`assistant-detail-tab${activeTab === tab.key ? " is-active" : ""}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Overview tab */}
+        {activeTab === "overview" ? (
+          <div className="assistant-detail-overview-grid">
+            <div className="assistant-detail-overview-left">
+              {/* Personality card */}
+              <GlassCard>
+                <div className="assistant-detail-section-header">
+                  <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
                   <button
                     type="button"
-                    className="profile-card-action"
+                    className="assistant-detail-action-link"
                     onClick={() => {
                       setActiveTab("personality");
                       setSettingsError("");
@@ -1114,236 +1137,246 @@ export default function AssistantDetailPage() {
                     {t("profile.edit")}
                   </button>
                 </div>
-                <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "6px" }}>
-                  {meta.tags.length > 0 ? meta.tags.join(", ") : t("profile.customPersonality")}
+                <div style={{ marginTop: 12 }}>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--console-accent, #6366f1)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                    marginBottom: 6,
+                  }}>
+                    {meta.tags.length > 0
+                      ? meta.tags.join(", ")
+                      : t("profile.customPersonality")}
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.6 }}>
+                    {personalityExcerpt || t("canvas.personalityUnset")}
+                  </div>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                  {personalityExcerpt || t("canvas.personalityUnset")}
-                </div>
-              </div>
+              </GlassCard>
 
-              <div className="profile-card">
-                <div className="profile-card-title">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                  </svg>
-                  {t("profile.card.activity")}
+              {/* Model Pipeline card */}
+              <GlassCard>
+                <div className="assistant-detail-section-header">
+                  <div>
+                    <h3 className="assistant-detail-section-title">{t("profile.card.models")}</h3>
+                    <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>{t("profile.defaultMode")}</p>
+                  </div>
                 </div>
-                <div className="profile-stat-row">
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <span className="profile-model-badge">
+                      {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
+                    </span>
+                  </div>
+                  {modelRows.map((row) => (
+                    <div key={row.key} className="profile-model-row" data-testid={`assistant-model-row-${row.key}`}>
+                      <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
+                      <div className="profile-model-info">
+                        <div className="profile-model-label">{row.label}</div>
+                        <div className="profile-model-name-row">
+                          <div className="profile-model-name">{displayModelName(row.modelId)}</div>
+                          {!row.changeable && row.statusLabel ? (
+                            <span className="profile-model-badge">{row.statusLabel}</span>
+                          ) : null}
+                        </div>
+                        {row.helperText ? (
+                          <div className="profile-model-helper">{row.helperText}</div>
+                        ) : null}
+                      </div>
+                      {row.changeable ? (
+                        <button
+                          type="button"
+                          className="assistant-detail-action-link"
+                          data-testid={`assistant-model-change-${row.key}`}
+                          onClick={() => {
+                            setActiveTab("models");
+                            setPickerCategory(row.changeTargetType || null);
+                          }}
+                        >
+                          {t("profile.change")}
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </GlassCard>
+
+              {/* Knowledge card */}
+              <GlassCard>
+                <div className="assistant-detail-section-header">
+                  <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
+                  <button
+                    type="button"
+                    className="assistant-detail-action-link"
+                    onClick={openKnowledgeManager}
+                  >
+                    {t("profile.manage")}
+                  </button>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  {knowledgeItems.length === 0 ? (
+                    <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", textAlign: "center", padding: "16px 0" }}>
+                      {t("profile.noFiles")}
+                    </div>
+                  ) : (
+                    <div className="assistant-knowledge-list">
+                      {knowledgeItems.slice(0, 4).map((item) => (
+                        <a
+                          key={item.id}
+                          href={item.download_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="assistant-knowledge-item"
+                        >
+                          <span className="assistant-knowledge-name">{item.filename}</span>
+                          <span className="assistant-knowledge-size">
+                            {formatFileSize(item.size_bytes)}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </GlassCard>
+            </div>
+
+            <div className="assistant-detail-overview-right">
+              {/* Activity card */}
+              <GlassCard>
+                <h3 className="assistant-detail-section-title">{t("profile.card.activity")}</h3>
+                <div className="profile-stat-row" style={{ marginTop: 12 }}>
                   <div className="profile-stat-block">
                     <div className="profile-stat-num">{conversationCount}</div>
                     <div className="profile-stat-label">{t("profile.stat.conversations")}</div>
                   </div>
                   <div className="profile-stat-block">
-                    <div className="profile-stat-num">&mdash;</div>
-                    <div className="profile-stat-label">{t("profile.stat.memories")}</div>
+                    <div className="profile-stat-num">{knowledgeItems.length}</div>
+                    <div className="profile-stat-label">{t("profile.card.knowledge")}</div>
                   </div>
                   <div className="profile-stat-block">
                     <div className="profile-stat-num">&mdash;</div>
                     <div className="profile-stat-label">{t("profile.stat.hours")}</div>
                   </div>
                 </div>
-              </div>
-
-              <div className="profile-card">
-                <div className="profile-card-title">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="4" y="4" width="16" height="16" rx="2" />
-                    <rect x="9" y="9" width="6" height="6" />
-                    <line x1="9" y1="1" x2="9" y2="4" />
-                    <line x1="15" y1="1" x2="15" y2="4" />
-                    <line x1="9" y1="20" x2="9" y2="23" />
-                    <line x1="15" y1="20" x2="15" y2="23" />
-                    <line x1="20" y1="9" x2="23" y2="9" />
-                    <line x1="20" y1="14" x2="23" y2="14" />
-                    <line x1="1" y1="9" x2="4" y2="9" />
-                    <line x1="1" y1="14" x2="4" y2="14" />
-                  </svg>
-                  {t("profile.card.models")}
-                </div>
-                <div className="profile-mode-summary">
-                  <span className="profile-mode-summary-label">{t("profile.defaultMode")}</span>
-                  <span className="profile-model-badge">
-                    {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
-                  </span>
-                </div>
-                {modelRows.map((row) => (
-                  <div key={row.key} className="profile-model-row">
-                    <div className="profile-model-icon">{row.shortLabel}</div>
-                    <div className="profile-model-info">
-                      <div className="profile-model-label">{row.label}</div>
-                      <div className="profile-model-name-row">
-                        <div className="profile-model-name">{displayModelName(row.modelId)}</div>
-                        {!row.changeable && row.statusLabel ? (
-                          <span className="profile-model-badge">{row.statusLabel}</span>
-                        ) : null}
-                      </div>
-                      {row.helperText ? (
-                        <div className="profile-model-helper">{row.helperText}</div>
-                      ) : null}
-                    </div>
-                    {row.changeable ? (
-                      <button
-                        type="button"
-                        className="profile-model-change"
-                        onClick={() => {
-                          setActiveTab("models");
-                          setPickerCategory(row.changeTargetType || null);
-                        }}
-                      >
-                        {t("profile.change")}
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-
-              <div className="profile-card">
-                <div className="profile-card-title">
-                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                  </svg>
-                  {t("profile.card.knowledge")}
-                  <button
-                    type="button"
-                    className="profile-card-action"
-                    onClick={openKnowledgeManager}
-                  >
-                    {t("profile.manage")}
-                  </button>
-                </div>
-                {knowledgeItems.length === 0 ? (
-                  <div style={{ fontSize: "13px", color: "var(--text-secondary)", padding: "16px 0", textAlign: "center" }}>
-                    {t("profile.noFiles")}
-                  </div>
-                ) : (
-                  <div style={{ display: "grid", gap: "8px", paddingTop: "10px" }}>
-                    {knowledgeItems.slice(0, 3).map((item) => (
-                      <a
-                        key={item.id}
-                        href={item.download_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "12px",
-                          padding: "10px 12px",
-                          border: "1px solid var(--border)",
-                          borderRadius: "14px",
-                          color: "var(--text-primary)",
-                          textDecoration: "none",
-                        }}
-                      >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {item.filename}
-                        </span>
-                        <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-                          {formatFileSize(item.size_bytes)}
-                        </span>
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </GlassCard>
             </div>
-          ) : null}
+          </div>
+        ) : null}
 
-          {activeTab === "personality" ? (
-            <div style={{ padding: "24px 0", color: "var(--text-secondary)", fontSize: "13px" }}>
+        {/* Personality tab */}
+        {activeTab === "personality" ? (
+          <GlassCard>
+            <div className="assistant-detail-section-header">
+              <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
+              <button
+                type="button"
+                className="assistant-detail-action-link"
+                onClick={() => {
+                  setSettingsError("");
+                  setSettingsOpen(true);
+                }}
+              >
+                {t("profile.edit")}
+              </button>
+            </div>
+            <div style={{ marginTop: 12, fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
               {meta.personality || t("canvas.personalityUnset")}
             </div>
-          ) : null}
+          </GlassCard>
+        ) : null}
 
-          {activeTab === "knowledge" ? (
-            <div style={{ padding: "24px 0" }}>
+        {/* Knowledge tab */}
+        {activeTab === "knowledge" ? (
+          <GlassCard>
+            <div className="assistant-detail-section-header">
+              <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
+              <button
+                type="button"
+                className="assistant-detail-action-link"
+                onClick={openKnowledgeManager}
+              >
+                {t("profile.manage")}
+              </button>
+            </div>
+            <div style={{ marginTop: 12 }}>
               {knowledgeLoading ? (
-                <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>{t("versions.loading")}</div>
+                <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))" }}>{t("versions.loading")}</div>
               ) : knowledgeItems.length === 0 ? (
-                <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>{t("profile.noFiles")}</div>
+                <div style={{ fontSize: 13, color: "var(--console-text-secondary, var(--text-secondary))", textAlign: "center", padding: "16px 0" }}>
+                  {t("profile.noFiles")}
+                </div>
               ) : (
-                <div style={{ display: "grid", gap: "10px" }}>
+                <div className="assistant-knowledge-list is-detailed">
                   {knowledgeItems.map((item) => (
                     <a
                       key={item.id}
                       href={item.download_url}
                       target="_blank"
                       rel="noreferrer"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "16px",
-                        padding: "14px 16px",
-                        border: "1px solid var(--border)",
-                        borderRadius: "18px",
-                        textDecoration: "none",
-                        color: "var(--text-primary)",
-                      }}
+                      className="assistant-knowledge-item"
                     >
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: "14px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {item.filename}
-                        </div>
-                        <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                      <div className="assistant-knowledge-content">
+                        <div className="assistant-knowledge-name">{item.filename}</div>
+                        <div className="assistant-knowledge-size">
                           {formatFileSize(item.size_bytes)}
                         </div>
                       </div>
-                      <span style={{ fontSize: "12px", color: "var(--accent)", fontWeight: 600 }}>{t("graph.viewDetail")}</span>
+                      <span className="assistant-knowledge-link">{t("graph.viewDetail")}</span>
                     </a>
                   ))}
                 </div>
               )}
             </div>
-          ) : null}
+          </GlassCard>
+        ) : null}
 
-          {activeTab === "models" ? (
-            <div style={{ padding: "24px 0", display: "grid", gap: "12px" }}>
-              <div className="profile-mode-section">
-                <div className="profile-mode-section-header">
-                  <div className="profile-card-title" style={{ marginBottom: 0 }}>
-                    {t("profile.defaultMode")}
-                  </div>
-                  {modeSaving ? (
-                    <span className="profile-model-helper">{t("wizard.submitting")}</span>
-                  ) : null}
-                </div>
-                <div className="profile-mode-grid">
-                  {modeOptions.map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      className={`profile-mode-card${project?.default_chat_mode === option.key ? " is-active" : ""}${option.disabled ? " is-disabled" : ""}`}
-                      onClick={() => void handleDefaultChatModeSelect(option.key)}
-                      disabled={modeSaving || option.disabled}
-                    >
-                      <div className="profile-mode-card-title-row">
-                        <div className="profile-mode-card-title">{option.title}</div>
-                        {project?.default_chat_mode === option.key ? (
-                          <span className="profile-model-badge">{t("profile.mode.defaultBadge")}</span>
-                        ) : null}
-                      </div>
-                      <div className="profile-mode-card-desc">{option.description}</div>
-                      {option.helperText ? (
-                        <div className="profile-model-helper">{option.helperText}</div>
-                      ) : null}
-                    </button>
-                  ))}
+        {/* Models tab */}
+        {activeTab === "models" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <div>
+                  <h3 className="assistant-detail-section-title">{t("profile.defaultMode")}</h3>
+                  {modeSaving ? <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>{t("wizard.submitting")}</p> : null}
                 </div>
               </div>
+              <div className="profile-mode-grid" style={{ marginTop: 12 }}>
+                {modeOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={`profile-mode-card${project?.default_chat_mode === option.key ? " is-active" : ""}${option.disabled ? " is-disabled" : ""}`}
+                    onClick={() => void handleDefaultChatModeSelect(option.key)}
+                    disabled={modeSaving || option.disabled}
+                  >
+                    <div className="profile-mode-card-title-row">
+                      <div className="profile-mode-card-title">{option.title}</div>
+                      {project?.default_chat_mode === option.key ? (
+                        <span className="profile-model-badge">{t("profile.mode.defaultBadge")}</span>
+                      ) : null}
+                    </div>
+                    <div className="profile-mode-card-desc">{option.description}</div>
+                    {option.helperText ? (
+                      <div className="profile-model-helper">{option.helperText}</div>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </GlassCard>
 
-              <div className="profile-mode-section">
-                <div className="profile-mode-section-header">
-                  <div className="profile-card-title" style={{ marginBottom: 0 }}>
-                    {t("profile.mode.standard")}
-                  </div>
-                  <div className="profile-model-helper">{t("profile.mode.standardDesc")}</div>
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <div>
+                  <h3 className="assistant-detail-section-title">{t("profile.mode.standard")}</h3>
+                  <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>{t("profile.mode.standardDesc")}</p>
                 </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
                 {standardModeRows.map((row) => (
                   <div key={row.key} className="profile-model-row">
-                    <div className="profile-model-icon">{row.shortLabel}</div>
+                    <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
                     <div className="profile-model-info">
                       <div className="profile-model-label">{row.label}</div>
                       <div className="profile-model-name-row">
@@ -1359,7 +1392,8 @@ export default function AssistantDetailPage() {
                     {row.changeable ? (
                       <button
                         type="button"
-                        className="profile-model-change"
+                        className="assistant-detail-action-link"
+                        data-testid={`assistant-model-change-${row.key}`}
                         onClick={() => setPickerCategory(row.changeTargetType || null)}
                       >
                         {t("profile.change")}
@@ -1368,17 +1402,19 @@ export default function AssistantDetailPage() {
                   </div>
                 ))}
               </div>
+            </GlassCard>
 
-              <div className="profile-mode-section">
-                <div className="profile-mode-section-header">
-                  <div className="profile-card-title" style={{ marginBottom: 0 }}>
-                    {t("profile.mode.omni")}
-                  </div>
-                  <div className="profile-model-helper">{t("profile.mode.omniDesc")}</div>
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <div>
+                  <h3 className="assistant-detail-section-title">{t("profile.mode.omni")}</h3>
+                  <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>{t("profile.mode.omniDesc")}</p>
                 </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
                 {omniModeRows.map((row) => (
                   <div key={row.key} className="profile-model-row">
-                    <div className="profile-model-icon">{row.shortLabel}</div>
+                    <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
                     <div className="profile-model-info">
                       <div className="profile-model-label">{row.label}</div>
                       <div className="profile-model-name-row">
@@ -1390,7 +1426,8 @@ export default function AssistantDetailPage() {
                     </div>
                     <button
                       type="button"
-                      className="profile-model-change"
+                      className="assistant-detail-action-link"
+                      data-testid={`assistant-model-change-${row.key}`}
                       onClick={() => setPickerCategory(row.changeTargetType || null)}
                     >
                       {t("profile.change")}
@@ -1398,23 +1435,26 @@ export default function AssistantDetailPage() {
                   </div>
                 ))}
               </div>
+            </GlassCard>
 
-              <div className="profile-mode-section">
-                <div className="profile-mode-section-header">
-                  <div className="profile-card-title" style={{ marginBottom: 0 }}>
-                    {t("profile.mode.synthetic")}
-                  </div>
-                  <div className="profile-model-helper">
+            <GlassCard>
+              <div className="assistant-detail-section-header">
+                <div>
+                  <h3 className="assistant-detail-section-title">{t("profile.mode.synthetic")}</h3>
+                  <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", marginTop: 2 }}>
                     {llmSupportsBuiltInVision
                       ? t("profile.mode.syntheticDesc")
                       : t("profile.mode.syntheticRequiresVision", {
                           model: displayModelName(llmModelId),
-                        })}
-                  </div>
+                        })
+                    }
+                  </p>
                 </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
                 {syntheticModeRows.map((row) => (
                   <div key={row.key} className="profile-model-row">
-                    <div className="profile-model-icon">{row.shortLabel}</div>
+                    <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
                     <div className="profile-model-info">
                       <div className="profile-model-label">{row.label}</div>
                       <div className="profile-model-name-row">
@@ -1430,7 +1470,8 @@ export default function AssistantDetailPage() {
                     {row.changeable ? (
                       <button
                         type="button"
-                        className="profile-model-change"
+                        className="assistant-detail-action-link"
+                        data-testid={`assistant-model-change-${row.key}`}
                         onClick={() => setPickerCategory(row.changeTargetType || null)}
                       >
                         {t("profile.change")}
@@ -1439,61 +1480,61 @@ export default function AssistantDetailPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          ) : null}
+            </GlassCard>
+          </div>
+        ) : null}
 
-          {settingsOpen ? (
-            <SettingsDialog
-              initialState={settingsInitialState}
-              saving={settingsSaving}
-              errorMessage={settingsError}
-              onOpenChange={setSettingsOpen}
-              onSave={saveSettings}
-            />
-          ) : null}
-
-          {knowledgeOpen ? (
-            <KnowledgeDialog
-              loading={knowledgeLoading}
-              uploading={knowledgeUploading}
-              errorMessage={knowledgeError}
-              items={knowledgeItems}
-              onOpenChange={setKnowledgeOpen}
-              onUpload={handleKnowledgeUpload}
-            />
-          ) : null}
-
-          <ModelPickerModal
-            open={pickerCategory !== null}
-            category={pickerCategory || "llm"}
-            currentModelId={
-              pickerCategory
-                ? getPipelineModelId(
-                    pipelineItems,
-                    pickerCategory,
-                    pickerCategory === "vision"
-                      ? "qwen-vl-plus"
-                      : pickerCategory === "tts"
-                        ? "cosyvoice-v1"
-                        : pickerCategory === "asr"
-                          ? "paraformer-v2"
-                          : pickerCategory === "realtime"
-                            ? DEFAULT_REALTIME_MODEL_ID
-                            : pickerCategory === "realtime_asr"
-                              ? DEFAULT_REALTIME_ASR_MODEL_ID
-                              : pickerCategory === "realtime_tts"
-                                ? DEFAULT_REALTIME_TTS_MODEL_ID
-                            : "qwen3.5-plus",
-                  )
-                : undefined
-            }
-            onClose={() => setPickerCategory(null)}
-            onSelect={(modelId) => {
-              void handleModelSelect(modelId, pickerCategory);
-            }}
+        {settingsOpen ? (
+          <SettingsDialog
+            initialState={settingsInitialState}
+            saving={settingsSaving}
+            errorMessage={settingsError}
+            onOpenChange={setSettingsOpen}
+            onSave={saveSettings}
           />
-        </div>
-      </PageTransition>
-    </PanelLayout>
+        ) : null}
+
+        {knowledgeOpen ? (
+          <KnowledgeDialog
+            loading={knowledgeLoading}
+            uploading={knowledgeUploading}
+            errorMessage={knowledgeError}
+            items={knowledgeItems}
+            onOpenChange={setKnowledgeOpen}
+            onUpload={handleKnowledgeUpload}
+          />
+        ) : null}
+
+        <ModelPickerModal
+          open={pickerCategory !== null}
+          category={pickerCategory || "llm"}
+          currentModelId={
+            pickerCategory
+              ? getPipelineModelId(
+                  pipelineItems,
+                  pickerCategory,
+                  pickerCategory === "vision"
+                    ? "qwen-vl-plus"
+                    : pickerCategory === "tts"
+                      ? "cosyvoice-v1"
+                      : pickerCategory === "asr"
+                        ? "paraformer-v2"
+                        : pickerCategory === "realtime"
+                          ? DEFAULT_REALTIME_MODEL_ID
+                          : pickerCategory === "realtime_asr"
+                            ? DEFAULT_REALTIME_ASR_MODEL_ID
+                            : pickerCategory === "realtime_tts"
+                              ? DEFAULT_REALTIME_TTS_MODEL_ID
+                          : "qwen3.5-plus",
+                )
+              : undefined
+          }
+          onClose={() => setPickerCategory(null)}
+          onSelect={(modelId) => {
+            void handleModelSelect(modelId, pickerCategory);
+          }}
+        />
+      </div>
+    </PageTransition>
   );
 }
