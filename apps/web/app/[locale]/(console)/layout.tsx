@@ -3,7 +3,6 @@
 import { ProjectProvider } from "@/lib/ProjectContext";
 import { DevModeProvider } from "@/lib/developer-mode";
 import { MobileMenuProvider } from "@/components/MobileMenuProvider";
-import { UnifiedHeader } from "@/components/UnifiedHeader";
 import { UnifiedMobileNav } from "@/components/UnifiedMobileNav";
 import { ConsoleShell } from "@/components/console/ConsoleShell";
 import { MobileTabBar } from "@/components/console/MobileTabBar";
@@ -11,6 +10,7 @@ import { CommandPalette } from "@/components/console/CommandPalette";
 import { Toaster } from "@/components/ui/toaster";
 import { ModalProvider } from "@/components/ui/modal-dialog";
 import { AuthSessionGuard } from "@/components/AuthSessionGuard";
+import { GlassTopBar, GlassStatusBar } from "@/components/console/glass";
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -19,12 +19,11 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
         <MobileMenuProvider>
           <ModalProvider>
             <div data-theme="console">
-              <UnifiedHeader />
-              <div className="console-layout-shell">
-                <ConsoleShell>
-                  {children}
-                </ConsoleShell>
-              </div>
+              <GlassTopBar />
+              <ConsoleShell>
+                {children}
+              </ConsoleShell>
+              <GlassStatusBar />
               <UnifiedMobileNav mode="console" />
               <MobileTabBar />
               <CommandPalette />
