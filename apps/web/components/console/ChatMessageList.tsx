@@ -92,6 +92,62 @@ function AnimatedMessageText({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  CollapsibleReasoning                                               */
+/* ------------------------------------------------------------------ */
+
+function CollapsibleReasoning({
+  content,
+  animate,
+  label,
+}: {
+  content: string;
+  animate: boolean;
+  label: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const previewLength = 80;
+  const isLong = content.length > previewLength;
+  const preview = isLong ? content.slice(0, previewLength) + "..." : content;
+
+  return (
+    <div className="chat-reasoning" aria-label={label}>
+      <button
+        type="button"
+        className="chat-reasoning-toggle"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <svg
+          width={12}
+          height={12}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+            transition: "transform 200ms",
+            flexShrink: 0,
+          }}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+        <span className="chat-reasoning-label">{label}</span>
+        {!expanded && isLong && (
+          <span className="chat-reasoning-preview">{preview}</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="chat-reasoning-content">
+          <AnimatedMessageText text={content} animate={animate} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 const CITATION_PATTERN = /\[ref_(\d+)\]/g;
 
 type CitationPart =
@@ -590,15 +646,11 @@ export const ChatMessageList = forwardRef<
           )}
           <div className="chat-message-stack">
             {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
-              <div className="chat-reasoning" aria-label={t("reasoningLabel")}>
-                <div className="chat-reasoning-label">{t("reasoningLabel")}</div>
-                <div className="chat-reasoning-content">
-                  <AnimatedMessageText
-                    text={msg.reasoningContent.trim()}
-                    animate={Boolean(msg.animateOnMount)}
-                  />
-                </div>
-              </div>
+              <CollapsibleReasoning
+                content={msg.reasoningContent.trim()}
+                animate={Boolean(msg.animateOnMount)}
+                label={t("reasoningLabel")}
+              />
             ) : null}
             <div className="chat-bubble">
               {msg.role === "assistant" ? (
