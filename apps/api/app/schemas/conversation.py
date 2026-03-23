@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ConversationCreate(BaseModel):
@@ -21,6 +22,7 @@ class ConversationOut(BaseModel):
 class MessageCreate(BaseModel):
     content: str
     enable_thinking: bool | None = None
+    enable_search: bool | None = None
 
 
 class MessageOut(BaseModel):
@@ -29,4 +31,5 @@ class MessageOut(BaseModel):
     role: str
     content: str
     reasoning_content: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

@@ -28,10 +28,20 @@ def test_memory_triage_settings_defaults():
     assert s.memory_triage_similarity_high == 0.90
 
 
+def test_thinking_classifier_settings_defaults():
+    s = Settings(
+        database_url="postgresql+psycopg://x:x@localhost/test",
+        jwt_secret="test-secret-that-is-long-enough-32chars",
+    )
+    assert s.thinking_classifier_model == "qwen3.5-flash"
+    assert s.thinking_classifier_min_confidence == 0.65
+
+
 from app.services.context_loader import (
     extract_personality,
     build_system_prompt,
 )
+from app.services.composed_realtime import split_text_for_realtime_tts
 
 
 def test_extract_personality_from_description():
@@ -68,6 +78,21 @@ def test_build_system_prompt_with_knowledge():
         knowledge_chunks=["降噪技术文档片段"],
     )
     assert "降噪技术文档片段" in prompt
+
+
+def test_split_text_for_realtime_tts_splits_chinese_sentences_without_spaces():
+    assert split_text_for_realtime_tts("你好。请看这里！还有一个问题？") == [
+        "你好。",
+        "请看这里！",
+        "还有一个问题？",
+    ]
+
+
+def test_split_text_for_realtime_tts_keeps_decimal_or_inline_periods_inside_segment():
+    assert split_text_for_realtime_tts("Version 2.1 is stable. Next step starts now.") == [
+        "Version 2.1 is stable.",
+        "Next step starts now.",
+    ]
 
 
 def test_build_system_prompt_with_recent_messages():
@@ -205,6 +230,56 @@ def test_session_maps_audio_transcript_delta_to_response_text():
     assert session._current_response_text == "你好"
 
 
+def test_session_deduplicates_audio_transcript_delta_when_text_delta_already_arrived():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.delta",
+                "delta": "你好",
+            }
+        )
+    )
+
+    assert first == [{"type": "response.text", "text": "你好"}]
+    assert second == []
+    assert session._current_response_text == "你好"
+
+
+def test_session_switches_to_text_stream_without_repeating_audio_transcript_prefix():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.delta",
+                "delta": "你",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好",
+            }
+        )
+    )
+
+    assert first == [{"type": "response.text", "text": "你"}]
+    assert second == [{"type": "response.text", "text": "好"}]
+    assert session._current_response_text == "你好"
+
+
 def test_session_accumulates_partial_user_transcripts():
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
 
@@ -269,6 +344,30 @@ def test_session_backfills_audio_transcript_done_when_delta_was_missing():
 
     assert outgoing == [{"type": "response.text", "text": "你好，世界"}]
     assert session._current_response_text == "你好，世界"
+
+
+def test_session_audio_transcript_done_only_backfills_missing_suffix_after_text_delta():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好",
+            }
+        )
+    )
+    outgoing = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.done",
+                "transcript": "你好。",
+            }
+        )
+    )
+
+    assert outgoing == [{"type": "response.text", "text": "。"}]
+    assert session._current_response_text == "你好。"
 
 
 class _DummyUpstream:

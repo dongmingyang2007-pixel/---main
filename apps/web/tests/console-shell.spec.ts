@@ -157,6 +157,7 @@ async function stubRealtimeDictationApis(page: Page) {
       static readonly CLOSING = 2;
       static readonly CLOSED = 3;
 
+      isDictationSocket = false;
       readyState = MockWebSocket.CONNECTING;
       binaryType = "blob";
       onopen: ((event: unknown) => void) | null = null;
@@ -165,9 +166,7 @@ async function stubRealtimeDictationApis(page: Page) {
       onerror: ((event: unknown) => void) | null = null;
 
       constructor(url: string) {
-        if (!url.includes("/api/v1/realtime/dictate")) {
-          throw new Error(`Unexpected WebSocket URL: ${url}`);
-        }
+        this.isDictationSocket = url.includes("/api/v1/realtime/dictate");
         setTimeout(() => {
           this.readyState = MockWebSocket.OPEN;
           this.onopen?.({});
@@ -175,6 +174,9 @@ async function stubRealtimeDictationApis(page: Page) {
       }
 
       send(data: string | ArrayBuffer) {
+        if (!this.isDictationSocket) {
+          return;
+        }
         if (typeof data !== "string") {
           return;
         }
@@ -226,7 +228,26 @@ async function stubRealtimeDictationApis(page: Page) {
   });
 }
 
+async function setPlaywrightProjects(
+  page: Page,
+  projects: Array<{ id: string; name: string; default_chat_mode?: string }>,
+) {
+  await page.addInitScript(({ seededProjects }) => {
+    (
+      window as Window & {
+        __PLAYWRIGHT_PROJECTS__?: Array<{
+          id: string;
+          name: string;
+          default_chat_mode?: string;
+        }>;
+      }
+    ).__PLAYWRIGHT_PROJECTS__ = seededProjects;
+  }, { seededProjects: projects });
+}
+
 async function forceSelectChatProject(page: Page, projectId: string) {
+  const select = page.locator(".inline-topbar-project-select");
+  await expect(select).toBeVisible({ timeout: 10000 });
   await page.evaluate(({ nextProjectId }) => {
     const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
     if (!select) {
@@ -239,7 +260,8 @@ async function forceSelectChatProject(page: Page, projectId: string) {
       select.appendChild(option);
     }
   }, { nextProjectId: projectId });
-  await page.locator(".inline-topbar-project-select").selectOption(projectId);
+  await select.selectOption(projectId);
+  await expect(select).toHaveValue(projectId);
 }
 
 async function ensureChatConversationReady(page: Page, projectId: string) {
@@ -295,7 +317,11 @@ test.describe("Console Shell", () => {
     await page.addInitScript(() => {
       (
         window as Window & {
-          __PLAYWRIGHT_PROJECTS__?: Array<{ id: string; name: string }>;
+          __PLAYWRIGHT_PROJECTS__?: Array<{
+            id: string;
+            name: string;
+            default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+          }>;
         }
       ).__PLAYWRIGHT_PROJECTS__ = [
         {
@@ -359,6 +385,74 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".dashboard-project-card")).toHaveCount(2);
     await expect(page.locator(".dashboard-project-card").filter({ hasText: "Seed Console Project" })).toContainText("Qwen3.5-Plus");
     await expect(page.locator(".dashboard-project-card").filter({ hasText: "医生" })).toContainText("Qwen3-Omni-Flash-Realtime");
+  });
+
+  test("dashboard command center switches when selecting a different project", async ({ page }) => {
+    await page.addInitScript(() => {
+      (
+        window as Window & {
+          __PLAYWRIGHT_PROJECTS__?: Array<{
+            id: string;
+            name: string;
+            default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+          }>;
+        }
+      ).__PLAYWRIGHT_PROJECTS__ = [
+        {
+          id: "proj-seed",
+          name: "Seed Console Project",
+          default_chat_mode: "standard",
+        },
+        {
+          id: "proj-doctor",
+          name: "医生",
+          default_chat_mode: "omni_realtime",
+        },
+      ];
+    });
+
+    await page.route("**/api/v1/pipeline?project_id=proj-seed", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{ model_type: "llm", model_id: "qwen3.5-plus" }],
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/pipeline?project_id=proj-doctor", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{ model_type: "realtime", model_id: "qwen3-omni-flash-realtime" }],
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations?project_id=proj-seed", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations?project_id=proj-doctor", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "conv-doctor", title: "医生建议", updated_at: "2026-03-20T12:00:00.000Z" },
+        ]),
+      });
+    });
+
+    await page.goto("/app");
+    await page.getByTestId("dashboard-project-card-proj-doctor").click();
+    await expect(page.locator(".dashboard-command-center")).toContainText("医生");
+    await expect(page.locator(".dashboard-command-center")).toContainText("Qwen3-Omni-Flash-Realtime");
   });
 
   test("StatusBar visible on desktop", async ({ page }) => {
@@ -498,6 +592,14 @@ test.describe("Console Shell", () => {
     await expect(realtimeRow).toContainText("Qwen3-Omni-Flash-Realtime");
     await expect(realtimeRow).toContainText("实时双工语音当前使用 Qwen3-Omni-Flash-Realtime");
     await expect(realtimeRow.getByRole("button", { name: "更换" })).toHaveCount(1);
+  });
+
+  test("assistant detail opens the model picker from grouped model rows", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/assistants/${handle.seedProjectId}`);
+    await page.getByTestId("assistant-model-change-realtime").click();
+    await expect(page.locator(".model-picker-title")).toContainText("实时对话");
   });
 
   test("assistant detail opens a realtime-only model picker", async ({ page }) => {
@@ -643,10 +745,11 @@ test.describe("Console Shell", () => {
   });
 
   test("chat mic button dictates into the input instead of sending immediately", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubRealtimeDictationApis(page);
 
-    await page.goto("/app/chat?project_id=proj-seed");
-    await ensureChatConversationReady(page, "proj-seed");
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.locator(".chat-mic-btn").click();
     await expect(page.locator(".chat-voice-indicator")).toContainText("听写中…再次点击完成");
     await expect.poll(async () => page.evaluate(() => (window as Window & { __lastDictationBufferSize?: number }).__lastDictationBufferSize ?? 0)).toBe(1024);
@@ -725,6 +828,61 @@ test.describe("Console Shell", () => {
     await assistantMessage.getByRole("button", { name: "朗读" }).click();
     await expect.poll(() => speechBodies.length).toBe(1);
     expect(speechBodies[0]).toEqual({ content: "Mock assistant response" });
+  });
+
+  test("assistant messages render citation anchors and source cards", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route("**/api/v1/chat/conversations/*/messages", async (route, request) => {
+      if (request.method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+
+      const conversationId = request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] || "conv-001";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "msg-source-001",
+          conversation_id: conversationId,
+          role: "assistant",
+          content: "根据公开资料，这个能力已经接入了。[ref_1]",
+          reasoning_content: null,
+          metadata_json: {
+            sources: [
+              {
+                index: 1,
+                title: "Aliyun Web Search",
+                url: "https://help.aliyun.com/zh/model-studio/web-search",
+                domain: "help.aliyun.com",
+                site_name: "Aliyun Docs",
+              },
+            ],
+          },
+          created_at: "2026-03-14T12:00:00.000Z",
+        }),
+      });
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我查一下");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-citation-anchor")).toContainText("[1]");
+    await assistantMessage.locator(".chat-citation-anchor").hover();
+    await expect(assistantMessage.locator(".chat-citation-preview")).toContainText("Aliyun Web Search");
+    await expect(assistantMessage.locator(".chat-citation-preview")).toContainText("根据公开资料，这个能力已经接入了。");
+    await expect(assistantMessage.locator(".chat-source-card")).toContainText("Aliyun Web Search");
+    await expect(assistantMessage.locator(".chat-source-card")).toContainText("Aliyun Docs · help.aliyun.com");
+    await expect(assistantMessage.locator(".chat-source-card")).toContainText(
+      "https://help.aliyun.com/zh/model-studio/web-search",
+    );
+    await expect(assistantMessage.locator(".chat-source-favicon")).toBeVisible();
+    await expect(assistantMessage.locator(".chat-source-summary")).toContainText(
+      "根据公开资料，这个能力已经接入了。",
+    );
   });
 
   test("new assistant messages render with a typewriter cursor before settling", async ({ page }) => {
@@ -979,40 +1137,20 @@ test.describe("Console Shell", () => {
 
   test("assistants page filters cards by the selected project", async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
-
-    await page.route("**/api/v1/projects", async (route) => {
-      if (route.request().method().toUpperCase() !== "GET") {
-        await route.fallback();
-        return;
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            {
-              id: "proj-seed",
-              name: "Seed Console Project",
-              description: "",
-              created_at: "2026-03-14T12:00:00.000Z",
-            },
-            {
-              id: "proj-test-a",
-              name: "测试项目A",
-              description: "",
-              created_at: "2026-03-15T12:00:00.000Z",
-            },
-            {
-              id: "proj-doctor",
-              name: "医生",
-              description: "",
-              created_at: "2026-03-16T12:00:00.000Z",
-            },
-          ],
-        }),
-      });
-    });
+    await setPlaywrightProjects(page, [
+      {
+        id: "proj-seed",
+        name: "Seed Console Project",
+      },
+      {
+        id: "proj-test-a",
+        name: "测试项目A",
+      },
+      {
+        id: "proj-doctor",
+        name: "医生",
+      },
+    ]);
 
     await page.goto("/app/assistants");
     await page.locator(".inline-topbar-project-select").selectOption("proj-test-a");
@@ -1023,34 +1161,16 @@ test.describe("Console Shell", () => {
 
   test("duplicate project names stay distinguishable in selectors", async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
-
-    await page.route("**/api/v1/projects", async (route) => {
-      if (route.request().method().toUpperCase() !== "GET") {
-        await route.fallback();
-        return;
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            {
-              id: "11111111-aaaa-4aaa-8aaa-111111111111",
-              name: "测试项目A",
-              description: "",
-              created_at: "2026-03-14T12:00:00.000Z",
-            },
-            {
-              id: "22222222-bbbb-4bbb-8bbb-222222222222",
-              name: "测试项目A",
-              description: "",
-              created_at: "2026-03-15T12:00:00.000Z",
-            },
-          ],
-        }),
-      });
-    });
+    await setPlaywrightProjects(page, [
+      {
+        id: "11111111-aaaa-4aaa-8aaa-111111111111",
+        name: "测试项目A",
+      },
+      {
+        id: "22222222-bbbb-4bbb-8bbb-222222222222",
+        name: "测试项目A",
+      },
+    ]);
 
     await page.goto("/app/assistants");
     await expect(page.locator(".inline-topbar-project-select")).toBeVisible();
@@ -1203,26 +1323,12 @@ test.describe("Console Shell", () => {
   test("assistant detail breadcrumbs use the assistant name instead of a raw uuid", async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
     const projectId = "f555d613-aaaa-4a15-8fd5-100000000001";
-
-    await page.route("**/api/v1/projects", async (route) => {
-      if (route.request().method().toUpperCase() !== "GET") {
-        await route.fallback();
-        return;
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            {
-              id: projectId,
-              name: "医生",
-            },
-          ],
-        }),
-      });
-    });
+    await setPlaywrightProjects(page, [
+      {
+        id: projectId,
+        name: "医生",
+      },
+    ]);
 
     await page.goto(`/app/assistants/${projectId}`);
     await expect(page.locator(".inline-topbar-breadcrumb")).toContainText("医生");
@@ -1351,6 +1457,15 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".rt-entry")).toHaveCount(0);
   });
 
+  test("chat workspace toolbar reflects the active mode and message count", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    const toolbarState = page.getByTestId("chat-toolbar-state").first();
+    await expect(toolbarState).toContainText("普通对话");
+    await expect(toolbarState).toContainText("0 条消息");
+  });
+
   test("chat initializes mode from the assistant default mode", async ({ page }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
@@ -1378,6 +1493,18 @@ test.describe("Console Shell", () => {
     await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("合成实时");
     await expect(page.locator(".chat-mic-btn")).toHaveCount(0);
     await expect(page.locator(".rt-entry")).toContainText("合成实时");
+  });
+
+  test("discover picker keeps the current slot and model context visible", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(
+      `/app/discover?picker=1&category=vision&current_model_id=qwen3-vl-plus&from=/app/assistants/${handle.seedProjectId}`,
+    );
+
+    await expect(page.getByTestId("discover-picker-context")).toBeVisible();
+    await expect(page.locator(".discover-picker-context")).toContainText("当前槽位");
+    await expect(page.locator(".discover-picker-context")).toContainText("qwen3-vl-plus");
   });
 
   test("chat does not create a new conversation before existing history finishes loading", async ({ page }) => {

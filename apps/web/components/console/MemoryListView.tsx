@@ -4,8 +4,16 @@ import { useState, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import {
   type MemoryNode,
+  getMemoryKind,
+  getMemoryLastUsedAt,
+  getMemoryLastUsedSource,
+  getMemoryRetrievalCount,
+  getMemorySalience,
+  getSummarySourceCount,
   isAssistantRootMemoryNode,
   isFileMemoryNode,
+  isPinnedMemoryNode,
+  isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { formatRelativeTime } from "@/lib/format-time";
 
@@ -15,25 +23,28 @@ interface MemoryListViewProps {
   onDeleteMemory: (id: string) => Promise<void>;
 }
 
-type FilterKey = "all" | "personal" | "knowledge" | "preference" | "pack";
-
-const FILTER_CATEGORIES: Record<FilterKey, string[]> = {
-  all: [],
-  personal: ["个人", "personal", "用户", "user"],
-  knowledge: ["知识", "knowledge", "事实", "fact"],
-  preference: ["偏好", "preference", "喜好", "习惯"],
-  pack: ["记忆包", "pack", "bundle"],
-};
+type FilterKey = "all" | "profile" | "preference" | "goal" | "summary" | "temporary";
 
 function getTypeClass(node: MemoryNode): string {
+  if (isSummaryMemoryNode(node)) return "summary";
+  if (isPinnedMemoryNode(node)) return "pinned";
   if (node.type === "permanent") return "permanent";
-  if (
-    node.category === "记忆包" ||
-    node.category === "pack" ||
-    node.category === "bundle"
-  )
-    return "pack";
   return "temporary";
+}
+
+function getMemoryKindLabel(kind: string | null, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    profile: t("memory.kindProfile"),
+    preference: t("memory.kindPreference"),
+    goal: t("memory.kindGoal"),
+    episodic: t("memory.kindEpisodic"),
+    fact: t("memory.kindFact"),
+    summary: t("memory.kindSummary"),
+  };
+  if (!kind) {
+    return t("memory.kindUnknown");
+  }
+  return labels[kind] || kind;
 }
 
 export default function MemoryListView({
@@ -58,17 +69,18 @@ export default function MemoryListView({
   const filteredNodes = useMemo(() => {
     let result = memoryNodes;
 
-    // Apply category filter
     if (activeFilter !== "all") {
-      const categories = FILTER_CATEGORIES[activeFilter];
-      result = result.filter((n) =>
-        categories.some(
-          (cat) => n.category.toLowerCase() === cat.toLowerCase(),
-        ),
-      );
+      result = result.filter((node) => {
+        if (activeFilter === "temporary") {
+          return node.type === "temporary";
+        }
+        if (activeFilter === "summary") {
+          return isSummaryMemoryNode(node);
+        }
+        return getMemoryKind(node) === activeFilter;
+      });
     }
 
-    // Apply search
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       result = result.filter(
@@ -89,13 +101,20 @@ export default function MemoryListView({
     () => (selectedId ? nodes.find((n) => n.id === selectedId) : null),
     [nodes, selectedId],
   );
+  const selectedKind = selectedNode ? getMemoryKind(selectedNode) : null;
+  const selectedRetrievalCount = selectedNode ? getMemoryRetrievalCount(selectedNode) : 0;
+  const selectedLastUsedAt = selectedNode ? getMemoryLastUsedAt(selectedNode) : null;
+  const selectedLastUsedSource = selectedNode ? getMemoryLastUsedSource(selectedNode) : null;
+  const selectedSalience = selectedNode ? getMemorySalience(selectedNode) : null;
+  const selectedSummaryCount = selectedNode ? getSummarySourceCount(selectedNode) : 0;
 
   const filters: { key: FilterKey; labelKey: string }[] = [
     { key: "all", labelKey: "memory.filterAll" },
-    { key: "personal", labelKey: "memory.filterPersonal" },
-    { key: "knowledge", labelKey: "memory.filterKnowledge" },
+    { key: "profile", labelKey: "memory.filterProfile" },
     { key: "preference", labelKey: "memory.filterPreference" },
-    { key: "pack", labelKey: "memory.filterPack" },
+    { key: "goal", labelKey: "memory.filterGoal" },
+    { key: "summary", labelKey: "memory.filterSummary" },
+    { key: "temporary", labelKey: "memory.filterTemporary" },
   ];
 
   const handleSave = async () => {
@@ -161,10 +180,27 @@ export default function MemoryListView({
             >
               <div className="memory-list-item-header">
                 <span className={`memory-type-dot ${getTypeClass(node)}`} />
-                <span className="memory-list-category">{node.category || node.type}</span>
+                <span className="memory-list-category">{node.category || getMemoryKindLabel(getMemoryKind(node), t)}</span>
+                {isSummaryMemoryNode(node) ? (
+                  <span className="memory-list-chip is-summary">{t("memory.summaryBadge")}</span>
+                ) : null}
+                {isPinnedMemoryNode(node) ? (
+                  <span className="memory-list-chip is-pinned">{t("memory.pinnedBadge")}</span>
+                ) : null}
+                {getMemoryRetrievalCount(node) > 0 ? (
+                  <span className="memory-list-chip">
+                    {t("memory.usedCount", { count: getMemoryRetrievalCount(node) })}
+                  </span>
+                ) : null}
                 <span className="memory-list-time">
                   {formatRelativeTime(node.updated_at, t)}
                 </span>
+              </div>
+              <div className="memory-list-meta-row">
+                <span>{getMemoryKindLabel(getMemoryKind(node), t)}</span>
+                {getMemoryLastUsedAt(node) ? (
+                  <span>{t("memory.lastUsedShort", { time: formatRelativeTime(getMemoryLastUsedAt(node) || node.updated_at, t) })}</span>
+                ) : null}
               </div>
               <div className="memory-list-content">{node.content}</div>
             </div>
@@ -182,11 +218,20 @@ export default function MemoryListView({
               <div className="memory-detail-header-row">
                 <span className={`memory-type-dot ${getTypeClass(selectedNode)}`} />
                 <span className="memory-detail-category">
-                  {selectedNode.category || selectedNode.type}
+                  {selectedNode.category || getMemoryKindLabel(selectedKind, t)}
                 </span>
                 <span className="memory-detail-type-badge">
-                  {selectedNode.type === "permanent" ? "permanent" : "temporary"}
+                  {selectedNode.type === "permanent" ? t("memory.permanentLabel") : t("memory.temporaryLabel")}
                 </span>
+                <span className="memory-detail-type-badge">
+                  {getMemoryKindLabel(selectedKind, t)}
+                </span>
+                {isSummaryMemoryNode(selectedNode) ? (
+                  <span className="memory-detail-type-badge is-summary">{t("memory.summaryBadge")}</span>
+                ) : null}
+                {isPinnedMemoryNode(selectedNode) ? (
+                  <span className="memory-detail-type-badge is-pinned">{t("memory.pinnedBadge")}</span>
+                ) : null}
               </div>
               <div className="memory-detail-time">
                 {t("memory.created")}: {formatRelativeTime(selectedNode.created_at, t)}
@@ -207,6 +252,45 @@ export default function MemoryListView({
                 <div className="memory-detail-text">{selectedNode.content}</div>
               )}
             </div>
+
+            <div className="memory-detail-metrics">
+              <div className="memory-detail-metric-card">
+                <div className="memory-detail-metric-label">{t("memory.salience")}</div>
+                <div className="memory-detail-metric-value">
+                  {selectedSalience !== null ? `${Math.round(selectedSalience * 100)}%` : "—"}
+                </div>
+              </div>
+              <div className="memory-detail-metric-card">
+                <div className="memory-detail-metric-label">{t("memory.retrievalCount")}</div>
+                <div className="memory-detail-metric-value">{selectedRetrievalCount}</div>
+              </div>
+              <div className="memory-detail-metric-card">
+                <div className="memory-detail-metric-label">{t("memory.lastUsed")}</div>
+                <div className="memory-detail-metric-value">
+                  {selectedLastUsedAt ? formatRelativeTime(selectedLastUsedAt, t) : "—"}
+                </div>
+              </div>
+              <div className="memory-detail-metric-card">
+                <div className="memory-detail-metric-label">{t("memory.visibility")}</div>
+                <div className="memory-detail-metric-value">
+                  {selectedNode.metadata_json?.visibility === "private"
+                    ? t("memory.visibilityPrivate")
+                    : t("memory.visibilityPublic")}
+                </div>
+              </div>
+            </div>
+
+            {selectedLastUsedSource ? (
+              <div className="memory-detail-note">
+                {t("memory.lastUsedSourceLabel")}: {selectedLastUsedSource}
+              </div>
+            ) : null}
+
+            {isSummaryMemoryNode(selectedNode) ? (
+              <div className="memory-detail-note is-summary">
+                {t("memory.summarySourceCount", { count: selectedSummaryCount })}
+              </div>
+            ) : null}
 
             {selectedNode.source_conversation_id && (
               <div className="memory-detail-source">

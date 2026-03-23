@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { apiGet } from "@/lib/api";
-import type { MemoryNode } from "@/hooks/useGraphData";
+import {
+  type MemoryNode,
+  getMemoryKind,
+  getMemoryLastUsedAt,
+  getMemoryLastUsedSource,
+  getMemoryRetrievalCount,
+  getMemorySalience,
+  getSummarySourceCount,
+  isPinnedMemoryNode,
+  isSummaryMemoryNode,
+} from "@/hooks/useGraphData";
 import { useDeveloperMode } from "@/lib/developer-mode";
 import { useModal } from "@/components/ui/modal-dialog";
 
@@ -11,7 +21,7 @@ interface MemoryDetailEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual";
+  edge_type: "auto" | "manual" | "summary" | "file" | "center";
   strength: number;
   created_at: string;
 }
@@ -54,6 +64,32 @@ function isFileNode(node: MemoryNode): boolean {
   return node.category === "file" || node.category === "文件" || node.metadata_json?.node_kind === "file";
 }
 
+function formatMemoryKindLabel(kind: string | null, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    profile: t("graph.kindProfile"),
+    preference: t("graph.kindPreference"),
+    goal: t("graph.kindGoal"),
+    episodic: t("graph.kindEpisodic"),
+    fact: t("graph.kindFact"),
+    summary: t("graph.kindSummary"),
+  };
+  if (!kind) {
+    return t("graph.kindUnknown");
+  }
+  return labels[kind] || kind;
+}
+
+function formatEdgeTypeLabel(edgeType: MemoryDetailEdge["edge_type"], t: (key: string) => string): string {
+  const labels: Record<MemoryDetailEdge["edge_type"], string> = {
+    auto: t("graph.autoEdge"),
+    manual: t("graph.manualEdge"),
+    summary: t("graph.summaryEdge"),
+    file: t("graph.fileEdge"),
+    center: t("graph.centerEdge"),
+  };
+  return labels[edgeType] || edgeType;
+}
+
 export default function NodeDetail({
   node,
   allNodes,
@@ -78,6 +114,18 @@ export default function NodeDetail({
   const [loadingAvailableFiles, setLoadingAvailableFiles] = useState(!fileNode);
   const [selectedFileId, setSelectedFileId] = useState("");
   const fileMetadata = (node.metadata_json || {}) as Record<string, unknown>;
+  const memoryKind = getMemoryKind(node);
+  const retrievalCount = getMemoryRetrievalCount(node);
+  const salience = getMemorySalience(node);
+  const lastUsedAt = getMemoryLastUsedAt(node);
+  const lastUsedSource = getMemoryLastUsedSource(node);
+  const summarySourceCount = getSummarySourceCount(node);
+  const summaryNode = isSummaryMemoryNode(node);
+  const pinned = isPinnedMemoryNode(node);
+  const visibility =
+    typeof node.metadata_json?.visibility === "string"
+      ? node.metadata_json.visibility
+      : "public";
 
   useEffect(() => {
     setEditContent(node.content);
@@ -316,6 +364,15 @@ export default function NodeDetail({
               >
                 {node.type === "permanent" ? t("graph.permanent") : t("graph.temporary")}
               </span>
+              <span className="graph-detail-badge is-neutral">
+                {formatMemoryKindLabel(memoryKind, t)}
+              </span>
+              {summaryNode ? (
+                <span className="graph-detail-badge is-summary">{t("graph.summaryNode")}</span>
+              ) : null}
+              {pinned ? (
+                <span className="graph-detail-badge is-pinned">{t("graph.pinned")}</span>
+              ) : null}
             </div>
 
             {node.source_conversation_id && (
@@ -340,6 +397,47 @@ export default function NodeDetail({
                 {formatDate(node.updated_at)}
               </span>
             </div>
+
+            <div className="graph-detail-metric-grid">
+              <div className="graph-detail-metric-card">
+                <span className="graph-detail-label">{t("graph.salience")}</span>
+                <span className="graph-detail-value">
+                  {salience !== null ? `${Math.round(salience * 100)}%` : "—"}
+                </span>
+              </div>
+              <div className="graph-detail-metric-card">
+                <span className="graph-detail-label">{t("graph.retrievalCount")}</span>
+                <span className="graph-detail-value">{retrievalCount}</span>
+              </div>
+              <div className="graph-detail-metric-card">
+                <span className="graph-detail-label">{t("graph.visibility")}</span>
+                <span className="graph-detail-value">
+                  {visibility === "private" ? t("graph.visibilityPrivate") : t("graph.visibilityPublic")}
+                </span>
+              </div>
+              <div className="graph-detail-metric-card">
+                <span className="graph-detail-label">{t("graph.lastUsedAt")}</span>
+                <span className="graph-detail-value">
+                  {lastUsedAt ? formatDate(lastUsedAt) : "—"}
+                </span>
+              </div>
+            </div>
+
+            {lastUsedSource ? (
+              <div className="graph-detail-meta">
+                <span className="graph-detail-label">{t("graph.lastUsedSource")}</span>
+                <span className="graph-detail-value">{lastUsedSource}</span>
+              </div>
+            ) : null}
+
+            {summaryNode ? (
+              <div className="graph-detail-meta">
+                <span className="graph-detail-label">{t("graph.summarySources")}</span>
+                <span className="graph-detail-value">
+                  {t("graph.summarySourcesCount", { count: summarySourceCount })}
+                </span>
+              </div>
+            ) : null}
 
             <div className="graph-detail-actions">
               <button
@@ -382,11 +480,14 @@ export default function NodeDetail({
                       edge.source_memory_id === node.id
                         ? edge.target_memory_id
                         : edge.source_memory_id;
-                    const relationLabel = edge.edge_type === "manual" ? t("graph.manualEdge") : t("graph.autoEdge");
+                    const relationLabel = formatEdgeTypeLabel(edge.edge_type, t);
                     return (
                       <div key={edge.id} className="graph-detail-related-item">
                         <span>
                           {edgeLabels.get(otherNodeId) || otherNodeId.slice(0, 8)} · {relationLabel}
+                          {typeof edge.strength === "number"
+                            ? ` · ${Math.round(edge.strength * 100)}%`
+                            : ""}
                         </span>
                         <button
                           type="button"

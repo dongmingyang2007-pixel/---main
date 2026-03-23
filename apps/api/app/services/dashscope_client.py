@@ -1,6 +1,8 @@
 import base64
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
+import re
 from typing import Any, NoReturn
+from urllib.parse import urlparse
 
 import httpx
 
@@ -20,6 +22,28 @@ class InferenceTimeoutError(UpstreamServiceError):
 class ChatCompletionResult:
     content: str
     reasoning_content: str | None = None
+    tool_calls: list["ToolCall"] = field(default_factory=list)
+    finish_reason: str | None = None
+    search_sources: list["SearchSource"] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: str
+    type: str = "function"
+
+
+@dataclass(slots=True)
+class SearchSource:
+    index: int
+    title: str
+    url: str
+    domain: str
+    site_name: str | None = None
+    summary: str | None = None
+    icon: str | None = None
 
 
 def raise_upstream_error(exc: Exception) -> NoReturn:
@@ -102,26 +126,188 @@ def _flatten_message_field(value: Any) -> str:
     return ""
 
 
+def _parse_tool_calls(value: Any) -> list[ToolCall]:
+    if not isinstance(value, list):
+        return []
+
+    tool_calls: list[ToolCall] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        function_payload = item.get("function")
+        if not isinstance(function_payload, dict):
+            continue
+        name = function_payload.get("name")
+        arguments = function_payload.get("arguments")
+        if not isinstance(name, str):
+            continue
+        tool_calls.append(
+            ToolCall(
+                id=str(item.get("id") or ""),
+                name=name,
+                arguments=arguments if isinstance(arguments, str) else "",
+                type=str(item.get("type") or "function"),
+            )
+        )
+    return tool_calls
+
+
+def _coerce_nonempty_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    flattened = _flatten_message_field(value).strip()
+    return flattened or None
+
+
+def _normalize_source_index(value: Any, fallback: int) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        match = re.search(r"(\d+)", value)
+        if match:
+            return int(match.group(1))
+    return fallback
+
+
+def _normalize_search_source(item: dict[str, Any], fallback_index: int) -> SearchSource | None:
+    url = _coerce_nonempty_text(item.get("url"))
+    title = _coerce_nonempty_text(item.get("title"))
+    if not url or not title:
+        return None
+
+    hostname = urlparse(url).hostname or ""
+    domain = hostname.lower()
+    summary = (
+        _coerce_nonempty_text(item.get("summary"))
+        or _coerce_nonempty_text(item.get("snippet"))
+        or _coerce_nonempty_text(item.get("excerpt"))
+        or _coerce_nonempty_text(item.get("description"))
+        or _coerce_nonempty_text(item.get("text"))
+        or _coerce_nonempty_text(item.get("content"))
+    )
+    return SearchSource(
+        index=_normalize_source_index(item.get("index"), fallback_index),
+        title=title,
+        url=url,
+        domain=domain,
+        site_name=_coerce_nonempty_text(item.get("site_name")) or domain or None,
+        summary=summary,
+        icon=_coerce_nonempty_text(item.get("icon")),
+    )
+
+
+def extract_search_sources(*payloads: Any) -> list[SearchSource]:
+    parsed_sources: list[SearchSource] = []
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        search_info = payload.get("search_info")
+        if isinstance(search_info, dict):
+            search_results = search_info.get("search_results")
+            if isinstance(search_results, list):
+                for index, item in enumerate(search_results, start=1):
+                    if isinstance(item, dict):
+                        normalized = _normalize_search_source(item, index)
+                        if normalized:
+                            parsed_sources.append(normalized)
+        direct_results = payload.get("search_results")
+        if isinstance(direct_results, list):
+            for index, item in enumerate(direct_results, start=1):
+                if isinstance(item, dict):
+                    normalized = _normalize_search_source(item, index)
+                    if normalized:
+                        parsed_sources.append(normalized)
+    return merge_search_sources(parsed_sources)
+
+
+def merge_search_sources(*groups: list[SearchSource]) -> list[SearchSource]:
+    merged: dict[str, SearchSource] = {}
+    for group in groups:
+        for source in group:
+            key = source.url or f"ref:{source.index}"
+            current = merged.get(key)
+            if current is None:
+                merged[key] = SearchSource(**asdict(source))
+                continue
+            if source.index > 0 and (current.index <= 0 or source.index < current.index):
+                current.index = source.index
+            if not current.title and source.title:
+                current.title = source.title
+            if not current.domain and source.domain:
+                current.domain = source.domain
+            if not current.site_name and source.site_name:
+                current.site_name = source.site_name
+            if not current.summary and source.summary:
+                current.summary = source.summary
+            if not current.icon and source.icon:
+                current.icon = source.icon
+    return sorted(
+        merged.values(),
+        key=lambda source: (
+            source.index if source.index > 0 else 10_000,
+            source.domain,
+            source.url,
+        ),
+    )
+
+
+def serialize_search_sources(sources: list[SearchSource]) -> list[dict[str, Any]]:
+    return [asdict(source) for source in merge_search_sources(sources)]
+
+
+def _build_effective_search_options(
+    *,
+    enable_search: bool | None,
+    search_options: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if enable_search is not True:
+        return search_options
+    merged = {
+        "enable_source": True,
+        "enable_citation": True,
+        "citation_format": "[ref_<number>]",
+    }
+    if search_options:
+        merged.update(search_options)
+    return merged
+
+
 def _parse_chat_completion_result(data: dict[str, Any]) -> ChatCompletionResult:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         raise UpstreamServiceError("Model API returned no choices")
 
-    message = choices[0].get("message")
+    choice = choices[0]
+    message = choice.get("message")
     if not isinstance(message, dict):
         raise UpstreamServiceError("Model API returned an invalid message payload")
 
     content = _flatten_message_field(message.get("content"))
     reasoning_content = _flatten_message_field(message.get("reasoning_content")) or None
-    return ChatCompletionResult(content=content, reasoning_content=reasoning_content)
+    tool_calls = _parse_tool_calls(message.get("tool_calls"))
+    search_sources = extract_search_sources(data, choice, message)
+    finish_reason = choice.get("finish_reason")
+    return ChatCompletionResult(
+        content=content,
+        reasoning_content=reasoning_content,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+        search_sources=search_sources,
+    )
 
 
 async def chat_completion_detailed(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     model: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> ChatCompletionResult:
     """Call DashScope chat completion API and return answer + reasoning."""
     model = model or settings.dashscope_model
@@ -132,8 +318,22 @@ async def chat_completion_detailed(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    effective_search_options = _build_effective_search_options(
+        enable_search=enable_search,
+        search_options=search_options,
+    )
     if enable_thinking is not None:
         payload["enable_thinking"] = enable_thinking
+    if enable_search is not None:
+        payload["enable_search"] = enable_search
+    if effective_search_options:
+        payload["search_options"] = effective_search_options
+    if tools:
+        payload["tools"] = tools
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    if parallel_tool_calls is not None:
+        payload["parallel_tool_calls"] = parallel_tool_calls
 
     try:
         client = get_client()
@@ -150,11 +350,16 @@ async def chat_completion_detailed(
 
 
 async def chat_completion(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     model: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> str:
     """Call DashScope chat completion API (OpenAI-compatible).
     Returns the assistant's response text."""
@@ -164,12 +369,17 @@ async def chat_completion(
         temperature=temperature,
         max_tokens=max_tokens,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
+        search_options=search_options,
+        tools=tools,
+        tool_choice=tool_choice,
+        parallel_tool_calls=parallel_tool_calls,
     )
     return result.content
 
 
 async def chat_completion_multimodal_detailed(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     *,
     model: str | None = None,
     audio_bytes: bytes | None = None,
@@ -181,6 +391,11 @@ async def chat_completion_multimodal_detailed(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> ChatCompletionResult:
     model = model or settings.dashscope_model
     formatted_messages = _build_multimodal_messages(
@@ -199,8 +414,22 @@ async def chat_completion_multimodal_detailed(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    effective_search_options = _build_effective_search_options(
+        enable_search=enable_search,
+        search_options=search_options,
+    )
     if enable_thinking is not None:
         payload["enable_thinking"] = enable_thinking
+    if enable_search is not None:
+        payload["enable_search"] = enable_search
+    if effective_search_options:
+        payload["search_options"] = effective_search_options
+    if tools:
+        payload["tools"] = tools
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    if parallel_tool_calls is not None:
+        payload["parallel_tool_calls"] = parallel_tool_calls
 
     try:
         client = get_client()
@@ -217,7 +446,7 @@ async def chat_completion_multimodal_detailed(
 
 
 async def chat_completion_multimodal(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     *,
     model: str | None = None,
     audio_bytes: bytes | None = None,
@@ -229,6 +458,11 @@ async def chat_completion_multimodal(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> str:
     result = await chat_completion_multimodal_detailed(
         messages,
@@ -242,6 +476,11 @@ async def chat_completion_multimodal(
         temperature=temperature,
         max_tokens=max_tokens,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
+        search_options=search_options,
+        tools=tools,
+        tool_choice=tool_choice,
+        parallel_tool_calls=parallel_tool_calls,
     )
     return result.content
 
@@ -296,7 +535,7 @@ async def create_embeddings_batch(
 
 
 async def omni_completion(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     audio_bytes: bytes | None = None,
     image_bytes: bytes | None = None,
     image_mime_type: str = "image/jpeg",
@@ -304,6 +543,11 @@ async def omni_completion(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> dict:
     """Call an omni model with multimodal input (audio and/or image).
 
@@ -322,6 +566,16 @@ async def omni_completion(
         temperature=temperature,
         max_tokens=max_tokens,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
+        search_options=search_options,
+        tools=tools,
+        tool_choice=tool_choice,
+        parallel_tool_calls=parallel_tool_calls,
     )
 
-    return {"text": result.content, "audio": None, "reasoning_content": result.reasoning_content}
+    return {
+        "text": result.content,
+        "audio": None,
+        "reasoning_content": result.reasoning_content,
+        "sources": serialize_search_sources(result.search_sources),
+    }

@@ -12,7 +12,10 @@ import httpx
 from app.core.config import settings
 from app.services.dashscope_client import (
     InferenceTimeoutError,
+    SearchSource,
     UpstreamServiceError,
+    _build_effective_search_options,
+    extract_search_sources,
 )
 from app.services.dashscope_http import DASHSCOPE_BASE_URL, dashscope_headers, get_client
 
@@ -24,6 +27,7 @@ class StreamChunk:
     content: str = ""
     reasoning_content: str = ""
     finish_reason: str | None = None
+    search_sources: list[SearchSource] = field(default_factory=list)
 
 
 async def chat_completion_stream(
@@ -33,6 +37,8 @@ async def chat_completion_stream(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
+    search_options: dict[str, Any] | None = None,
     timeout: float = 120.0,
 ) -> AsyncIterator[StreamChunk]:
     """Stream chat completion tokens from DashScope OpenAI-compatible API.
@@ -50,8 +56,16 @@ async def chat_completion_stream(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    effective_search_options = _build_effective_search_options(
+        enable_search=enable_search,
+        search_options=search_options,
+    )
     if enable_thinking is not None:
         payload["enable_thinking"] = enable_thinking
+    if enable_search is not None:
+        payload["enable_search"] = enable_search
+    if effective_search_options:
+        payload["search_options"] = effective_search_options
 
     try:
         client = get_client()
@@ -85,12 +99,14 @@ async def chat_completion_stream(
 
                 content = delta.get("content") or ""
                 reasoning_content = delta.get("reasoning_content") or ""
+                search_sources = extract_search_sources(data, choices[0], delta)
 
-                if content or reasoning_content or finish_reason:
+                if content or reasoning_content or finish_reason or search_sources:
                     yield StreamChunk(
                         content=content,
                         reasoning_content=reasoning_content,
                         finish_reason=finish_reason,
+                        search_sources=search_sources,
                     )
     except (InferenceTimeoutError, UpstreamServiceError):
         raise

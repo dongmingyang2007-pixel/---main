@@ -182,6 +182,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   reasoning_content?: string | null;
+  metadata_json?: Record<string, unknown>;
   created_at: string;
 };
 
@@ -1143,6 +1144,7 @@ export async function installWorkbenchApiMock(
         conversation_id: conversationId,
         role: "user",
         content: "请描述这张图片",
+        metadata_json: {},
         created_at: now,
       };
       const assistantMessage: ChatMessage = {
@@ -1150,6 +1152,7 @@ export async function installWorkbenchApiMock(
         conversation_id: conversationId,
         role: "assistant",
         content: "Mock image response",
+        metadata_json: {},
         created_at: now,
       };
       db.messagesByConversationId[conversationId] = [
@@ -1181,6 +1184,7 @@ export async function installWorkbenchApiMock(
         conversation_id: conversationId,
         role: "user",
         content: body.content || "",
+        metadata_json: {},
         created_at: now,
       };
       const assistantMessage: ChatMessage = {
@@ -1189,6 +1193,7 @@ export async function installWorkbenchApiMock(
         role: "assistant",
         content: "Mock assistant response",
         reasoning_content: body.enable_thinking ? "Mock reasoning trace" : null,
+        metadata_json: {},
         created_at: now,
       };
       db.messagesByConversationId[conversationId] = [
@@ -1292,30 +1297,6 @@ export async function installWorkbenchApiMock(
     if (datasetItemsMatch && method === "GET") {
       const datasetId = datasetItemsMatch[1];
       await fulfillJson(route, db.dataItemsByDatasetId[datasetId] || []);
-      return;
-    }
-
-    if (pathname === "/api/v1/train/jobs" && method === "GET") {
-      const projectId = searchParams.get("project_id") || "";
-      await fulfillJson(
-        route,
-        { items: db.jobs.filter((job) => job.project_id === projectId) },
-      );
-      return;
-    }
-
-    if (pathname === "/api/v1/train/jobs" && method === "POST") {
-      const body = readJsonBody<{ project_id?: string; dataset_version_id?: string; recipe?: string }>(route);
-      const job: Job = {
-        id: nextId(db, "job"),
-        project_id: body.project_id || db.projects[0]?.id || "",
-        dataset_version_id: body.dataset_version_id || db.datasetVersions[0]?.id || "",
-        recipe: body.recipe || "mock",
-        status: "pending",
-        created_at: nowIso(),
-      };
-      db.jobs.unshift(job);
-      await fulfillJson(route, job, 201);
       return;
     }
 

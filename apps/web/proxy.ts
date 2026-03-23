@@ -5,11 +5,6 @@ const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
 const CSP_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
-/** Routes that next-intl should handle (pages, not API/static/files). */
-function isPageRoute(pathname: string): boolean {
-  return !/^\/api\/|^\/_next\/|\./.test(pathname);
-}
-
 function normalizeOrigin(value?: string): string | null {
   if (!value) {
     return null;

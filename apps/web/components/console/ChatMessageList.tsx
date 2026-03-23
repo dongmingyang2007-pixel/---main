@@ -148,6 +148,243 @@ function CollapsibleReasoning({
   );
 }
 
+function formatRetrievalPercent(value?: number | null): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatRetrievalSourceLabel(
+  source: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  const labels: Record<string, string> = {
+    static: t("retrievalSourceStatic"),
+    semantic: t("retrievalSourceSemantic"),
+    lexical: t("retrievalSourceLexical"),
+    graph_parent: t("retrievalSourceGraphParent"),
+    graph_child: t("retrievalSourceGraphChild"),
+    graph_edge: t("retrievalSourceGraphEdge"),
+    recent_temporary: t("retrievalSourceRecentTemporary"),
+    context: t("retrievalSourceContext"),
+  };
+  if (!source) {
+    return labels.context;
+  }
+  return labels[source] || source.replace(/_/g, " ");
+}
+
+function formatRetrievalMemoryKind(
+  memoryKind: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  const labels: Record<string, string> = {
+    profile: t("retrievalKindProfile"),
+    preference: t("retrievalKindPreference"),
+    goal: t("retrievalKindGoal"),
+    episodic: t("retrievalKindEpisodic"),
+    fact: t("retrievalKindFact"),
+    summary: t("retrievalKindSummary"),
+  };
+  if (!memoryKind) {
+    return t("retrievalKindUnknown");
+  }
+  return labels[memoryKind] || memoryKind;
+}
+
+function CollapsibleRetrievalTrace({
+  message,
+  t,
+}: {
+  message: Message;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const trace = message.retrievalTrace;
+  const [expanded, setExpanded] = useState(false);
+
+  if (!trace || message.isStreaming) {
+    return null;
+  }
+
+  const memories = trace.memories ?? [];
+  const knowledgeChunks = trace.knowledge_chunks ?? [];
+  const linkedFileChunks = trace.linked_file_chunks ?? [];
+  const countBadges = [
+    { label: t("retrievalBadgeMemory"), value: memories.length },
+    { label: t("retrievalBadgeKnowledge"), value: knowledgeChunks.length },
+    { label: t("retrievalBadgeLinked"), value: linkedFileChunks.length },
+  ].filter((item) => item.value > 0);
+
+  if (!countBadges.length) {
+    return null;
+  }
+
+  return (
+    <div className="chat-context-trace" aria-label={t("retrievalLabel")}>
+      <button
+        type="button"
+        className="chat-context-trace-toggle"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <div className="chat-context-trace-toggle-main">
+          <svg
+            width={12}
+            height={12}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+              transition: "transform 200ms",
+              flexShrink: 0,
+            }}
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+          <span className="chat-context-trace-label">{t("retrievalLabel")}</span>
+          {trace.strategy ? (
+            <span className="chat-context-trace-strategy">{trace.strategy}</span>
+          ) : null}
+        </div>
+        <div className="chat-context-trace-badges">
+          {countBadges.map((item) => (
+            <span key={item.label} className="chat-context-trace-badge">
+              {t("retrievalBadgeCount", { label: item.label, count: item.value })}
+            </span>
+          ))}
+        </div>
+      </button>
+      {expanded ? (
+        <div className="chat-context-trace-content">
+          {trace.memory_counts ? (
+            <div className="chat-context-trace-summary">
+              {typeof trace.memory_counts.static === "number" ? (
+                <span>{t("retrievalSummaryStatic", { count: trace.memory_counts.static })}</span>
+              ) : null}
+              {typeof trace.memory_counts.relevant === "number" ? (
+                <span>{t("retrievalSummaryRelevant", { count: trace.memory_counts.relevant })}</span>
+              ) : null}
+              {typeof trace.memory_counts.graph === "number" ? (
+                <span>{t("retrievalSummaryGraph", { count: trace.memory_counts.graph })}</span>
+              ) : null}
+              {typeof trace.memory_counts.temporary === "number" ? (
+                <span>{t("retrievalSummaryTemporary", { count: trace.memory_counts.temporary })}</span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {memories.length ? (
+            <div className="chat-context-section">
+              <div className="chat-context-section-title">{t("retrievalMemories")}</div>
+              <div className="chat-context-list">
+                {memories.map((memory) => (
+                  <article key={memory.id} className="chat-context-card">
+                    <div className="chat-context-card-head">
+                      <div className="chat-context-card-tags">
+                        <span className="chat-context-card-tag is-kind">
+                          {formatRetrievalMemoryKind(memory.memory_kind, t)}
+                        </span>
+                        {memory.source ? (
+                          <span className="chat-context-card-tag">
+                            {formatRetrievalSourceLabel(memory.source, t)}
+                          </span>
+                        ) : null}
+                        {memory.pinned ? (
+                          <span className="chat-context-card-tag is-pinned">
+                            {t("retrievalPinned")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="chat-context-card-metrics">
+                        {formatRetrievalPercent(
+                          typeof memory.score === "number" ? memory.score : memory.semantic_score,
+                        ) ? (
+                          <span>
+                            {formatRetrievalPercent(
+                              typeof memory.score === "number" ? memory.score : memory.semantic_score,
+                            )}
+                          </span>
+                        ) : null}
+                        {formatRetrievalPercent(memory.salience) ? (
+                          <span>{t("retrievalSalience", { score: formatRetrievalPercent(memory.salience) || "" })}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {memory.category ? (
+                      <div className="chat-context-card-subtitle">{memory.category}</div>
+                    ) : null}
+                    <div className="chat-context-card-body">{memory.content}</div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {knowledgeChunks.length ? (
+            <div className="chat-context-section">
+              <div className="chat-context-section-title">{t("retrievalKnowledge")}</div>
+              <div className="chat-context-list">
+                {knowledgeChunks.map((chunk, index) => (
+                  <article
+                    key={`${chunk.id || chunk.data_item_id || "knowledge"}-${index}`}
+                    className="chat-context-card"
+                  >
+                    <div className="chat-context-card-head">
+                      <div className="chat-context-card-tags">
+                        <span className="chat-context-card-tag is-knowledge">
+                          {chunk.filename || t("retrievalKnowledgeChunk")}
+                        </span>
+                      </div>
+                      {formatRetrievalPercent(chunk.score) ? (
+                        <div className="chat-context-card-metrics">
+                          <span>{formatRetrievalPercent(chunk.score)}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="chat-context-card-body">{chunk.chunk_text}</div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {linkedFileChunks.length ? (
+            <div className="chat-context-section">
+              <div className="chat-context-section-title">{t("retrievalLinkedFiles")}</div>
+              <div className="chat-context-list">
+                {linkedFileChunks.map((chunk, index) => (
+                  <article
+                    key={`${chunk.id || chunk.data_item_id || "linked"}-${index}`}
+                    className="chat-context-card"
+                  >
+                    <div className="chat-context-card-head">
+                      <div className="chat-context-card-tags">
+                        <span className="chat-context-card-tag is-linked">
+                          {chunk.filename || t("retrievalLinkedChunk")}
+                        </span>
+                      </div>
+                      {formatRetrievalPercent(chunk.score) ? (
+                        <div className="chat-context-card-metrics">
+                          <span>{formatRetrievalPercent(chunk.score)}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="chat-context-card-body">{chunk.chunk_text}</div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const CITATION_PATTERN = /\[ref_(\d+)\]/g;
 
 type CitationPart =
@@ -263,6 +500,7 @@ function SourceFavicon({
   return (
     <span className="chat-source-favicon" aria-hidden="true">
       {iconUrl && !imageFailed ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
         <img
           className="chat-source-favicon-img"
           src={iconUrl}
@@ -409,6 +647,7 @@ export interface ChatMessageListHandle {
       isStreaming: boolean;
       memories_extracted?: string;
       sources?: SearchSource[];
+      retrievalTrace?: Message["retrievalTrace"];
     },
   ) => void;
   setMessages: (msgs: Message[]) => void;
@@ -588,6 +827,7 @@ export const ChatMessageList = forwardRef<
           isStreaming: boolean;
           memories_extracted?: string;
           sources?: SearchSource[];
+          retrievalTrace?: Message["retrievalTrace"];
         },
       ) {
         onMessagesChange(
@@ -709,6 +949,9 @@ export const ChatMessageList = forwardRef<
                     );
                   })}
                 </div>
+              ) : null}
+              {msg.role === "assistant" ? (
+                <CollapsibleRetrievalTrace message={msg} t={t} />
               ) : null}
               {msg.role === "assistant" && msg.extracted_facts && msg.extracted_facts.length > 0 && (
                 <div className="chat-memory-card">

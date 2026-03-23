@@ -5,6 +5,7 @@ import asyncio
 import base64
 import hashlib
 import importlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -43,6 +44,8 @@ import app.routers.chat as chat_router
 import app.routers.memory as memory_router
 import app.routers.realtime as realtime_router
 import app.routers.uploads as uploads_router
+from app.services.dashscope_client import SearchSource
+import app.services.dashscope_responses as dashscope_responses_service
 import app.services.dashscope_stream as dashscope_stream_service
 import app.services.memory_file_context as memory_file_context_service
 import app.services.orchestrator as orchestrator_service
@@ -56,6 +59,7 @@ from app.models import (
     DataItem,
     Dataset,
     Memory,
+    MemoryEdge,
     Message,
     Membership,
     MemoryFile,
@@ -724,6 +728,116 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
 
         done = websocket.receive_json()
         assert done["type"] == "response.done"
+
+    assert persisted_turns == [("你好", "你好，我在。")]
+
+
+def test_composed_realtime_websocket_autostarts_turn_without_audio_stop(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    persisted_turns: list[tuple[str, str]] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "你好"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "你好，我在。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "你好，我在。"
+        return b"fake-mp3"
+
+    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+        persisted_turns.append((user_text, ai_text))
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            self.sent_final = False
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            if not self.sent_final:
+                self.sent_final = True
+                await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def commit(self) -> None:
+            raise AssertionError("audio.stop should not be required for this turn")
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-realtime-autostart@example.com", "Synthetic Realtime Autostart")
+    project = create_project(client, "Synthetic Autostart Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Autostart Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "你好"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "你好，我在。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
+
+        websocket.send_json({"type": "audio.stop"})
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
 
     assert persisted_turns == [("你好", "你好，我在。")]
 
@@ -1580,16 +1694,6 @@ def test_viewer_role_is_read_only_across_workspace_mutations() -> None:
             headers=viewer_headers,
         ),
         viewer.post(
-            "/api/v1/train/jobs",
-            json={
-                "project_id": project["id"],
-                "dataset_version_id": version["id"],
-                "recipe": "lora",
-                "params_json": {},
-            },
-            headers=viewer_headers,
-        ),
-        viewer.post(
             "/api/v1/eval/runs",
             json={
                 "model_version_a": "left-model-version",
@@ -2047,52 +2151,6 @@ def test_dataset_items_tag_filter_returns_only_matching_items() -> None:
         }
     ]
 
-
-def test_training_job_success_and_failure_flow() -> None:
-    client = TestClient(main_module.app)
-    register_user(client, "trainer@example.com", "Trainer")
-    project = create_project(client, "Train Project")
-    dataset = create_dataset(client, project["id"], "Train Dataset")
-    upload_item(client, dataset["id"], "train-1.jpg")
-    version = commit_dataset(client, dataset["id"], "baseline")
-
-    success_resp = client.post(
-        "/api/v1/train/jobs",
-        json={
-            "project_id": project["id"],
-            "dataset_version_id": version["id"],
-            "recipe": "mock",
-            "params_json": {"sync": True},
-        },
-        headers=csrf_headers(client),
-    )
-    assert success_resp.status_code == 200
-    assert success_resp.json()["job"]["status"] == "succeeded"
-    success_job_id = success_resp.json()["job"]["id"]
-
-    success_job = client.get(f"/api/v1/train/jobs/{success_job_id}")
-    assert success_job.status_code == 200
-    assert success_job.json()["job"]["status"] == "succeeded"
-
-    fail_resp = client.post(
-        "/api/v1/train/jobs",
-        json={
-            "project_id": project["id"],
-            "dataset_version_id": version["id"],
-            "recipe": "mock",
-            "params_json": {"sync": True, "force_fail": True},
-        },
-        headers=csrf_headers(client),
-    )
-    assert fail_resp.status_code == 200
-    assert fail_resp.json()["job"]["status"] == "failed"
-    failed_job_id = fail_resp.json()["job"]["id"]
-
-    failed_job = client.get(f"/api/v1/train/jobs/{failed_job_id}")
-    assert failed_job.status_code == 200
-    assert failed_job.json()["job"]["status"] == "failed"
-
-
 def test_eval_run_requires_expected_schema() -> None:
     client = TestClient(main_module.app)
     register_user(client, "eval@example.com", "Eval User")
@@ -2540,6 +2598,88 @@ def test_send_message_persists_reasoning_content_when_thinking_enabled(monkeypat
     assert messages.json()[1]["reasoning_content"] == "先拆解问题，再形成回答。"
 
 
+def test_send_message_persists_search_sources_metadata(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-sources@example.com", "Chat Sources")
+    project = create_project(client, "Chat Sources Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        del args, kwargs
+        return {
+            "content": "这是答案[ref_1]",
+            "reasoning_content": None,
+            "sources": [
+                {
+                    "index": 1,
+                    "title": "Example Source",
+                    "url": "https://example.com/story",
+                    "domain": "example.com",
+                    "site_name": "Example",
+                    "summary": "A summarized source excerpt.",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "帮我看下最新进展", "enable_search": True},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["metadata_json"]["sources"][0]["title"] == "Example Source"
+    assert resp.json()["metadata_json"]["sources"][0]["url"] == "https://example.com/story"
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json()[1]["metadata_json"]["sources"][0]["domain"] == "example.com"
+    assert messages.json()[1]["content"] == "这是答案[ref_1]"
+
+
+def test_send_message_passes_enable_search_preference(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-search@example.com", "Chat Search")
+    project = create_project(client, "Chat Search Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        captured["enable_search"] = kwargs.get("enable_search")
+        return {"content": "已开启搜索", "reasoning_content": None}
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "帮我查最新消息", "enable_search": True},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert captured["enable_search"] is True
+
+
 def test_send_message_auto_disables_thinking_for_simple_greeting(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "chat-auto-greeting@example.com", "Chat Auto Greeting")
@@ -2616,23 +2756,34 @@ def test_stream_message_auto_disables_thinking_for_simple_greeting(monkeypatch) 
 
     captured: dict[str, object] = {}
 
-    async def fake_chat_completion_stream(
-        messages,
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_stream(
+        input_items,
         model=None,
         *,
-        temperature=0.7,
-        max_tokens=2048,
         enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
         timeout=120.0,
+        image_bytes=None,
+        image_mime_type="image/jpeg",
     ):
-        del messages, model, temperature, max_tokens, timeout
+        del input_items, model, tool_choice, timeout, image_bytes, image_mime_type
         captured["enable_thinking"] = enable_thinking
-        yield dashscope_stream_service.StreamChunk(reasoning_content="不该显示的思考")
-        yield dashscope_stream_service.StreamChunk(content="你好呀")
-        yield dashscope_stream_service.StreamChunk(finish_reason="stop")
+        captured["tools"] = tools
+        yield dashscope_responses_service.ResponsesStreamChunk(reasoning_content="不该显示的思考")
+        yield dashscope_responses_service.ResponsesStreamChunk(content="你好呀")
+        yield dashscope_responses_service.ResponsesStreamChunk(finish_reason="completed")
 
     monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
-    monkeypatch.setattr(orchestrator_service, "chat_completion_stream", fake_chat_completion_stream)
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_stream",
+        fake_responses_completion_stream,
+    )
 
     resp = client.post(
         f"/api/v1/chat/conversations/{conversation_id}/stream",
@@ -2642,6 +2793,7 @@ def test_stream_message_auto_disables_thinking_for_simple_greeting(monkeypatch) 
 
     assert resp.status_code == 200
     assert captured["enable_thinking"] is False
+    assert isinstance(captured["tools"], list) and len(captured["tools"]) >= 1
     assert "event: reasoning" not in resp.text
     assert '"reasoning_content": null' in resp.text
 
@@ -2652,6 +2804,445 @@ def test_stream_message_auto_disables_thinking_for_simple_greeting(monkeypatch) 
     assert messages.status_code == 200
     assert messages.json()[1]["content"] == "你好呀"
     assert messages.json()[1]["reasoning_content"] is None
+
+
+def test_stream_message_auto_enables_search_for_freshness_query(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-stream-search@example.com", "Chat Stream Search")
+    project = create_project(client, "Chat Stream Search Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_stream(
+        input_items,
+        model=None,
+        *,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        timeout=120.0,
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del input_items, model, enable_thinking, tool_choice, timeout, image_bytes, image_mime_type
+        captured["tools"] = tools
+        yield dashscope_responses_service.ResponsesStreamChunk(content="今天有雨")
+        yield dashscope_responses_service.ResponsesStreamChunk(finish_reason="completed")
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_stream",
+        fake_responses_completion_stream,
+    )
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        json={"content": "今天上海天气怎么样"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert {"type": "web_search"} in (captured["tools"] or [])
+    assert "今天有雨" in resp.text
+
+
+def test_stream_message_emits_and_persists_search_sources(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-stream-sources@example.com", "Chat Stream Sources")
+    project = create_project(client, "Chat Stream Sources Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_stream(
+        input_items,
+        model=None,
+        *,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        timeout=120.0,
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del input_items, model, enable_thinking, tools, tool_choice, timeout, image_bytes, image_mime_type
+        yield dashscope_responses_service.ResponsesStreamChunk(
+            content="整理如下[ref_1]",
+            search_sources=[
+                SearchSource(
+                    index=1,
+                    title="Example Stream Source",
+                    url="https://example.com/stream",
+                    domain="example.com",
+                    site_name="Example",
+                    summary="Stream summary",
+                )
+            ],
+        )
+        yield dashscope_responses_service.ResponsesStreamChunk(finish_reason="completed")
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_stream",
+        fake_responses_completion_stream,
+    )
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        json={"content": "请查一下刚刚发生了什么", "enable_search": True},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert '"title": "Example Stream Source"' in resp.text
+    assert '"url": "https://example.com/stream"' in resp.text
+
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json()[1]["metadata_json"]["sources"][0]["summary"] == "Stream summary"
+    assert messages.json()[1]["content"] == "整理如下[ref_1]"
+
+
+def test_web_search_classifier_handles_external_fact_queries(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion_detailed(
+        messages,
+        model=None,
+        *,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        del messages, temperature, max_tokens, enable_thinking, enable_search
+        del search_options, tools, tool_choice, parallel_tool_calls
+        captured["model"] = model
+        return orchestrator_service.ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "route": "web_only",
+                    "needs_fresh_facts": True,
+                    "can_answer_from_project_context": False,
+                    "confidence": 0.91,
+                    "reason": "The answer depends on current public-company facts.",
+                }
+            )
+        )
+
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    with SessionLocal() as db:
+        decision = asyncio.run(
+            orchestrator_service._resolve_search_options(
+                db,
+                llm_model_id="qwen3.5-plus",
+                llm_capabilities={"web_search"},
+                user_message="苹果 CEO 是谁",
+                recent_messages=[],
+                preference=None,
+            )
+        )
+
+    assert captured["model"] == "qwen3.5-flash"
+    assert decision.enable_search is True
+    assert decision.route == "web_only"
+    assert decision.source == "classifier"
+    assert decision.search_options is None
+
+
+def test_official_catalog_extends_llm_capabilities_for_qwen_flash_models() -> None:
+    with SessionLocal() as db:
+        capabilities = orchestrator_service._load_model_capabilities(
+            db,
+            model_id="qwen3.5-flash",
+        )
+
+    assert "function_calling" in capabilities
+    assert "web_search" in capabilities
+    assert "deep_thinking" in capabilities
+    assert "responses_api" in capabilities
+    assert "vision" in capabilities
+
+
+def test_build_and_call_llm_uses_responses_auto_tools_for_image_input_when_supported(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-image-responses@example.com", "Chat Image Responses")
+    project = create_project(client, "Chat Image Responses Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Image Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del input_items, model, enable_thinking, tool_choice
+        captured["tools"] = tools
+        captured["image_bytes"] = image_bytes
+        captured["image_mime_type"] = image_mime_type
+        return SimpleNamespace(
+            content="我看到了图片内容",
+            reasoning_content=None,
+            search_sources=[],
+            tool_calls=[],
+        )
+
+    async def fail_chat_completion_multimodal_detailed(*args, **kwargs):
+        raise AssertionError("image input should use responses auto tools instead of legacy multimodal path")
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "chat_completion_multimodal_detailed",
+        fail_chat_completion_multimodal_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service._build_and_call_llm(
+                db,
+                workspace_id=project["workspace_id"],
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="请描述这张图片",
+                recent_messages=[],
+                llm_model_id="qwen3.5-plus",
+                image_bytes=b"image-binary",
+                image_mime_type="image/png",
+                enable_thinking=False,
+                enable_search=True,
+            )
+        )
+
+    assert result["content"] == "我看到了图片内容"
+    assert captured["image_bytes"] == b"image-binary"
+    assert captured["image_mime_type"] == "image/png"
+    assert {"type": "web_search"} in (captured["tools"] or [])
+
+
+def test_build_and_call_llm_falls_back_to_legacy_multimodal_for_video_input(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-video-fallback@example.com", "Chat Video Fallback")
+    project = create_project(client, "Chat Video Fallback Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Video Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fail_responses_completion_detailed(*args, **kwargs):
+        raise AssertionError("video input should not use responses auto tools")
+
+    async def fake_chat_completion_multimodal_detailed(
+        messages,
+        *,
+        model=None,
+        audio_bytes=None,
+        audio_mime_type="audio/wav",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+        video_bytes=None,
+        video_mime_type="video/mp4",
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        del messages, model, audio_bytes, audio_mime_type, image_bytes, image_mime_type
+        del temperature, max_tokens, enable_thinking, enable_search, search_options
+        del tools, tool_choice, parallel_tool_calls
+        captured["video_bytes"] = video_bytes
+        captured["video_mime_type"] = video_mime_type
+        return SimpleNamespace(
+            content="我看到了视频内容",
+            reasoning_content=None,
+            search_sources=[],
+            tool_calls=[],
+        )
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fail_responses_completion_detailed,
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "chat_completion_multimodal_detailed",
+        fake_chat_completion_multimodal_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service._build_and_call_llm(
+                db,
+                workspace_id=project["workspace_id"],
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="请描述这个视频",
+                recent_messages=[],
+                llm_model_id="qwen3.5-plus",
+                video_bytes=b"video-binary",
+                video_mime_type="video/mp4",
+                enable_thinking=False,
+                enable_search=True,
+            )
+        )
+
+    assert result["content"] == "我看到了视频内容"
+    assert captured["video_bytes"] == b"video-binary"
+    assert captured["video_mime_type"] == "video/mp4"
+
+
+def test_thinking_classifier_handles_ambiguous_queries(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_chat_completion_detailed(
+        messages,
+        model=None,
+        *,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        del messages, temperature, max_tokens, enable_search
+        del search_options, tools, tool_choice, parallel_tool_calls
+        captured["model"] = model
+        captured["enable_thinking"] = enable_thinking
+        return orchestrator_service.ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "enable_thinking": True,
+                    "confidence": 0.87,
+                    "reason": "The request benefits from deliberate decomposition.",
+                }
+            )
+        )
+
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    with SessionLocal() as db:
+        decision = asyncio.run(
+            orchestrator_service.resolve_enable_thinking(
+                db,
+                project_id="proj-test",
+                llm_model_id="qwen3.5-plus",
+                user_message="I have several moving parts here and need a careful response.",
+                recent_messages=[],
+                preference=None,
+            )
+        )
+
+    assert captured["model"] == "qwen3.5-flash"
+    assert captured["enable_thinking"] is False
+    assert decision.enable_thinking is True
+    assert decision.source == "classifier"
+    assert decision.confidence == pytest.approx(0.87)
+
+
+def test_web_search_rules_keep_local_time_queries_offline(monkeypatch) -> None:
+    classifier_called = False
+
+    async def fake_chat_completion_detailed(
+        messages,
+        model=None,
+        *,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        nonlocal classifier_called
+        del messages, model, temperature, max_tokens, enable_thinking, enable_search
+        del search_options, tools, tool_choice, parallel_tool_calls
+        classifier_called = True
+        return orchestrator_service.ChatCompletionResult(content="{}")
+
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    with SessionLocal() as db:
+        decision = asyncio.run(
+            orchestrator_service._resolve_search_options(
+                db,
+                llm_model_id="qwen3.5-plus",
+                llm_capabilities={"web_search"},
+                user_message="今天几号？",
+                recent_messages=[],
+                preference=None,
+            )
+        )
+
+    assert classifier_called is False
+    assert decision.enable_search is False
+    assert decision.route == "local_only"
+    assert decision.source == "rules"
 
 
 @pytest.mark.asyncio
@@ -2743,12 +3334,26 @@ def test_send_message_survives_non_fatal_rag_failure(monkeypatch) -> None:
     async def fake_search_similar(*args, **kwargs):
         raise RuntimeError("vector lookup failed")
 
-    async def fake_chat_completion_detailed(messages, model, enable_thinking=None):  # noqa: ARG001
-        return SimpleNamespace(content="rag fallback ok", reasoning_content=None)
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):  # noqa: ARG001
+        del input_items, model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        return SimpleNamespace(content="rag fallback ok", reasoning_content=None, search_sources=[], tool_calls=[])
 
     monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
     monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
-    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
 
     resp = client.post(
         f"/api/v1/chat/conversations/{conversation_id}/messages",
@@ -4159,12 +4764,27 @@ def test_orchestrator_filters_private_memory_embeddings_from_prompt(monkeypatch)
             }
         ]
 
-    async def fake_chat_completion_detailed(messages, model=None, enable_thinking=None):
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        messages = input_items
         captured["system_prompt"] = messages[0]["content"]
-        return SimpleNamespace(content="ok", reasoning_content=None)
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
 
     monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
-    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
 
     with SessionLocal() as db:
         result = asyncio.run(
@@ -4227,9 +4847,20 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
             }
         ]
 
-    async def fake_chat_completion_detailed(messages, model=None, enable_thinking=None):
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        messages = input_items
         captured["system_prompt"] = messages[0]["content"]
-        return SimpleNamespace(content="ok", reasoning_content=None)
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
 
     monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
     monkeypatch.setattr(
@@ -4237,7 +4868,11 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
         "load_linked_file_chunks_for_memories",
         fake_load_linked_file_chunks_for_memories,
     )
-    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
 
     with SessionLocal() as db:
         result = asyncio.run(
@@ -4255,3 +4890,233 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
     assert "与当前相关记忆直接关联的资料摘录" in captured["system_prompt"]
     assert "心理学手册.pdf" in captured["system_prompt"]
     assert "认知行为疗法适用于焦虑干预" in captured["system_prompt"]
+
+
+def test_orchestrator_layered_memory_context_prefers_static_and_relevant_memories(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "layered-memory@example.com", "Layered Memory")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Layered Memory Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Layered Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    pinned = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户叫阿铭，长期喜欢数学和结构化推理。",
+            "category": "用户画像",
+            "metadata_json": {"pinned": True, "memory_kind": "profile"},
+        },
+        headers=csrf_headers(client),
+    )
+    assert pinned.status_code == 200
+
+    unrelated = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户上周随手看了一部电影。",
+            "category": "娱乐",
+        },
+        headers=csrf_headers(client),
+    )
+    assert unrelated.status_code == 200
+
+    temporary = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "这次对话里用户正在准备数学竞赛。",
+            "category": "目标.竞赛",
+            "type": "temporary",
+            "source_conversation_id": conversation.json()["id"],
+        },
+        headers=csrf_headers(client),
+    )
+    assert temporary.status_code == 200
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return [
+            {
+                "id": "embedding-temp-1",
+                "chunk_text": "这次对话里用户正在准备数学竞赛。",
+                "memory_id": temporary.json()["id"],
+                "data_item_id": None,
+                "score": 0.97,
+            }
+        ]
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        captured["system_prompt"] = input_items[0]["content"]
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="请结合我准备数学竞赛这件事回答",
+                recent_messages=[],
+            )
+        )
+
+    assert result["content"] == "ok"
+    assert result["retrieval_trace"]["strategy"] == "layered_memory_v2"
+    assert "长期喜欢数学和结构化推理" in str(captured["system_prompt"])
+    assert "正在准备数学竞赛" in str(captured["system_prompt"])
+    assert "上周随手看了一部电影" not in str(captured["system_prompt"])
+
+
+def test_chat_message_persists_retrieval_trace_and_touches_memory_usage(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "retrieval-trace@example.com", "Trace User")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Trace Project")
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Trace Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户偏好一步一步的解释。",
+            "category": "偏好",
+        },
+        headers=csrf_headers(client),
+    )
+    assert memory.status_code == 200
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        return {
+            "content": "好的，我会分步骤说明。",
+            "reasoning_content": None,
+            "sources": [],
+            "retrieval_trace": {
+                "strategy": "layered_memory_v2",
+                "memories": [
+                    {
+                        "id": memory.json()["id"],
+                        "source": "semantic",
+                        "score": 0.94,
+                    }
+                ],
+                "knowledge_chunks": [],
+                "linked_file_chunks": [],
+            },
+        }
+
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation.json()['id']}/messages",
+        json={"content": "请回答"},
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["metadata_json"]["retrieval_trace"]["strategy"] == "layered_memory_v2"
+
+    with SessionLocal() as db:
+        refreshed = db.get(Memory, memory.json()["id"])
+        assert refreshed is not None
+        assert refreshed.metadata_json["retrieval_count"] >= 1
+        assert refreshed.metadata_json["last_used_source"] == "semantic"
+        assert isinstance(refreshed.metadata_json["last_used_at"], str)
+
+
+def test_memory_compaction_task_creates_summary_memory_and_edges(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "summary-memory@example.com", "Summary User")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Summary Project")
+
+    async def fake_chat_completion(*args, **kwargs):
+        return json.dumps(
+            {
+                "skip": False,
+                "summary": "用户稳定关注数学学习，并且持续进行结构化训练。",
+                "category": "学习.数学",
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("app.services.memory_compaction.chat_completion", fake_chat_completion)
+
+    source_ids: list[str] = []
+    for content in (
+        "用户正在系统学习数学分析。",
+        "用户最近坚持做代数题训练。",
+        "用户希望通过结构化方法提升数学竞赛能力。",
+    ):
+        response = client.post(
+            "/api/v1/memory",
+            json={
+                "project_id": project["id"],
+                "content": content,
+                "category": "学习.数学",
+            },
+            headers=csrf_headers(client),
+        )
+        assert response.status_code == 200
+        source_ids.append(response.json()["id"])
+
+    worker_tasks.compact_project_memories_task(workspace_id, project["id"])
+
+    with SessionLocal() as db:
+        summaries = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.workspace_id == workspace_id,
+            )
+            .all()
+        )
+        summary = next(
+            memory
+            for memory in summaries
+            if memory.metadata_json.get("node_kind") == "summary"
+        )
+        assert "稳定关注数学学习" in summary.content
+        assert summary.metadata_json["source_count"] >= 3
+        edges = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == summary.id,
+                MemoryEdge.edge_type == "summary",
+            )
+            .all()
+        )
+        assert {edge.target_memory_id for edge in edges} >= set(source_ids)

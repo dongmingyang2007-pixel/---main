@@ -18,7 +18,7 @@ from app.core.http_security import SecurityHeadersMiddleware
 from app.core.request_id import RequestIDMiddleware
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.routers import auth, chat, datasets, demo, eval, memory, memory_stream, model_catalog, models, pipeline, projects, realtime, train, uploads, waitlist
+from app.routers import auth, chat, datasets, demo, eval, memory, memory_stream, model_catalog, models, pipeline, projects, realtime, uploads, waitlist
 from app.services.chat_modes import ensure_project_chat_mode_schema
 from app.services.embedding import ensure_embedding_schema
 from app.services.model_catalog_seed import seed_model_catalog
@@ -36,6 +36,7 @@ async def lifespan(_: FastAPI):
     ensure_project_chat_mode_schema(engine)
     ensure_embedding_schema(engine)
     ensure_column(engine, "messages", "reasoning_content", "TEXT")
+    ensure_column(engine, "messages", "metadata_json", "JSON", nullable=False, default="'{}'")
     ensure_project_memory_root_schema(engine)
     db = SessionLocal()
     try:
@@ -84,7 +85,6 @@ app.include_router(waitlist.router)
 app.include_router(projects.router)
 app.include_router(datasets.router)
 app.include_router(uploads.router)
-app.include_router(train.router)
 app.include_router(model_catalog.router)
 app.include_router(models.router)
 app.include_router(pipeline.router)

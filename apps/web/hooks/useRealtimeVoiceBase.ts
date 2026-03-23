@@ -226,6 +226,18 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     });
   }, []);
 
+  const preserveAssistantPartialOnInterrupt = useCallback(() => {
+    const finalText = currentAssistantTextRef.current.trim();
+    if (!finalText) {
+      discardAssistantPartial();
+      return false;
+    }
+
+    finalizeAssistantPartial();
+    currentAssistantTextRef.current = "";
+    return true;
+  }, [discardAssistantPartial, finalizeAssistantPartial]);
+
   // ---------------------------------------------------------------------------
   // Timer management
   // ---------------------------------------------------------------------------
@@ -959,13 +971,14 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
 
         case "interrupt.ack":
           resetPlaybackQueue();
-          discardAssistantPartial();
-          cfg.onTranscriptUpdate?.({
-            role: "assistant",
-            text: "",
-            final: false,
-            action: "discard",
-          });
+          if (!preserveAssistantPartialOnInterrupt()) {
+            cfg.onTranscriptUpdate?.({
+              role: "assistant",
+              text: "",
+              final: false,
+              action: "discard",
+            });
+          }
           setState("listening");
           break;
 
@@ -1011,6 +1024,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       discardAssistantPartial,
       finalizeAssistantPartial,
       playAudioChunk,
+      preserveAssistantPartialOnInterrupt,
       resetPlaybackQueue,
       startCapture,
     ],

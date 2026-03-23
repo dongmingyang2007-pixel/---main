@@ -2,7 +2,6 @@ import base64
 from datetime import datetime, timezone
 import json
 import logging
-import re
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
@@ -28,9 +27,11 @@ from app.services.orchestrator import (
     orchestrate_inference,
     orchestrate_inference_stream,
     orchestrate_voice_inference,
+    resolve_enable_thinking,
     synthesize_speech_for_project,
     transcribe_audio_input_for_project,
 )
+from app.services.memory_context import touch_memories_from_trace
 from app.routers.utils import get_project_in_workspace_or_404
 from app.services.upload_validation import (
     UPLOAD_SIGNATURE_READ_BYTES,
@@ -58,93 +59,29 @@ _MODEL_API_UNCONFIGURED_MESSAGE = (
     "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
 )
 
-_SOCIAL_MESSAGES = {
-    "hi",
-    "hello",
-    "hey",
-    "yo",
-    "ok",
-    "okay",
-    "thanks",
-    "thankyou",
-    "test",
-    "你好",
-    "您好",
-    "嗨",
-    "哈喽",
-    "早上好",
-    "中午好",
-    "下午好",
-    "晚上好",
-    "在吗",
-    "谢谢",
-    "收到",
-    "好的",
-    "测试",
-}
-_SOCIAL_HINTS = ("你好", "您好", "嗨", "哈喽", "在吗", "谢谢", "收到", "好的")
-_REASONING_HINTS = (
-    "分析",
-    "解释",
-    "原因",
-    "为什么",
-    "如何",
-    "怎么",
-    "步骤",
-    "方案",
-    "计划",
-    "设计",
-    "比较",
-    "对比",
-    "优缺点",
-    "排查",
-    "调试",
-    "修复",
-    "推导",
-    "总结",
-    "归纳",
-    "reason",
-    "analy",
-    "debug",
-    "compare",
-    "tradeoff",
-    "plan",
-    "strategy",
-    "explain",
-)
-
-
-def _normalize_inference_result(result: str | dict) -> tuple[str, str | None]:
+def _normalize_inference_result(result: str | dict) -> tuple[str, str | None, dict[str, object]]:
     if isinstance(result, str):
-        return result, None
-    return result.get("content", "") or "", result.get("reasoning_content")
+        return result, None, {}
+
+    raw_sources = result.get("sources")
+    sources = [
+        source
+        for source in raw_sources
+        if isinstance(source, dict)
+    ] if isinstance(raw_sources, list) else []
+
+    metadata_json: dict[str, object] = {}
+    if sources:
+        metadata_json["sources"] = sources
+    retrieval_trace = result.get("retrieval_trace")
+    if isinstance(retrieval_trace, dict) and retrieval_trace:
+        metadata_json["retrieval_trace"] = retrieval_trace
+
+    return result.get("content", "") or "", result.get("reasoning_content"), metadata_json
 
 
 def _normalize_media_type(content_type: str | None) -> str:
     return (content_type or "").split(";", 1)[0].strip().lower()
-
-
-def _resolve_enable_thinking(preference: bool | None, text: str) -> bool:
-    if preference is not None:
-        return preference
-
-    stripped = text.strip()
-    if not stripped:
-        return False
-
-    lowered = stripped.casefold()
-    normalized = re.sub(r"[\W_]+", "", lowered)
-    if normalized in _SOCIAL_MESSAGES:
-        return False
-    if len(stripped) <= 12 and any(hint in stripped for hint in _SOCIAL_HINTS):
-        return False
-    if len(stripped) <= 24 and not any(hint in lowered for hint in _REASONING_HINTS):
-        return False
-    if any(hint in lowered for hint in _REASONING_HINTS):
-        return True
-    if "\n" in stripped or len(stripped) >= 80:
-        return True
-    return False
 
 
 async def _read_validated_upload(upload: UploadFile, *, kind: str) -> bytes:
@@ -278,7 +215,7 @@ def list_messages(
     workspace_role: str = Depends(get_current_workspace_role),
     workspace_id: str = Depends(get_current_workspace_id),
 ) -> list[MessageOut]:
-    conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+    _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
 
     messages = (
         db.query(Message)
@@ -332,7 +269,14 @@ async def send_message(
         .all()
     )
     recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
-    enable_thinking = _resolve_enable_thinking(payload.enable_thinking, payload.content)
+    thinking_decision = await resolve_enable_thinking(
+        db,
+        project_id=conversation.project_id,
+        user_message=payload.content,
+        recent_messages=recent_msgs,
+        preference=payload.enable_thinking,
+    )
+    enable_thinking = thinking_decision.enable_thinking
 
     # Real inference
     try:
@@ -344,11 +288,12 @@ async def send_message(
             user_message=payload.content,
             recent_messages=recent_msgs,
             enable_thinking=enable_thinking,
+            enable_search=payload.enable_search,
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         _raise_inference_api_error(exc)
-    ai_response_text, ai_reasoning_content = _normalize_inference_result(inference_result)
+    ai_response_text, ai_reasoning_content, ai_metadata_json = _normalize_inference_result(inference_result)
 
     # Save AI response
     ai_message = Message(
@@ -356,11 +301,16 @@ async def send_message(
         role="assistant",
         content=ai_response_text,
         reasoning_content=ai_reasoning_content,
+        metadata_json=ai_metadata_json,
     )
     db.add(ai_message)
 
     # Update conversation.updated_at
     conversation.updated_at = datetime.now(timezone.utc)
+    touch_memories_from_trace(
+        db,
+        retrieval_trace=ai_metadata_json.get("retrieval_trace") if isinstance(ai_metadata_json, dict) else None,
+    )
 
     db.commit()
     db.refresh(ai_message)
@@ -437,12 +387,20 @@ async def stream_message(
         .all()
     )
     recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
-    enable_thinking = _resolve_enable_thinking(payload.enable_thinking, payload.content)
+    thinking_decision = await resolve_enable_thinking(
+        db,
+        project_id=conversation.project_id,
+        user_message=payload.content,
+        recent_messages=recent_msgs,
+        preference=payload.enable_thinking,
+    )
+    enable_thinking = thinking_decision.enable_thinking
 
     async def _event_generator():
         """Yield SSE-formatted lines from the streaming orchestrator."""
         full_content = ""
         full_reasoning: str | None = None
+        full_metadata_json: dict[str, object] = {}
 
         try:
             async for event in orchestrate_inference_stream(
@@ -453,6 +411,7 @@ async def stream_message(
                 user_message=payload.content,
                 recent_messages=recent_msgs,
                 enable_thinking=enable_thinking,
+                enable_search=payload.enable_search,
                 user_id=current_user.id,
             ):
                 event_type = event["event"]
@@ -462,6 +421,13 @@ async def stream_message(
                 if event_type == "message_done":
                     full_content = data.get("content", "")
                     full_reasoning = data.get("reasoning_content")
+                    raw_sources = data.get("sources")
+                    if isinstance(raw_sources, list):
+                        sources = [source for source in raw_sources if isinstance(source, dict)]
+                        full_metadata_json = {"sources": sources} if sources else {}
+                    retrieval_trace = data.get("retrieval_trace")
+                    if isinstance(retrieval_trace, dict) and retrieval_trace:
+                        full_metadata_json["retrieval_trace"] = retrieval_trace
 
                 yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -478,9 +444,14 @@ async def stream_message(
                 role="assistant",
                 content=full_content,
                 reasoning_content=full_reasoning,
+                metadata_json=full_metadata_json,
             )
             db.add(ai_message)
             conversation.updated_at = datetime.now(timezone.utc)
+            touch_memories_from_trace(
+                db,
+                retrieval_trace=full_metadata_json.get("retrieval_trace") if isinstance(full_metadata_json, dict) else None,
+            )
             db.commit()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to persist streamed assistant message")
@@ -574,9 +545,27 @@ def _save_pipeline_messages(
         role="assistant",
         content=result["text_response"],
         reasoning_content=result.get("reasoning_content"),
+        metadata_json=(
+            {
+                **(
+                    {"sources": sources}
+                    if isinstance((sources := result.get("sources")), list) and sources
+                    else {}
+                ),
+                **(
+                    {"retrieval_trace": trace}
+                    if isinstance((trace := result.get("retrieval_trace")), dict) and trace
+                    else {}
+                ),
+            }
+        ),
     )
     db.add(ai_msg)
     conversation.updated_at = datetime.now(timezone.utc)
+    touch_memories_from_trace(
+        db,
+        retrieval_trace=ai_msg.metadata_json.get("retrieval_trace") if isinstance(ai_msg.metadata_json, dict) else None,
+    )
     db.commit()
     db.refresh(ai_msg)
     return ai_msg
@@ -735,6 +724,7 @@ async def send_image_message(
     audio: UploadFile | None = File(None),
     prompt: str | None = Form(None),
     enable_thinking: bool | None = Form(None),
+    enable_search: bool | None = Form(None),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_role: str = Depends(get_current_workspace_role),
@@ -758,7 +748,6 @@ async def send_image_message(
     audio_bytes = await _read_validated_upload(audio, kind="audio") if audio else None
     prompt_text = (prompt or "").strip()
     effective_prompt = prompt_text if (prompt_text and not audio_bytes) else ("请描述这张图片" if not audio_bytes else None)
-    enable_thinking = _resolve_enable_thinking(enable_thinking, effective_prompt or "")
 
     # Run full pipeline with image (and optional voice input)
     try:
@@ -773,6 +762,7 @@ async def send_image_message(
             image_mime_type=_normalize_media_type(image.content_type) or "image/jpeg",
             text_input=effective_prompt,
             enable_thinking=enable_thinking,
+            enable_search=enable_search,
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()

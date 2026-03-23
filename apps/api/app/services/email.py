@@ -92,6 +92,10 @@ def _build_code_html(code: str, purpose: str) -> str:
 
 def send_verification_email(to_email: str, code: str, purpose: str) -> None:
     """Send a verification code email via SMTP."""
+    if settings.env == "test":
+        logger.info("Verification email skipped in test environment for %s", to_email)
+        return
+
     if not settings.smtp_user or not settings.smtp_password:
         if settings.env in {"local", "test"}:
             logger.warning("SMTP not configured — verification email skipped for %s", to_email)

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 import logging
 import re
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from sqlalchemy.orm import Session
 
-from app.models.entities import Conversation, DataItem, Dataset, Memory, ModelCatalog, PipelineConfig, Project
+from app.core.config import settings
+from app.models.entities import Conversation, Memory, ModelCatalog, PipelineConfig, Project
 from app.services.context_loader import (
     extract_personality,
     filter_knowledge_chunks,
@@ -15,20 +18,195 @@ from app.services.context_loader import (
     load_recent_messages,
 )
 from app.services.dashscope_client import (
+    ChatCompletionResult,
+    SearchSource,
+    ToolCall,
     chat_completion_detailed,
     chat_completion_multimodal_detailed,
+    merge_search_sources,
     omni_completion,
+    serialize_search_sources,
+)
+from app.services.dashscope_responses import (
+    ResponsesStreamChunk,
+    responses_completion_detailed,
+    responses_completion_stream,
 )
 from app.services.dashscope_stream import chat_completion_stream
 from app.services.embedding import search_similar
+from app.services.llm_tools import (
+    execute_function_tool_call,
+    get_response_function_tools,
+)
+from app.services.memory_context import build_memory_context
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 from app.services.pipeline_models import resolve_pipeline_model_id
+from app.services.qwen_capabilities import (
+    model_supports_deep_thinking,
+    model_supports_image_input,
+    model_supports_native_web_search,
+    model_supports_responses_api,
+)
+from app.services.qwen_official_catalog import find_model
 
 logger = logging.getLogger(__name__)
 
 _OPENAI_COMPATIBLE_ASR_PREFIXES = ("qwen3-asr-",)
 _OPENAI_COMPATIBLE_TTS_PREFIXES = ("qwen3-tts-",)
+_WEB_SEARCH_HINTS = (
+    "最新",
+    "最近",
+    "今天",
+    "今日",
+    "刚刚",
+    "实时",
+    "新闻",
+    "天气",
+    "股价",
+    "汇率",
+    "比分",
+    "热搜",
+    "time now",
+    "today",
+    "latest",
+    "recent",
+    "current",
+    "news",
+    "weather",
+    "price",
+    "stock",
+    "exchange rate",
+    "score",
+)
+_PROJECT_CONTEXT_HINTS = (
+    "知识库",
+    "资料里",
+    "文档里",
+    "上传的资料",
+    "上传的文档",
+    "根据文档",
+    "根据资料",
+    "我之前说过",
+    "你记得",
+    "之前那次对话",
+    "knowledge base",
+    "uploaded document",
+    "uploaded file",
+    "project context",
+    "previous conversation",
+    "remember what i said",
+)
+_LOCAL_ONLY_HINTS = (
+    "现在几点",
+    "几点了",
+    "今天几号",
+    "当前时间",
+    "time now",
+    "what time is it",
+    "what's the time",
+    "what is the date",
+    "what's the date",
+    "current time",
+)
+_SEARCH_CLASSIFIER_ROUTES = {"local_only", "web_only", "local_then_web", "no_search"}
+_THINKING_SOCIAL_MESSAGES = {
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "ok",
+    "okay",
+    "thanks",
+    "thankyou",
+    "test",
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "早上好",
+    "中午好",
+    "下午好",
+    "晚上好",
+    "在吗",
+    "谢谢",
+    "收到",
+    "好的",
+    "测试",
+}
+_THINKING_SOCIAL_HINTS = ("你好", "您好", "嗨", "哈喽", "在吗", "谢谢", "收到", "好的")
+_THINKING_HINTS = (
+    "分析",
+    "解释",
+    "原因",
+    "为什么",
+    "如何",
+    "怎么",
+    "步骤",
+    "方案",
+    "计划",
+    "设计",
+    "比较",
+    "对比",
+    "优缺点",
+    "排查",
+    "调试",
+    "修复",
+    "推导",
+    "总结",
+    "归纳",
+    "复盘",
+    "评估",
+    "评审",
+    "取舍",
+    "权衡",
+    "架构",
+    "优化",
+    "reason",
+    "analy",
+    "debug",
+    "compare",
+    "tradeoff",
+    "plan",
+    "strategy",
+    "explain",
+)
+
+WebSearchRoute = Literal["local_only", "web_only", "local_then_web", "no_search"]
+
+
+@dataclass(slots=True)
+class WebSearchDecision:
+    enable_search: bool
+    search_options: dict[str, bool] | None
+    route: WebSearchRoute
+    source: str
+    confidence: float | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class WebSearchClassification:
+    route: WebSearchRoute
+    needs_fresh_facts: bool
+    can_answer_from_project_context: bool
+    confidence: float
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class ThinkingDecision:
+    enable_thinking: bool
+    source: str
+    confidence: float | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class ThinkingClassification:
+    enable_thinking: bool
+    confidence: float
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +309,730 @@ def _memory_matches_query(memory: Memory, query: str) -> bool:
     return any(token in normalized_query for token in tokens[:6])
 
 
+def _load_model_capabilities(
+    db: Session,
+    *,
+    model_id: str,
+) -> set[str]:
+    model_info = db.query(ModelCatalog).filter(ModelCatalog.model_id == model_id).first()
+    capabilities = {
+        str(value).lower()
+        for value in (model_info.capabilities or [])
+    } if model_info else set()
+    official = find_model(model_id)
+    if official:
+        capabilities.update(str(value).lower() for value in official.get("input_modalities", []))
+        capabilities.update(str(value).lower() for value in official.get("output_modalities", []))
+        capabilities.update(str(value).lower() for value in official.get("supported_tools", []))
+        capabilities.update(str(value).lower() for value in official.get("supported_features", []))
+        if official.get("official_category_key") == "deep_thinking":
+            capabilities.update({"thinking", "deep_thinking"})
+    if model_supports_deep_thinking(model_id):
+        capabilities.update({"thinking", "deep_thinking"})
+    if model_supports_image_input(model_id):
+        capabilities.update({"vision", "image"})
+    if model_supports_responses_api(model_id):
+        capabilities.add("responses_api")
+    if model_supports_native_web_search(model_id):
+        capabilities.add("native_web_search")
+    return capabilities
+
+
+async def _resolve_search_options(
+    db: Session,
+    *,
+    llm_model_id: str,
+    llm_capabilities: set[str],
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    preference: bool | None,
+) -> WebSearchDecision:
+    if "web_search" not in llm_capabilities:
+        return WebSearchDecision(
+            enable_search=False,
+            search_options=None,
+            route="no_search",
+            source="unsupported",
+            reason="llm model does not support web_search",
+        )
+    if preference is True:
+        return WebSearchDecision(
+            enable_search=True,
+            search_options={"forced_search": True},
+            route="web_only",
+            source="user_preference",
+            confidence=1.0,
+            reason="user explicitly enabled web search",
+        )
+    if preference is False:
+        return WebSearchDecision(
+            enable_search=False,
+            search_options=None,
+            route="no_search",
+            source="user_preference",
+            confidence=1.0,
+            reason="user explicitly disabled web search",
+        )
+
+    rule_decision = _resolve_rule_search_decision(user_message=user_message)
+    if rule_decision is not None:
+        return rule_decision
+
+    classification = await _classify_web_search_need(
+        db,
+        llm_model_id=llm_model_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+    )
+    if classification and classification.confidence >= settings.web_search_classifier_min_confidence:
+        return WebSearchDecision(
+            enable_search=classification.route in {"web_only", "local_then_web"},
+            search_options=None,
+            route=classification.route,
+            source="classifier",
+            confidence=classification.confidence,
+            reason=classification.reason,
+        )
+
+    return WebSearchDecision(
+        enable_search=False,
+        search_options=None,
+        route="no_search",
+        source="fallback",
+        reason="rules and classifier did not require fresh external facts",
+    )
+
+
+def _resolve_rule_thinking_decision(
+    *,
+    user_message: str,
+) -> ThinkingDecision | None:
+    stripped = user_message.strip()
+    if not stripped:
+        return ThinkingDecision(
+            enable_thinking=False,
+            source="rules",
+            confidence=1.0,
+            reason="empty user message does not require deep thinking",
+        )
+
+    lowered = stripped.casefold()
+    normalized = re.sub(r"[\W_]+", "", lowered)
+    if normalized in _THINKING_SOCIAL_MESSAGES:
+        return ThinkingDecision(
+            enable_thinking=False,
+            source="rules",
+            confidence=1.0,
+            reason="social or acknowledgement message does not require deep thinking",
+        )
+    if len(stripped) <= 12 and any(hint in stripped for hint in _THINKING_SOCIAL_HINTS):
+        return ThinkingDecision(
+            enable_thinking=False,
+            source="rules",
+            confidence=0.98,
+            reason="brief greeting does not require deep thinking",
+        )
+    if len(stripped) <= 24 and not any(hint in lowered for hint in _THINKING_HINTS):
+        return ThinkingDecision(
+            enable_thinking=False,
+            source="rules",
+            confidence=0.9,
+            reason="short straightforward message does not require deep thinking",
+        )
+    if any(hint in lowered for hint in _THINKING_HINTS):
+        return ThinkingDecision(
+            enable_thinking=True,
+            source="rules",
+            confidence=0.92,
+            reason="message contains explicit analysis or reasoning cues",
+        )
+    if "\n" in stripped or len(stripped) >= 80:
+        return ThinkingDecision(
+            enable_thinking=True,
+            source="rules",
+            confidence=0.88,
+            reason="long or structured input benefits from deeper reasoning",
+        )
+    return None
+
+
+def _resolve_rule_search_decision(
+    *,
+    user_message: str,
+) -> WebSearchDecision | None:
+    normalized = user_message.strip().lower()
+    if not normalized:
+        return None
+
+    if any(hint in normalized for hint in _LOCAL_ONLY_HINTS):
+        return WebSearchDecision(
+            enable_search=False,
+            search_options=None,
+            route="local_only",
+            source="rules",
+            confidence=1.0,
+            reason="question is answerable from local runtime information",
+        )
+
+    has_project_context_hint = any(hint in normalized for hint in _PROJECT_CONTEXT_HINTS)
+    has_freshness_hint = any(hint in normalized for hint in _WEB_SEARCH_HINTS)
+
+    if has_project_context_hint and has_freshness_hint:
+        return WebSearchDecision(
+            enable_search=True,
+            search_options=None,
+            route="local_then_web",
+            source="rules",
+            confidence=0.9,
+            reason="question references both project context and fresh external facts",
+        )
+    if has_project_context_hint:
+        return WebSearchDecision(
+            enable_search=False,
+            search_options=None,
+            route="local_only",
+            source="rules",
+            confidence=0.9,
+            reason="question references uploaded knowledge, memories, or earlier conversation",
+        )
+    if has_freshness_hint:
+        return WebSearchDecision(
+            enable_search=True,
+            search_options=None,
+            route="web_only",
+            source="rules",
+            confidence=0.85,
+            reason="question contains freshness or live-data hints",
+        )
+    return None
+
+
+def _pick_thinking_classifier_model(
+    db: Session,
+    *,
+    llm_model_id: str,
+) -> str:
+    candidates = [
+        settings.thinking_classifier_model,
+        "qwen3.5-flash",
+        "qwen3-flash",
+        llm_model_id,
+        settings.dashscope_model,
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = (candidate or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        model_info = (
+            db.query(ModelCatalog)
+            .filter(ModelCatalog.model_id == normalized, ModelCatalog.is_active.is_(True))
+            .first()
+        )
+        if model_info is not None or normalized in {settings.dashscope_model, llm_model_id}:
+            return normalized
+    return llm_model_id
+
+
+def _pick_search_classifier_model(
+    db: Session,
+    *,
+    llm_model_id: str,
+) -> str:
+    candidates = [
+        settings.web_search_classifier_model,
+        "qwen3.5-flash",
+        "qwen3-flash",
+        llm_model_id,
+        settings.dashscope_model,
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = (candidate or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        model_info = (
+            db.query(ModelCatalog)
+            .filter(ModelCatalog.model_id == normalized, ModelCatalog.is_active.is_(True))
+            .first()
+        )
+        if model_info is not None or normalized in {settings.dashscope_model, llm_model_id}:
+            return normalized
+    return llm_model_id
+
+
+def _extract_json_object(raw: str) -> dict[str, object] | None:
+    text = raw.strip()
+    if not text:
+        return None
+
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _parse_search_classifier_result(raw: str) -> WebSearchClassification | None:
+    payload = _extract_json_object(raw)
+    if not payload:
+        return None
+
+    route_value = str(payload.get("route") or "").strip().lower()
+    if route_value not in _SEARCH_CLASSIFIER_ROUTES:
+        return None
+
+    confidence_value = payload.get("confidence", 0.0)
+    try:
+        confidence = max(0.0, min(1.0, float(confidence_value)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    return WebSearchClassification(
+        route=route_value,
+        needs_fresh_facts=bool(payload.get("needs_fresh_facts")),
+        can_answer_from_project_context=bool(payload.get("can_answer_from_project_context")),
+        confidence=confidence,
+        reason=str(payload.get("reason") or "").strip() or None,
+    )
+
+
+def _parse_thinking_classifier_result(raw: str) -> ThinkingClassification | None:
+    payload = _extract_json_object(raw)
+    if not payload:
+        return None
+
+    enable_value = payload.get("enable_thinking")
+    if isinstance(enable_value, bool):
+        enable_thinking = enable_value
+    elif isinstance(enable_value, str):
+        normalized = enable_value.strip().lower()
+        if normalized in {"true", "on", "yes", "think", "deep"}:
+            enable_thinking = True
+        elif normalized in {"false", "off", "no", "direct", "simple"}:
+            enable_thinking = False
+        else:
+            return None
+    else:
+        return None
+
+    confidence_value = payload.get("confidence", 0.0)
+    try:
+        confidence = max(0.0, min(1.0, float(confidence_value)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    return ThinkingClassification(
+        enable_thinking=enable_thinking,
+        confidence=confidence,
+        reason=str(payload.get("reason") or "").strip() or None,
+    )
+
+
+async def _classify_web_search_need(
+    db: Session,
+    *,
+    llm_model_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+) -> WebSearchClassification | None:
+    classifier_model_id = _pick_search_classifier_model(db, llm_model_id=llm_model_id)
+    recent_excerpt = "\n".join(
+        f"{message.get('role', 'user')}: {message.get('content', '').strip()}"
+        for message in recent_messages[-4:]
+        if (message.get("content") or "").strip()
+    )
+    classifier_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You route user questions for web search. "
+                "Decide whether the latest user turn needs fresh public facts from the web, "
+                "project-local context (uploaded documents, memories, earlier conversation), both, or neither. "
+                "Return JSON only with keys route, needs_fresh_facts, can_answer_from_project_context, confidence, reason. "
+                "Valid route values: local_only, web_only, local_then_web, no_search."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Recent conversation:\n{recent_excerpt or '(none)'}\n\n"
+                f"Latest user turn:\n{user_message.strip()}\n\n"
+                "Use web_only for live or recent public facts. "
+                "Use local_only for uploaded docs, memories, or prior-turn questions. "
+                "Use local_then_web when both are needed. "
+                "Use no_search for timeless/general answers."
+            ),
+        },
+    ]
+
+    try:
+        result = await chat_completion_detailed(
+            classifier_messages,
+            model=classifier_model_id,
+            temperature=0.0,
+            max_tokens=220,
+            enable_search=False,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Web search classifier failed")
+        return None
+
+    classification = _parse_search_classifier_result(result.content)
+    if classification is None:
+        logger.warning("Web search classifier returned unparsable content: %s", result.content)
+    return classification
+
+
+async def _classify_thinking_need(
+    db: Session,
+    *,
+    llm_model_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+) -> ThinkingClassification | None:
+    classifier_model_id = _pick_thinking_classifier_model(db, llm_model_id=llm_model_id)
+    recent_excerpt = "\n".join(
+        f"{message.get('role', 'user')}: {message.get('content', '').strip()}"
+        for message in recent_messages[-4:]
+        if (message.get("content") or "").strip()
+    )
+    classifier_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You decide whether the assistant should enable deep thinking for the latest user turn. "
+                "Enable deep thinking for requests that likely need multi-step reasoning, planning, comparison, "
+                "debugging, tradeoff analysis, careful synthesis, or non-trivial interpretation. "
+                "Disable deep thinking for greetings, chit-chat, simple acknowledgements, direct factual answers, "
+                "brief straightforward requests, or lightweight descriptions. "
+                "Return JSON only with keys enable_thinking, confidence, reason."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Recent conversation:\n{recent_excerpt or '(none)'}\n\n"
+                f"Latest user turn:\n{user_message.strip()}\n\n"
+                "If the task can be answered directly without substantial internal reasoning, set enable_thinking to false. "
+                "If the task benefits from deliberate decomposition or careful reasoning, set enable_thinking to true."
+            ),
+        },
+    ]
+
+    try:
+        result = await chat_completion_detailed(
+            classifier_messages,
+            model=classifier_model_id,
+            temperature=0.0,
+            max_tokens=180,
+            enable_thinking=False,
+            enable_search=False,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Thinking classifier failed")
+        return None
+
+    classification = _parse_thinking_classifier_result(result.content)
+    if classification is None:
+        logger.warning("Thinking classifier returned unparsable content: %s", result.content)
+    return classification
+
+
+async def resolve_enable_thinking(
+    db: Session,
+    *,
+    project_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    preference: bool | None,
+    llm_model_id: str | None = None,
+) -> ThinkingDecision:
+    if preference is True:
+        return ThinkingDecision(
+            enable_thinking=True,
+            source="user_preference",
+            confidence=1.0,
+            reason="user explicitly enabled deep thinking",
+        )
+    if preference is False:
+        return ThinkingDecision(
+            enable_thinking=False,
+            source="user_preference",
+            confidence=1.0,
+            reason="user explicitly disabled deep thinking",
+        )
+
+    rule_decision = _resolve_rule_thinking_decision(user_message=user_message)
+    if rule_decision is not None:
+        return rule_decision
+
+    effective_model_id = llm_model_id or resolve_pipeline_model_id(
+        db,
+        project_id=project_id,
+        model_type="llm",
+    )
+    classification = await _classify_thinking_need(
+        db,
+        llm_model_id=effective_model_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+    )
+    if classification and classification.confidence >= settings.thinking_classifier_min_confidence:
+        return ThinkingDecision(
+            enable_thinking=classification.enable_thinking,
+            source="classifier",
+            confidence=classification.confidence,
+            reason=classification.reason,
+        )
+
+    return ThinkingDecision(
+        enable_thinking=False,
+        source="fallback",
+        reason="rules and classifier did not require deep thinking",
+    )
+
+def _should_use_responses_auto_tools(
+    *,
+    llm_model_id: str,
+    llm_capabilities: set[str],
+    enable_search: bool,
+    image_bytes: bytes | None = None,
+    video_bytes: bytes | None = None,
+) -> bool:
+    if video_bytes:
+        return False
+    if image_bytes and not model_supports_image_input(llm_model_id):
+        return False
+    if "responses_api" not in llm_capabilities or not model_supports_responses_api(llm_model_id):
+        return False
+    if "function_calling" in llm_capabilities:
+        return True
+    return enable_search and "native_web_search" in llm_capabilities
+
+
+def _build_response_tool_definitions(
+    *,
+    llm_model_id: str,
+    llm_capabilities: set[str],
+    enable_search: bool,
+) -> list[dict[str, object]]:
+    tools: list[dict[str, object]] = []
+    if "function_calling" in llm_capabilities:
+        tools.extend(get_response_function_tools())
+    if enable_search and model_supports_native_web_search(llm_model_id):
+        tools.append({"type": "web_search"})
+    return tools
+
+
+def _response_enable_thinking_value(
+    *,
+    llm_model_id: str,
+    enable_thinking: bool | None,
+) -> bool | None:
+    if enable_thinking is None:
+        return None
+    if model_supports_deep_thinking(llm_model_id):
+        return enable_thinking
+    return None
+
+
+async def _call_llm_with_auto_tools(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    messages: list[dict[str, str]],
+    llm_model_id: str,
+    llm_capabilities: set[str],
+    enable_thinking: bool | None,
+    enable_search: bool,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+) -> ChatCompletionResult:
+    _, conversation = _load_active_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    tool_definitions = _build_response_tool_definitions(
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        enable_search=enable_search,
+    )
+    tool_messages: list[dict[str, object]] = [dict(message) for message in messages]
+    last_result = ChatCompletionResult(content="")
+    collected_sources: list[SearchSource] = []
+
+    for _ in range(4):
+        last_result = await responses_completion_detailed(
+            tool_messages,
+            model=llm_model_id,
+            enable_thinking=_response_enable_thinking_value(
+                llm_model_id=llm_model_id,
+                enable_thinking=enable_thinking,
+            ),
+            tools=tool_definitions,
+            tool_choice="auto",
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+        )
+        collected_sources = merge_search_sources(collected_sources, last_result.search_sources)
+        if not last_result.tool_calls:
+            last_result.search_sources = merge_search_sources(collected_sources)
+            return last_result
+
+        for tool_call in last_result.tool_calls:
+            tool_messages.append(
+                {
+                    "type": "function_call",
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                }
+            )
+            tool_result = await execute_function_tool_call(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                conversation_created_by=conversation.created_by,
+                name=tool_call.name,
+                arguments_json=tool_call.arguments,
+            )
+            tool_messages.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call.id,
+                    "output": json.dumps(tool_result, ensure_ascii=False),
+                }
+            )
+
+    last_result.search_sources = merge_search_sources(collected_sources)
+    return last_result
+
+
+async def _stream_llm_with_auto_tools(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    messages: list[dict[str, str]],
+    llm_model_id: str,
+    llm_capabilities: set[str],
+    enable_thinking: bool | None,
+    enable_search: bool,
+    image_bytes: bytes | None = None,
+    image_mime_type: str = "image/jpeg",
+) -> AsyncIterator[ResponsesStreamChunk]:
+    _, conversation = _load_active_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    tool_definitions = _build_response_tool_definitions(
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        enable_search=enable_search,
+    )
+    tool_messages: list[dict[str, object]] = [dict(message) for message in messages]
+
+    for _ in range(4):
+        tool_calls: list[ToolCall] = []
+        async for chunk in responses_completion_stream(
+            tool_messages,
+            model=llm_model_id,
+            enable_thinking=_response_enable_thinking_value(
+                llm_model_id=llm_model_id,
+                enable_thinking=enable_thinking,
+            ),
+            tools=tool_definitions,
+            tool_choice="auto",
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+        ):
+            if chunk.tool_calls:
+                tool_calls.extend(chunk.tool_calls)
+            if chunk.content or chunk.reasoning_content or chunk.search_sources or chunk.finish_reason:
+                yield chunk
+
+        if not tool_calls:
+            return
+
+        for tool_call in tool_calls:
+            tool_messages.append(
+                {
+                    "type": "function_call",
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                }
+            )
+            tool_result = await execute_function_tool_call(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                conversation_created_by=conversation.created_by,
+                name=tool_call.name,
+                arguments_json=tool_call.arguments,
+            )
+            tool_messages.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call.id,
+                    "output": json.dumps(tool_result, ensure_ascii=False),
+                }
+            )
+
+
+async def _assemble_prompt_context(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, object]]:
+    project, _conversation = _load_active_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    context = await build_memory_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        personality=extract_personality(project.description) if project else "",
+        semantic_search_fn=search_similar,
+        linked_file_loader_fn=load_linked_file_chunks_for_memories,
+    )
+    messages: list[dict[str, str]] = [{"role": "system", "content": context.system_prompt}]
+    messages.extend(recent_messages[-20:])  # Last 20 messages for context
+    messages.append({"role": "user", "content": user_message})
+    return messages, context.retrieval_trace
+
+
 async def _assemble_llm_context(
     db: Session,
     *,
@@ -140,132 +1042,14 @@ async def _assemble_llm_context(
     user_message: str,
     recent_messages: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    """Assemble the full messages list (system + history + user) for an LLM call.
-
-    Shared by both the blocking ``_build_and_call_llm`` and the streaming
-    ``orchestrate_inference_stream`` paths so that context assembly logic is
-    not duplicated.
-
-    Returns a list of message dicts ready to pass to the model API.
-    """
-    # 1. Retrieve RAG knowledge
-    knowledge_chunks: list[dict] = []
-    linked_file_chunks: list[dict] = []
-    semantic_results: list[dict] = []
-    relevant_memory_ids: list[str] = []
-
-    # 2. Load memories
-    project, conversation_record = _load_active_conversation_context(
+    messages, _retrieval_trace = await _assemble_prompt_context(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
         conversation_id=conversation_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
     )
-    permanent_memories = _load_visible_permanent_memories(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        conversation_created_by=conversation_record.created_by,
-    )
-
-    temporary_memories = (
-        db.query(Memory)
-        .filter(
-            Memory.workspace_id == workspace_id,
-            Memory.project_id == project_id,
-            Memory.type == "temporary",
-            Memory.source_conversation_id == conversation_id,
-        )
-        .all()
-    )
-
-    try:
-        with db.begin_nested():
-            semantic_results = await search_similar(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                query=user_message,
-                limit=12,
-            )
-            relevant_memory_ids = _filter_relevant_memory_ids_for_prompt(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                conversation_id=conversation_id,
-                conversation_created_by=conversation_record.created_by,
-                results=semantic_results,
-            )
-            knowledge_chunks = _filter_knowledge_chunks_for_prompt(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                results=semantic_results,
-            )
-            relevant_memory_ids.extend(
-                memory.id
-                for memory in [*permanent_memories, *temporary_memories]
-                if _memory_matches_query(memory, user_message)
-            )
-            relevant_memory_ids = list(dict.fromkeys(relevant_memory_ids))
-            if relevant_memory_ids:
-                linked_file_chunks = await load_linked_file_chunks_for_memories(
-                    db,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    memory_ids=relevant_memory_ids,
-                    query=user_message,
-                    limit=4,
-                )
-    except Exception:  # noqa: BLE001
-        logger.exception("RAG context assembly failed; continuing without semantic context")
-
-    # 3. Load project personality
-    personality = extract_personality(project.description) if project else ""
-
-    # 4. Assemble system prompt
-    system_parts: list[str] = []
-
-    if personality:
-        system_parts.append(f"你的人格设定：\n{personality}")
-
-    if permanent_memories or temporary_memories:
-        memory_lines: list[str] = []
-        for m in permanent_memories:
-            memory_lines.append(f"- [永久] {m.content}")
-        for m in temporary_memories:
-            memory_lines.append(f"- [本次对话] {m.content}")
-        system_parts.append("你记住的关于用户的信息：\n" + "\n".join(memory_lines))
-
-    if knowledge_chunks:
-        knowledge_text = "\n---\n".join([c["chunk_text"] for c in knowledge_chunks])
-        system_parts.append(f"相关知识参考（来自用户上传的资料）：\n{knowledge_text}")
-
-    linked_seen = {
-        (chunk.get("data_item_id"), chunk.get("chunk_text"))
-        for chunk in knowledge_chunks
-    }
-    linked_file_chunks = [
-        chunk
-        for chunk in linked_file_chunks
-        if (chunk.get("data_item_id"), chunk.get("chunk_text")) not in linked_seen
-    ]
-    if linked_file_chunks:
-        linked_text = "\n---\n".join(
-            [
-                f"[{chunk.get('filename') or '未命名资料'}]\n{chunk['chunk_text']}"
-                for chunk in linked_file_chunks
-            ]
-        )
-        system_parts.append(f"与当前相关记忆直接关联的资料摘录：\n{linked_text}")
-
-    system_prompt = "\n\n".join(system_parts) if system_parts else "你是一个有帮助的 AI 助手。"
-
-    # 5. Build messages list
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
-    messages.extend(recent_messages[-20:])  # Last 20 messages for context
-    messages.append({"role": "user", "content": user_message})
-
     return messages
 
 
@@ -283,7 +1067,8 @@ async def _build_and_call_llm(
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
     enable_thinking: bool | None = None,
-) -> dict[str, str | None]:
+    enable_search: bool | None = None,
+) -> dict[str, object]:
     """Shared logic used by both text and voice pipelines.
 
     1. Retrieve RAG knowledge (semantic search)
@@ -292,7 +1077,7 @@ async def _build_and_call_llm(
     4. Assemble system prompt
     5. Call model API (text-only or multimodal if *image_bytes* provided)
     """
-    messages = await _assemble_llm_context(
+    messages, retrieval_trace = await _assemble_prompt_context(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
@@ -300,8 +1085,49 @@ async def _build_and_call_llm(
         user_message=user_message,
         recent_messages=recent_messages,
     )
+    thinking_decision = await resolve_enable_thinking(
+        db,
+        project_id=project_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        preference=enable_thinking,
+        llm_model_id=llm_model_id,
+    )
+    resolved_enable_thinking = thinking_decision.enable_thinking
+    llm_capabilities = _load_model_capabilities(db, model_id=llm_model_id)
+    search_decision = await _resolve_search_options(
+        db,
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        preference=enable_search,
+    )
+    search_enabled = search_decision.enable_search
+    search_options = search_decision.search_options
+    should_use_responses_auto_tools = _should_use_responses_auto_tools(
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        enable_search=search_enabled,
+        image_bytes=image_bytes,
+        video_bytes=video_bytes,
+    )
 
-    if image_bytes or video_bytes:
+    if should_use_responses_auto_tools:
+        result = await _call_llm_with_auto_tools(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            messages=messages,
+            llm_model_id=llm_model_id,
+            llm_capabilities=llm_capabilities,
+            enable_thinking=resolved_enable_thinking,
+            enable_search=search_enabled,
+            image_bytes=image_bytes,
+            image_mime_type=image_mime_type,
+        )
+    elif image_bytes or video_bytes:
         result = await chat_completion_multimodal_detailed(
             messages,
             model=llm_model_id,
@@ -309,18 +1135,24 @@ async def _build_and_call_llm(
             image_mime_type=image_mime_type,
             video_bytes=video_bytes,
             video_mime_type=video_mime_type,
-            enable_thinking=enable_thinking,
+            enable_thinking=resolved_enable_thinking,
+            enable_search=search_enabled,
+            search_options=search_options,
         )
     else:
         result = await chat_completion_detailed(
             messages,
             model=llm_model_id,
-            enable_thinking=enable_thinking,
+            enable_thinking=resolved_enable_thinking,
+            enable_search=search_enabled,
+            search_options=search_options,
         )
-    reasoning_content = result.reasoning_content if enable_thinking is True else None
+    reasoning_content = result.reasoning_content if resolved_enable_thinking else None
     return {
         "content": result.content,
         "reasoning_content": reasoning_content,
+        "sources": serialize_search_sources(result.search_sources),
+        "retrieval_trace": retrieval_trace,
     }
 
 
@@ -338,7 +1170,8 @@ async def orchestrate_inference(
     user_message: str,
     recent_messages: list[dict[str, str]],
     enable_thinking: bool | None = None,
-) -> dict[str, str | None]:
+    enable_search: bool | None = None,
+) -> dict[str, object]:
     """Orchestrate a full inference call (text → text).
 
     This is the original entry-point used by the chat endpoint.
@@ -355,6 +1188,7 @@ async def orchestrate_inference(
         recent_messages=recent_messages,
         llm_model_id=llm_model_id,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
     )
 
 
@@ -372,6 +1206,7 @@ async def orchestrate_inference_stream(
     user_message: str,
     recent_messages: list[dict[str, str]],
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
     user_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """Streaming variant of :func:`orchestrate_inference`.
@@ -386,8 +1221,28 @@ async def orchestrate_inference_stream(
     On error an ``{"event": "error", "data": {"message": ...}}`` is emitted.
     """
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
+    thinking_decision = await resolve_enable_thinking(
+        db,
+        project_id=project_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        preference=enable_thinking,
+        llm_model_id=llm_model_id,
+    )
+    resolved_enable_thinking = thinking_decision.enable_thinking
+    llm_capabilities = _load_model_capabilities(db, model_id=llm_model_id)
+    search_decision = await _resolve_search_options(
+        db,
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        preference=enable_search,
+    )
+    search_enabled = search_decision.enable_search
+    search_options = search_decision.search_options
 
-    messages = await _assemble_llm_context(
+    messages, retrieval_trace = await _assemble_prompt_context(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
@@ -400,14 +1255,60 @@ async def orchestrate_inference_stream(
 
     full_content = ""
     full_reasoning = ""
-    should_emit_reasoning = enable_thinking is True
+    full_sources: list[SearchSource] = []
+    should_emit_reasoning = resolved_enable_thinking
+
+    if _should_use_responses_auto_tools(
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        enable_search=search_enabled,
+    ):
+        try:
+            async for chunk in _stream_llm_with_auto_tools(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                messages=messages,
+                llm_model_id=llm_model_id,
+                llm_capabilities=llm_capabilities,
+                enable_thinking=resolved_enable_thinking,
+                enable_search=search_enabled,
+            ):
+                if chunk.search_sources:
+                    full_sources = merge_search_sources(full_sources, chunk.search_sources)
+                if should_emit_reasoning and chunk.reasoning_content:
+                    full_reasoning += chunk.reasoning_content
+                    yield {"event": "reasoning", "data": {"content": chunk.reasoning_content}}
+                if chunk.content:
+                    full_content += chunk.content
+                    yield {"event": "token", "data": {"content": chunk.content}}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Auto-tool inference error")
+            yield {"event": "error", "data": {"message": str(exc)}}
+            return
+
+        yield {
+            "event": "message_done",
+            "data": {
+                "content": full_content,
+                "reasoning_content": (full_reasoning or None) if should_emit_reasoning else None,
+                "sources": serialize_search_sources(full_sources),
+                "retrieval_trace": retrieval_trace,
+            },
+        }
+        return
 
     try:
         async for chunk in chat_completion_stream(
             messages,
             model=llm_model_id,
-            enable_thinking=enable_thinking,
+            enable_thinking=resolved_enable_thinking,
+            enable_search=search_enabled,
+            search_options=search_options,
         ):
+            if chunk.search_sources:
+                full_sources = merge_search_sources(full_sources, chunk.search_sources)
             if should_emit_reasoning and chunk.reasoning_content:
                 full_reasoning += chunk.reasoning_content
                 yield {"event": "reasoning", "data": {"content": chunk.reasoning_content}}
@@ -424,6 +1325,8 @@ async def orchestrate_inference_stream(
         "data": {
             "content": full_content,
             "reasoning_content": (full_reasoning or None) if should_emit_reasoning else None,
+            "sources": serialize_search_sources(full_sources),
+            "retrieval_trace": retrieval_trace,
         },
     }
 
@@ -514,7 +1417,8 @@ async def orchestrate_synthetic_realtime_turn(
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
     enable_thinking: bool | None = None,
-) -> dict[str, str | None]:
+    enable_search: bool | None = None,
+) -> dict[str, object]:
     user_text = await transcribe_realtime_audio_input_for_project(
         db,
         project_id=project_id,
@@ -531,6 +1435,7 @@ async def orchestrate_synthetic_realtime_turn(
         video_bytes=video_bytes,
         video_mime_type=video_mime_type,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
     )
 
 
@@ -546,10 +1451,11 @@ async def orchestrate_synthetic_realtime_turn_from_text(
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
     enable_thinking: bool | None = None,
-) -> dict[str, str | None]:
+    enable_search: bool | None = None,
+) -> dict[str, object]:
     normalized_user_text = user_text.strip()
     if not normalized_user_text:
-        return {"text_input": "", "text_response": ""}
+        return {"text_input": "", "text_response": "", "sources": []}
 
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
     recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
@@ -566,11 +1472,14 @@ async def orchestrate_synthetic_realtime_turn_from_text(
         video_bytes=video_bytes,
         video_mime_type=video_mime_type,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
     )
     return {
         "text_input": normalized_user_text,
         "text_response": llm_result["content"] or "",
         "reasoning_content": llm_result["reasoning_content"],
+        "sources": llm_result.get("sources") or [],
+        "retrieval_trace": llm_result.get("retrieval_trace") or {},
     }
 
 
@@ -592,6 +1501,7 @@ async def orchestrate_voice_inference(
     text_input: str | None = None,
     return_audio: bool = True,
     enable_thinking: bool | None = None,
+    enable_search: bool | None = None,
 ) -> dict:
     """Full voice pipeline orchestration.
 
@@ -601,6 +1511,7 @@ async def orchestrate_voice_inference(
             "text_response": str,       # AI's text response
             "audio_response": bytes | None,  # AI's voice (after TTS)
             "reasoning_content": str | None,
+            "sources": list[dict],
         }
     """
     from app.services.vision_client import describe_image
@@ -615,76 +1526,41 @@ async def orchestrate_voice_inference(
     )
     capabilities = model_info.capabilities if model_info else []
     is_omni = "audio_input" in capabilities and "audio_output" in capabilities
+    llm_capabilities = {str(value).lower() for value in capabilities or []}
+    recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
+    search_decision = await _resolve_search_options(
+        db,
+        llm_model_id=llm_model_id,
+        llm_capabilities=llm_capabilities,
+        user_message=text_input or "",
+        recent_messages=recent_msgs,
+        preference=enable_search,
+    )
+    search_enabled = search_decision.enable_search
+    search_options = search_decision.search_options
 
     if is_omni and (audio_bytes or image_bytes):
-        project, conversation = _load_active_conversation_context(
+        thinking_decision = await resolve_enable_thinking(
+            db,
+            project_id=project_id,
+            user_message=text_input or "(audio input)",
+            recent_messages=recent_msgs,
+            preference=enable_thinking,
+            llm_model_id=llm_model_id,
+        )
+        resolved_enable_thinking = thinking_decision.enable_thinking
+        # Omni mode: skip ASR (model understands audio directly)
+        # Build context from recent messages
+        user_text = text_input or "(audio input)"
+
+        messages, retrieval_trace = await _assemble_prompt_context(
             db,
             workspace_id=workspace_id,
             project_id=project_id,
             conversation_id=conversation_id,
+            user_message=user_text,
+            recent_messages=recent_msgs,
         )
-        # Omni mode: skip ASR (model understands audio directly)
-        # Build context from recent messages
-        recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
-
-        user_text = text_input or "(audio input)"
-
-        # Build system prompt via shared helper internals
-        # We reuse _build_and_call_llm logic but need multimodal input,
-        # so we assemble system prompt here and call omni_completion directly.
-        knowledge_chunks: list[dict] = []
-        try:
-            with db.begin_nested():
-                knowledge_chunks = await search_similar(
-                    db,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    query=user_text if text_input else "voice conversation",
-                    limit=5,
-                )
-                knowledge_chunks = _filter_knowledge_chunks_for_prompt(
-                    db,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    results=knowledge_chunks,
-                )
-        except Exception:  # noqa: BLE001
-            logger.exception("Omni RAG lookup failed; continuing without semantic context")
-
-        permanent_memories = _load_visible_permanent_memories(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_created_by=conversation.created_by,
-        )
-        temporary_memories = (
-            db.query(Memory)
-            .filter(
-                Memory.workspace_id == workspace_id,
-                Memory.project_id == project_id,
-                Memory.type == "temporary",
-                Memory.source_conversation_id == conversation_id,
-            )
-            .all()
-        )
-        personality = extract_personality(project.description) if project else ""
-
-        system_parts: list[str] = []
-        if personality:
-            system_parts.append(f"你的人格设定：\n{personality}")
-        if permanent_memories or temporary_memories:
-            memory_lines = [f"- [永久] {m.content}" for m in permanent_memories]
-            memory_lines += [f"- [本次对话] {m.content}" for m in temporary_memories]
-            system_parts.append("你记住的关于用户的信息：\n" + "\n".join(memory_lines))
-        if knowledge_chunks:
-            knowledge_text = "\n---\n".join([c["chunk_text"] for c in knowledge_chunks])
-            system_parts.append(f"相关知识参考（来自用户上传的资料）：\n{knowledge_text}")
-
-        system_prompt = "\n\n".join(system_parts) if system_parts else "你是一个有帮助的 AI 助手。"
-
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        messages.extend(recent_msgs[-20:])
-        messages.append({"role": "user", "content": user_text})
 
         omni_result = await omni_completion(
             messages,
@@ -692,7 +1568,9 @@ async def orchestrate_voice_inference(
             image_bytes=image_bytes,
             image_mime_type=image_mime_type,
             model=llm_model_id,
-            enable_thinking=enable_thinking,
+            enable_thinking=resolved_enable_thinking,
+            enable_search=search_enabled,
+            search_options=search_options,
         )
         text_response = omni_result["text"]
 
@@ -713,7 +1591,9 @@ async def orchestrate_voice_inference(
             "text_input": user_text,
             "text_response": text_response,
             "audio_response": audio_response,
-            "reasoning_content": omni_result.get("reasoning_content"),
+            "reasoning_content": omni_result.get("reasoning_content") if resolved_enable_thinking else None,
+            "sources": omni_result.get("sources") or [],
+            "retrieval_trace": retrieval_trace,
         }
 
     # ① ASR: audio → text  ------------------------------------------------
@@ -727,7 +1607,7 @@ async def orchestrate_voice_inference(
         )
 
     if not user_text.strip():
-        return {"text_input": "", "text_response": "未检测到语音内容", "audio_response": None}
+        return {"text_input": "", "text_response": "未检测到语音内容", "audio_response": None, "sources": []}
 
     # ② Get LLM config and capabilities  ----------------------------------
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
@@ -737,7 +1617,8 @@ async def orchestrate_voice_inference(
         .filter(ModelCatalog.model_id == llm_model_id)
         .first()
     )
-    llm_supports_vision = model_info is not None and "vision" in (model_info.capabilities or [])
+    llm_capabilities = _load_model_capabilities(db, model_id=llm_model_id)
+    llm_supports_vision = model_supports_image_input(llm_model_id) or "vision" in llm_capabilities
 
     # ③ Handle image input  ------------------------------------------------
     image_description: str | None = None
@@ -761,8 +1642,6 @@ async def orchestrate_voice_inference(
 
     # ④ Build context  -----------------------------------------------------
     # Get recent messages for conversation history
-    recent_msgs = load_recent_messages(db, conversation_id=conversation_id, limit=20)
-
     # If we have an image description from a separate Vision model, prepend
     enriched_text = user_text
     if image_description:
@@ -780,6 +1659,7 @@ async def orchestrate_voice_inference(
         image_bytes=image_bytes if use_multimodal_llm else None,
         image_mime_type=image_mime_type,
         enable_thinking=enable_thinking,
+        enable_search=enable_search,
     )
     text_response = llm_result["content"] or ""
 
@@ -801,4 +1681,6 @@ async def orchestrate_voice_inference(
         "text_response": text_response,
         "audio_response": audio_response,
         "reasoning_content": llm_result["reasoning_content"],
+        "sources": llm_result.get("sources") or [],
+        "retrieval_trace": llm_result.get("retrieval_trace") or {},
     }

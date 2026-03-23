@@ -7,6 +7,10 @@ async function switchToOmniRealtime(page: Page) {
   await page.getByRole("button", { name: /Omni 实时/ }).click();
 }
 
+async function switchToSyntheticRealtime(page: Page) {
+  await page.getByRole("button", { name: /合成实时/ }).click();
+}
+
 async function forceSelectRealtimeProject(page: Page, projectId: string) {
   await page.evaluate(({ nextProjectId }) => {
     const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
@@ -45,10 +49,29 @@ async function ensureRealtimeConversationReady(page: Page, projectId: string) {
 
 async function installRealtimeVoiceMocks(
   page: Page,
-  scenario: "success" | "permission-denied" | "turn-error" | "partial-first",
+  scenario:
+    | "success"
+    | "permission-denied"
+    | "turn-error"
+    | "partial-first"
+    | "synthetic-echo"
+    | "synthetic-autoplay",
 ) {
   await page.evaluate(
     ({ activeScenario }) => {
+      const mockProcessors: MockScriptProcessor[] = [];
+
+      const emitSpeechFrame = (amplitude = 0.25) => {
+        const frame = new Float32Array(4096).fill(amplitude);
+        for (const processor of mockProcessors) {
+          processor.onaudioprocess?.({
+            inputBuffer: {
+              getChannelData: () => frame,
+            },
+          });
+        }
+      };
+
       class MockAudioBuffer {
         duration: number;
         channelData: Float32Array;
@@ -83,6 +106,10 @@ async function installRealtimeVoiceMocks(
 
       class MockScriptProcessor {
         onaudioprocess: ((event: { inputBuffer: { getChannelData: () => Float32Array } }) => void) | null = null;
+
+        constructor() {
+          mockProcessors.push(this);
+        }
 
         connect() {
           return undefined;
@@ -169,6 +196,54 @@ async function installRealtimeVoiceMocks(
         },
       });
 
+      if (activeScenario === "synthetic-autoplay") {
+        const mockAudioStats = {
+          primed: 0,
+          replyPlays: 0,
+        };
+        let unlocked = false;
+        Object.defineProperty(window, "__mockAudioStats", {
+          configurable: true,
+          value: mockAudioStats,
+        });
+        Object.defineProperty(globalThis, "__mockAudioStats", {
+          configurable: true,
+          value: mockAudioStats,
+        });
+        Object.defineProperty(HTMLMediaElement.prototype, "play", {
+          configurable: true,
+          value() {
+            const media = this as HTMLMediaElement;
+            const src = media.currentSrc || media.src || "";
+            if (src.startsWith("data:audio/wav;base64,")) {
+              unlocked = true;
+              mockAudioStats.primed += 1;
+              return Promise.resolve();
+            }
+            if (!unlocked) {
+              return Promise.reject(new DOMException("autoplay blocked", "NotAllowedError"));
+            }
+            mockAudioStats.replyPlays += 1;
+            setTimeout(() => {
+              media.onended?.(new Event("ended"));
+            }, 0);
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(HTMLMediaElement.prototype, "pause", {
+          configurable: true,
+          value() {
+            return undefined;
+          },
+        });
+        Object.defineProperty(HTMLMediaElement.prototype, "load", {
+          configurable: true,
+          value() {
+            return undefined;
+          },
+        });
+      }
+
       class MockWebSocket {
         static readonly CONNECTING = 0;
         static readonly OPEN = 1;
@@ -179,9 +254,11 @@ async function installRealtimeVoiceMocks(
         readyState = MockWebSocket.CONNECTING;
         binaryType = "blob";
         onopen: ((event: unknown) => void) | null = null;
-        onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null;
+        onmessage: ((event: { data: string | ArrayBuffer | Blob }) => void) | null = null;
         onclose: ((event: { code: number; reason: string }) => void) | null = null;
         onerror: ((event: unknown) => void) | null = null;
+        assistantTurnOpen = false;
+        interrupted = false;
 
         constructor(url: string) {
           this.url = url;
@@ -193,6 +270,17 @@ async function installRealtimeVoiceMocks(
 
         send(data: string | ArrayBuffer) {
           if (typeof data !== "string") {
+            if (
+              activeScenario === "synthetic-echo" &&
+              this.url.includes("/api/v1/realtime/composed-voice") &&
+              this.assistantTurnOpen
+            ) {
+              this.interrupted = true;
+              this.assistantTurnOpen = false;
+              setTimeout(() => {
+                this.onmessage?.({ data: JSON.stringify({ type: "interrupt.ack" }) });
+              }, 0);
+            }
             return;
           }
 
@@ -250,6 +338,95 @@ async function installRealtimeVoiceMocks(
                   data: JSON.stringify({ type: "transcript.final", text: "语音问题" }),
                 });
               }, 160);
+            } else if (activeScenario === "synthetic-echo" && this.url.includes("/api/v1/realtime/composed-voice")) {
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.final", text: "第一句" }),
+                });
+              }, 30);
+              setTimeout(() => {
+                this.assistantTurnOpen = true;
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "response.text", text: "第一句回复" }),
+                });
+              }, 70);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "audio.meta", mime: "audio/mpeg" }),
+                });
+              }, 80);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: new Blob(["mock-audio-1"], { type: "audio/mpeg" }),
+                });
+              }, 90);
+              setTimeout(() => {
+                emitSpeechFrame();
+              }, 100);
+              setTimeout(() => {
+                if (!this.interrupted) {
+                  this.assistantTurnOpen = false;
+                  this.onmessage?.({
+                    data: JSON.stringify({ type: "response.done" }),
+                  });
+                }
+              }, 130);
+              setTimeout(() => {
+                this.interrupted = false;
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.final", text: "第二句" }),
+                });
+              }, 190);
+              setTimeout(() => {
+                this.assistantTurnOpen = true;
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "response.text", text: "第二句回复" }),
+                });
+              }, 230);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "audio.meta", mime: "audio/mpeg" }),
+                });
+              }, 240);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: new Blob(["mock-audio-2"], { type: "audio/mpeg" }),
+                });
+              }, 250);
+              setTimeout(() => {
+                if (!this.interrupted) {
+                  this.assistantTurnOpen = false;
+                  this.onmessage?.({
+                    data: JSON.stringify({ type: "response.done" }),
+                  });
+                }
+              }, 290);
+            } else if (activeScenario === "synthetic-autoplay" && this.url.includes("/api/v1/realtime/composed-voice")) {
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "transcript.final", text: "帮我播报结果" }),
+                });
+              }, 30);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "response.text", text: "这是自动播报的回复。" }),
+                });
+              }, 70);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "audio.meta", mime: "audio/mpeg" }),
+                });
+              }, 90);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: new Blob(["mock-audio-autoplay"], { type: "audio/mpeg" }),
+                });
+              }, 110);
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({ type: "response.done" }),
+                });
+              }, 150);
             }
             return;
           }
@@ -349,5 +526,48 @@ test.describe("Realtime Voice", () => {
     await expect(page.locator(".chat-message.is-user").last()).toContainText("语");
     await expect(page.locator(".chat-message.is-user").last()).toContainText("语音");
     await expect(page.locator(".chat-message.is-user").last()).toContainText("语音问题");
+  });
+
+  test("synthetic realtime keeps completed turns instead of overwriting the latest utterance", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await installRealtimeVoiceMocks(page, "synthetic-echo");
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
+    await switchToSyntheticRealtime(page);
+    await expect(page.locator(".rt-entry")).toBeVisible();
+
+    await page.locator(".rt-entry").click();
+
+    await expect(page.locator(".chat-message.is-user").last()).toContainText("第二句");
+    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("第二句回复");
+
+    const userTexts = await page.locator(".chat-message.is-user").allTextContents();
+    const assistantTexts = await page.locator(".chat-message.is-assistant").allTextContents();
+    expect(userTexts.join("\n")).toContain("第一句");
+    expect(userTexts.join("\n")).toContain("第二句");
+    expect(assistantTexts.join("\n")).toContain("第一句回复");
+    expect(assistantTexts.join("\n")).toContain("第二句回复");
+  });
+
+  test("synthetic realtime primes playback so spoken replies autoplay", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await installRealtimeVoiceMocks(page, "synthetic-autoplay");
+    await ensureRealtimeConversationReady(page, handle.seedProjectId);
+    await switchToSyntheticRealtime(page);
+    await expect(page.locator(".rt-entry")).toBeVisible();
+
+    await page.locator(".rt-entry").click();
+
+    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("这是自动播报的回复。");
+    await expect
+      .poll(() => page.evaluate(() => (window as { __mockAudioStats?: { primed: number } }).__mockAudioStats?.primed ?? 0))
+      .toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => (window as { __mockAudioStats?: { replyPlays: number } }).__mockAudioStats?.replyPlays ?? 0))
+      .toBe(1);
+    await expect(page.locator(".chat-voice-indicator.is-error")).toHaveCount(0);
   });
 });

@@ -9,8 +9,6 @@ from datetime import datetime, timezone
 from sqlalchemy import text as sql_text
 
 from app.core.config import settings
-
-logger = logging.getLogger(__name__)
 from app.db.session import SessionLocal
 from app.models import (
     Artifact,
@@ -30,12 +28,15 @@ from app.models import (
     TrainingRun,
 )
 from app.services.audit import write_audit_log
+from app.services.memory_metadata import normalize_memory_metadata
 from app.services.memory_roots import ensure_project_assistant_root
 from app.services.memory_visibility import build_private_memory_metadata
 from app.services.runtime_state import runtime_state
 from app.services.storage import delete_object
 from app.services import dashscope_client
 from app.tasks.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="app.tasks.worker_tasks.process_data_item")
@@ -648,6 +649,12 @@ AI：{ai_response}
                             ).first()
                             if target:
                                 target.content = merged
+                                target.metadata_json = normalize_memory_metadata(
+                                    content=merged,
+                                    category=target.category,
+                                    memory_type=target.type,
+                                    metadata=dict(target.metadata_json or {}),
+                                )
                                 db.execute(
                                     sql_text("DELETE FROM embeddings WHERE memory_id = :mid"),
                                     {"mid": target_id},
@@ -670,6 +677,12 @@ AI：{ai_response}
                 metadata = {"importance": importance, "source": "auto_extraction"}
                 if memory_type == "permanent":
                     metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
+                metadata = normalize_memory_metadata(
+                    content=fact_text,
+                    category=fact.get("category", ""),
+                    memory_type=memory_type,
+                    metadata=metadata,
+                )
 
                 if parent_memory_id is None:
                     project = db.get(Project, project_id)
@@ -762,11 +775,48 @@ AI：{ai_response}
                     continue
                 mem.type = "permanent"
                 mem.source_conversation_id = None  # Detach from conversation
-                mem.metadata_json = build_private_memory_metadata(
-                    {**(mem.metadata_json or {}), "promoted_by": "auto_repeat"},
-                    owner_user_id=owner_user_id,
+                mem.metadata_json = normalize_memory_metadata(
+                    content=mem.content,
+                    category=mem.category,
+                    memory_type="permanent",
+                    metadata=build_private_memory_metadata(
+                        {**(mem.metadata_json or {}), "promoted_by": "auto_repeat"},
+                        owner_user_id=owner_user_id,
+                    ),
                 )
 
+        db.commit()
+        try:
+            if settings.env == "test":
+                compact_project_memories_task(workspace_id, project_id)
+            else:
+                compact_project_memories_task.delay(workspace_id, project_id)
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.worker_tasks.compact_project_memories")
+def compact_project_memories_task(
+    workspace_id: str,
+    project_id: str,
+) -> None:
+    import asyncio
+
+    from app.services.memory_compaction import compact_project_memories
+
+    db = SessionLocal()
+    try:
+        asyncio.run(
+            compact_project_memories(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+            )
+        )
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()

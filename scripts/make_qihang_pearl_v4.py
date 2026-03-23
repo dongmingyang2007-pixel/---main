@@ -14,17 +14,20 @@ from make_qihang_pearl_capsule import (
     write_accessor_rows,
 )
 from make_qihang_pearl_v3 import (
+    COMPONENT_STRUCT_FORMATS,
     append_accessor,
     append_aligned_bytes,
     append_buffer_view,
     apply_horizontal_case_rotation,
     build_baseline_report,
     build_world_matrix_getter,
+    get_accessor_info,
     get_named_node_indices,
     parse_glb,
     quaternion_multiply,
     quaternion_to_matrix,
     read_accessor_rows,
+    read_accessor_scalars,
     rotate_vector_about_y,
     set_node_origin_in_product_space,
     sha256_for_bytes,
@@ -35,11 +38,62 @@ from make_qihang_pearl_v3 import (
 TRAY_NODE_NAME = "Case_Base_Linear_Tray_V3"
 PLATFORM_NODE_NAME = "Case_Base_Platform_V4"
 RAMP_NODE_NAME = "Case_Base_Arc_Ramp_V4"
+BASE_SHELL_WALL_THICKNESS_M = 0.0008
 PHASE_NAMES = {
     1: "tray_ramp",
     2: "base_shell_split",
     3: "lid_shell_cover",
 }
+PLATFORM_PROGRESS_STATION_COUNT = 21
+PLATFORM_SPAN_STATION_COUNT = 49
+PLATFORM_SPAN_LIMIT_RATIO = 0.94
+RAMP_PROGRESS_STATION_COUNT = 57
+RAMP_SPAN_STATION_COUNT = 49
+RAMP_SPAN_LIMIT_RATIO = 0.94
+RAMP_PLATFORM_OVERLAP_M = 0.0
+RAMP_START_SOLID_BLEND_RATIO = 0.085
+BASE_SHELL_SEAL_CLEARANCE_M = 0.0
+TRAY_OUTLINE_Z_TO_X_CONTROL_POINTS_M = [
+    (0.0, 0.041226),
+    (0.001221, 0.041177),
+    (0.002435, 0.041028),
+    (0.003635, 0.04078),
+    (0.004816, 0.040434),
+    (0.005969, 0.039991),
+    (0.007088, 0.039451),
+    (0.008167, 0.038816),
+    (0.009198, 0.038088),
+    (0.010174, 0.037268),
+    (0.011088, 0.036358),
+    (0.011932, 0.035361),
+    (0.012698, 0.034278),
+    (0.013378, 0.033113),
+    (0.013963, 0.031868),
+    (0.014444, 0.030547),
+    (0.01481, 0.029151),
+    (0.015049, 0.027686),
+    (0.015157, 0.026154),
+    (0.015227, 0.024558),
+    (0.015287, 0.022904),
+    (0.015338, 0.021195),
+    (0.015381, 0.019434),
+    (0.015417, 0.017626),
+    (0.015448, 0.015777),
+    (0.015475, 0.013889),
+    (0.015496, 0.011967),
+    (0.015514, 0.010017),
+    (0.015528, 0.008043),
+    (0.015539, 0.006049),
+    (0.015546, 0.004041),
+    (0.015551, 0.002023),
+    (0.015552, 0.0),
+]
+TRAY_OUTLINE_X_TO_Z_CONTROL_POINTS_M = sorted(
+    [(x_value, z_value) for z_value, x_value in TRAY_OUTLINE_Z_TO_X_CONTROL_POINTS_M],
+    key=lambda item: item[0],
+)
+TRAY_OUTLINE_MAX_HALF_WIDTH_M = TRAY_OUTLINE_Z_TO_X_CONTROL_POINTS_M[-1][0]
+TRAY_SPLIT_BOUNDARY_MARGIN_M = 0.00035
 PHASE_DEVICE_TARGETS_PRODUCT_M = {
     "Earbud_Left": (-0.0105, 0.0039, -0.00115),
     "DockWell_L": (-0.0105, 0.0078, -0.00115),
@@ -65,6 +119,172 @@ def normalize_vector(vector: np.ndarray) -> np.ndarray:
     if length <= 1e-12:
         return np.array([0.0, 1.0, 0.0], dtype=float)
     return vector / length
+
+
+def compute_triangle_area(point_a: np.ndarray, point_b: np.ndarray, point_c: np.ndarray) -> float:
+    return float(np.linalg.norm(np.cross(point_b - point_a, point_c - point_a)) * 0.5)
+
+
+def compute_indexed_vertex_normals(
+    positions: list[list[float]] | list[np.ndarray],
+    indices: list[int],
+) -> list[np.ndarray]:
+    normals = [np.zeros(3, dtype=float) for _ in positions]
+    for index_offset in range(0, len(indices), 3):
+        i0, i1, i2 = indices[index_offset : index_offset + 3]
+        p0 = np.array(positions[i0], dtype=float)
+        p1 = np.array(positions[i1], dtype=float)
+        p2 = np.array(positions[i2], dtype=float)
+        face_normal = np.cross(p1 - p0, p2 - p0)
+        if float(np.linalg.norm(face_normal)) <= 1e-12:
+            continue
+        normals[i0] += face_normal
+        normals[i1] += face_normal
+        normals[i2] += face_normal
+    return [normalize_vector(row) for row in normals]
+
+
+def clean_indexed_surface_mesh(
+    positions: list[list[float]],
+    indices: list[int],
+    *,
+    merge_decimals: int = 9,
+) -> tuple[list[list[float]], list[int], dict[str, int]]:
+    merged_positions: list[list[float]] = []
+    old_to_new: dict[int, int] = {}
+    key_to_new: dict[tuple[float, float, float], int] = {}
+
+    for old_index, row in enumerate(positions):
+        key = tuple(round(float(value), merge_decimals) for value in row)
+        new_index = key_to_new.get(key)
+        if new_index is None:
+            new_index = len(merged_positions)
+            key_to_new[key] = new_index
+            merged_positions.append([float(value) for value in row])
+        old_to_new[old_index] = new_index
+
+    cleaned_indices: list[int] = []
+    seen_triangles: set[tuple[int, int, int]] = set()
+    removed_degenerate_triangles = 0
+    removed_duplicate_triangles = 0
+
+    for index_offset in range(0, len(indices), 3):
+        i0 = old_to_new[indices[index_offset]]
+        i1 = old_to_new[indices[index_offset + 1]]
+        i2 = old_to_new[indices[index_offset + 2]]
+        if len({i0, i1, i2}) < 3:
+            removed_degenerate_triangles += 1
+            continue
+
+        p0 = np.array(merged_positions[i0], dtype=float)
+        p1 = np.array(merged_positions[i1], dtype=float)
+        p2 = np.array(merged_positions[i2], dtype=float)
+        if compute_triangle_area(p0, p1, p2) <= 1e-12:
+            removed_degenerate_triangles += 1
+            continue
+
+        triangle_key = tuple(sorted((i0, i1, i2)))
+        if triangle_key in seen_triangles:
+            removed_duplicate_triangles += 1
+            continue
+        seen_triangles.add(triangle_key)
+        cleaned_indices.extend((i0, i1, i2))
+
+    stats = {
+        "sourceVertexCount": len(positions),
+        "mergedVertexCount": len(merged_positions),
+        "removedVertexCount": len(positions) - len(merged_positions),
+        "sourceTriangleCount": len(indices) // 3,
+        "cleanedTriangleCount": len(cleaned_indices) // 3,
+        "removedDegenerateTriangleCount": removed_degenerate_triangles,
+        "removedDuplicateTriangleCount": removed_duplicate_triangles,
+    }
+    return merged_positions, cleaned_indices, stats
+
+
+def stitch_sharp_boundary_notch(
+    positions: list[list[float]],
+    indices: list[int],
+    *,
+    max_notch_angle_degrees: float = 35.0,
+    max_closure_span_m: float = 0.0025,
+) -> tuple[list[int], dict[str, object] | None]:
+    edge_counts: dict[tuple[int, int], int] = {}
+    for index_offset in range(0, len(indices), 3):
+        triangle = indices[index_offset : index_offset + 3]
+        for vertex_a, vertex_b in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            edge = (min(vertex_a, vertex_b), max(vertex_a, vertex_b))
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+
+    boundary_edges = [edge for edge, count in edge_counts.items() if count == 1]
+    boundary_adjacency: dict[int, list[int]] = {}
+    for vertex_a, vertex_b in boundary_edges:
+        boundary_adjacency.setdefault(vertex_a, []).append(vertex_b)
+        boundary_adjacency.setdefault(vertex_b, []).append(vertex_a)
+
+    source_normals = compute_indexed_vertex_normals(positions, indices)
+    best_candidate: dict[str, object] | None = None
+
+    for center_index, neighbor_indices in boundary_adjacency.items():
+        if len(neighbor_indices) != 2:
+            continue
+        neighbor_a, neighbor_b = neighbor_indices
+        point_a = np.array(positions[neighbor_a], dtype=float)
+        point_center = np.array(positions[center_index], dtype=float)
+        point_b = np.array(positions[neighbor_b], dtype=float)
+        vector_a = point_a - point_center
+        vector_b = point_b - point_center
+        length_a = float(np.linalg.norm(vector_a))
+        length_b = float(np.linalg.norm(vector_b))
+        if length_a <= 1e-12 or length_b <= 1e-12:
+            continue
+        cosine = float(np.dot(vector_a, vector_b) / (length_a * length_b))
+        cosine = max(-1.0, min(1.0, cosine))
+        angle_degrees = math.degrees(math.acos(cosine))
+        closure_span = float(np.linalg.norm(point_b - point_a))
+        if angle_degrees > max_notch_angle_degrees or closure_span > max_closure_span_m:
+            continue
+
+        candidate = {
+            "center": center_index,
+            "left": neighbor_a,
+            "right": neighbor_b,
+            "angleDegrees": angle_degrees,
+            "closureSpanM": closure_span,
+        }
+        if best_candidate is None or angle_degrees < float(best_candidate["angleDegrees"]):
+            best_candidate = candidate
+
+    if best_candidate is None:
+        return indices, None
+
+    left_index = int(best_candidate["left"])
+    center_index = int(best_candidate["center"])
+    right_index = int(best_candidate["right"])
+    point_left = np.array(positions[left_index], dtype=float)
+    point_center = np.array(positions[center_index], dtype=float)
+    point_right = np.array(positions[right_index], dtype=float)
+    preferred_normal = normalize_vector(
+        source_normals[left_index] + source_normals[center_index] + source_normals[right_index]
+    )
+    triangle = [left_index, center_index, right_index]
+    triangle_normal = normalize_vector(np.cross(point_center - point_left, point_right - point_left))
+    if float(np.dot(triangle_normal, preferred_normal)) < 0.0:
+        triangle = [right_index, center_index, left_index]
+
+    stitched_indices = list(indices) + triangle
+    return stitched_indices, {
+        "centerVertex": center_index,
+        "leftVertex": left_index,
+        "rightVertex": right_index,
+        "angleDegrees": round(float(best_candidate["angleDegrees"]), 4),
+        "closureSpanMm": round(float(best_candidate["closureSpanM"]) * 1000.0, 4),
+        "addedTriangle": triangle,
+    }
 
 
 def build_product_space_matrices(gltf: dict, node_name: str) -> tuple[int, np.ndarray, np.ndarray]:
@@ -129,29 +349,70 @@ def tray_pitch_height(x_value: float) -> float:
     return 0.0051
 
 
+def ramp_surface_peak_y(x_value: float) -> float:
+    return tray_platform_height_y(x_value)
+
+
+def ramp_surface_base_y(x_value: float) -> float:
+    return ramp_surface_peak_y(x_value) - tray_pitch_height(x_value)
+
+
 def tray_half_width(x_value: float) -> float:
-    x_mm = float(x_value) * 1000.0
-    if x_mm <= 27.5:
-        return 0.0151
-    return lerp(0.0151, 0.0132, smoothstep(27.5, 38.8, x_mm))
+    return profile_value_from_points(abs(float(x_value)), TRAY_OUTLINE_X_TO_Z_CONTROL_POINTS_M)
 
 
 def tray_center_z(x_value: float) -> float:
     return 0.0
 
 
-def tray_split_boundary_x(z_value: float) -> float:
+def tray_outer_half_length(z_value: float) -> float:
+    return profile_value_from_points(abs(float(z_value)), TRAY_OUTLINE_Z_TO_X_CONTROL_POINTS_M)
+
+
+def tray_outer_left_x(z_value: float) -> float:
+    return -tray_outer_half_length(z_value)
+
+
+def tray_outer_right_x(z_value: float) -> float:
+    return tray_outer_half_length(z_value)
+
+
+def tray_split_profile_weight(span_ratio: float) -> float:
+    normalized = max(-1.0, min(1.0, float(span_ratio)))
+    cosine = math.cos(abs(normalized) * (math.pi * 0.5))
+    return smoothstep(0.0, 1.0, cosine)
+
+
+def tray_split_boundary_raw_x(z_value: float) -> float:
     arc_mid_z = tray_center_z(0.0)
-    arc_half_span = tray_half_width(0.0) * 0.84
-    normalized = max(-1.0, min(1.0, (z_value - arc_mid_z) / arc_half_span))
-    arc = math.sqrt(max(0.0, 1.0 - (normalized * normalized)))
-    return -0.0228 + (0.0032 * arc)
+    arc_half_span = tray_half_width(0.0)
+    back_flat_x = -0.0196
+    left_edge_z = arc_mid_z - arc_half_span
+    corner_radius = max(0.0, arc_half_span)
+    if corner_radius <= 1e-9:
+        return back_flat_x
+    flat_join_z = arc_mid_z
+    front_rounded_x = back_flat_x - corner_radius
+    if z_value >= flat_join_z:
+        return back_flat_x
+    clamped_z = max(left_edge_z, min(flat_join_z, z_value))
+    z_delta = clamped_z - flat_join_z
+    return front_rounded_x + math.sqrt(max(0.0, (corner_radius * corner_radius) - (z_delta * z_delta)))
+
+
+def tray_split_boundary_x(z_value: float) -> float:
+    outer_left = tray_outer_left_x(z_value)
+    outer_right = tray_outer_right_x(z_value)
+    min_boundary = outer_left + TRAY_SPLIT_BOUNDARY_MARGIN_M
+    max_boundary = outer_right - TRAY_SPLIT_BOUNDARY_MARGIN_M
+    if min_boundary >= max_boundary:
+        return (outer_left + outer_right) * 0.5
+    return max(min_boundary, min(max_boundary, tray_split_boundary_raw_x(z_value)))
 
 
 def ramp_tip_end_x(span_ratio: float) -> float:
-    normalized = max(-1.0, min(1.0, float(span_ratio)))
-    arc = math.sqrt(max(0.0, 1.0 - (normalized * normalized)))
-    return 0.0360 + (0.0028 * arc)
+    z_value = tray_center_z(0.0) + (TRAY_OUTLINE_MAX_HALF_WIDTH_M * max(-1.0, min(1.0, float(span_ratio))))
+    return tray_outer_right_x(z_value)
 
 
 def platform_surface_top_y(x_value: float, z_value: float) -> float:
@@ -160,7 +421,16 @@ def platform_surface_top_y(x_value: float, z_value: float) -> float:
 
 def ramp_surface_top_y(x_value: float, z_value: float) -> float:
     span_ratio = max(-1.0, min(1.0, (z_value - tray_center_z(x_value)) / max(tray_half_width(x_value), 1e-9)))
-    return 0.0060 + (tray_pitch_height(x_value) * math.sin(span_ratio * (math.pi * 0.5)))
+    return ramp_surface_base_y(x_value) + (tray_pitch_height(x_value) * math.sin(span_ratio * (math.pi * 0.5)))
+
+
+def platform_surface_bottom_y(x_value: float, z_value: float) -> float:
+    return platform_surface_top_y(x_value, z_value) - 0.00145
+
+
+def ramp_surface_bottom_y(x_value: float, z_value: float) -> float:
+    thickness = lerp(0.00155, 0.00175, smoothstep(-0.012, 0.030, x_value))
+    return ramp_surface_top_y(x_value, z_value) - thickness
 
 
 def tray_surface_top_y(x_value: float, z_value: float) -> float:
@@ -290,9 +560,10 @@ def build_thin_surface_triangles(
 
 
 def build_platform_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    platform_x_start = -0.0365
-    progress_stations = np.linspace(0.0, 1.0, 9)
-    span_stations = np.linspace(-1.0, 1.0, 15)
+    progress_stations = np.linspace(0.0, 1.0, PLATFORM_PROGRESS_STATION_COUNT)
+    span_angles = np.linspace(-math.pi * 0.5, math.pi * 0.5, PLATFORM_SPAN_STATION_COUNT)
+    span_stations = [math.sin(float(angle)) for angle in span_angles]
+    platform_span_limit_z = TRAY_OUTLINE_MAX_HALF_WIDTH_M * PLATFORM_SPAN_LIMIT_RATIO
     top_grid: list[list[np.ndarray]] = []
     bottom_grid: list[list[np.ndarray]] = []
 
@@ -300,9 +571,10 @@ def build_platform_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.
         top_row: list[np.ndarray] = []
         bottom_row: list[np.ndarray] = []
         for span in span_stations:
-            z_value = tray_center_z(0.0) + (tray_half_width(0.0) * float(span))
+            z_value = tray_center_z(0.0) + (platform_span_limit_z * float(span))
+            outer_x = tray_outer_left_x(float(z_value))
             boundary_x = tray_split_boundary_x(float(z_value))
-            x_value = lerp(platform_x_start, boundary_x, float(progress))
+            x_value = lerp(outer_x, boundary_x, float(progress))
             top_row.append(
                 np.array([x_value, platform_surface_top_y(float(x_value), float(z_value)), z_value], dtype=float)
             )
@@ -311,31 +583,47 @@ def build_platform_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.
             )
         top_grid.append(top_row)
         bottom_grid.append(bottom_row)
-    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=False)
+    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=True)
 
 
 def build_arc_ramp_triangles_product() -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    progress_stations = np.linspace(0.0, 1.0, 27)
-    span_stations = np.linspace(-1.0, 1.0, 17)
+    progress_values = np.linspace(0.0, 1.0, RAMP_PROGRESS_STATION_COUNT)
+    progress_stations = [1.0 - ((1.0 - float(value)) ** 1.6) for value in progress_values]
+    span_angles = np.linspace(-math.pi * 0.5, math.pi * 0.5, RAMP_SPAN_STATION_COUNT)
+    span_stations = [math.sin(float(angle)) for angle in span_angles]
+    ramp_span_limit_z = TRAY_OUTLINE_MAX_HALF_WIDTH_M * RAMP_SPAN_LIMIT_RATIO
     top_grid: list[list[np.ndarray]] = []
     bottom_grid: list[list[np.ndarray]] = []
 
     for progress in progress_stations:
         top_row: list[np.ndarray] = []
         bottom_row: list[np.ndarray] = []
+        solid_blend = smoothstep(0.0, RAMP_START_SOLID_BLEND_RATIO, float(progress))
         for span in span_stations:
             span_ratio = float(span)
-            boundary_sample_z = tray_center_z(0.0) + (tray_half_width(0.0) * span_ratio)
+            boundary_sample_z = tray_center_z(0.0) + (ramp_span_limit_z * span_ratio)
             boundary_x = tray_split_boundary_x(float(boundary_sample_z))
-            x_value = lerp(boundary_x, ramp_tip_end_x(span_ratio), float(progress))
-            z_value = tray_center_z(float(x_value)) + (tray_half_width(float(x_value)) * span_ratio)
-            top_row.append(np.array([x_value, ramp_surface_top_y(float(x_value), float(z_value)), z_value], dtype=float))
-            bottom_row.append(
-                np.array([x_value, tray_surface_bottom_y(float(x_value), float(z_value)), z_value], dtype=float)
+            outer_x = tray_outer_right_x(float(boundary_sample_z))
+            start_x = max(
+                tray_outer_left_x(float(boundary_sample_z)) + TRAY_SPLIT_BOUNDARY_MARGIN_M,
+                boundary_x - RAMP_PLATFORM_OVERLAP_M,
             )
+            if start_x >= outer_x:
+                start_x = lerp(boundary_x, outer_x, 0.35)
+            x_value = lerp(start_x, outer_x, float(progress))
+            z_value = boundary_sample_z
+            platform_top_y = platform_surface_top_y(float(x_value), float(z_value))
+            platform_bottom_y = platform_surface_bottom_y(float(x_value), float(z_value))
+            ramp_top_y = ramp_surface_top_y(float(x_value), float(z_value))
+            ramp_bottom_y = ramp_surface_bottom_y(float(x_value), float(z_value))
+            solid_join_top_y = lerp(platform_top_y, ramp_top_y, solid_blend)
+            solid_join_bottom_y = lerp(platform_bottom_y, ramp_bottom_y, solid_blend)
+            solid_join_bottom_y = min(solid_join_bottom_y, solid_join_top_y - 0.0006)
+            top_row.append(np.array([x_value, solid_join_top_y, z_value], dtype=float))
+            bottom_row.append(np.array([x_value, solid_join_bottom_y, z_value], dtype=float))
         top_grid.append(top_row)
         bottom_grid.append(bottom_row)
-    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=False)
+    return build_thin_surface_triangles(top_grid, bottom_grid, cap_z_edges=True)
 
 
 def append_sculpted_tray_mesh(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
@@ -446,7 +734,7 @@ def append_sculpted_tray_mesh(gltf: dict, bin_chunk: bytearray) -> dict[str, obj
     platform_change_log = append_surface_node(PLATFORM_NODE_NAME, build_platform_triangles_product())
     ramp_change_log = append_surface_node(RAMP_NODE_NAME, build_arc_ramp_triangles_product())
     return {
-        "integrationMode": "split_internal_surfaces",
+        "integrationMode": "split_internal_solids",
         "platformChangeLog": platform_change_log,
         "rampChangeLog": ramp_change_log,
         "splitProfile": {
@@ -643,6 +931,764 @@ def snap_base_shell_edge_to_ramp_profile(gltf: dict, bin_chunk: bytearray) -> di
     }
 
 
+def profile_value_from_points(x_mm: float, control_points: list[tuple[float, float]]) -> float:
+    if x_mm <= control_points[0][0]:
+        return control_points[0][1]
+    if x_mm >= control_points[-1][0]:
+        return control_points[-1][1]
+
+    for start, end in zip(control_points, control_points[1:]):
+        start_x, start_y = start
+        end_x, end_y = end
+        if start_x <= x_mm <= end_x:
+            amount = 0.0 if abs(end_x - start_x) <= 1e-12 else ((x_mm - start_x) / (end_x - start_x))
+            return lerp(start_y, end_y, amount)
+    return control_points[-1][1]
+
+
+def write_accessor_scalars(
+    gltf: dict,
+    bin_chunk: bytearray,
+    accessor_index: int,
+    values: list[int],
+) -> None:
+    info = get_accessor_info(gltf, accessor_index)
+    if info.component_count != 1:
+        raise ValueError(f"Accessor {accessor_index} must be scalar")
+    if len(values) != info.count:
+        raise ValueError(f"Accessor {accessor_index} scalar count changed")
+    fmt = "<" + COMPONENT_STRUCT_FORMATS[info.accessor["componentType"]]
+    for row_index, value in enumerate(values):
+        row_offset = info.offset + (row_index * info.stride)
+        struct.pack_into(fmt, bin_chunk, row_offset, int(value))
+
+
+def compute_rows_min_max(rows: list[list[float]]) -> tuple[list[float], list[float]]:
+    component_count = len(rows[0])
+    mins = [float("inf")] * component_count
+    maxes = [float("-inf")] * component_count
+    for row in rows:
+        for index, value in enumerate(row):
+            mins[index] = min(mins[index], float(value))
+            maxes[index] = max(maxes[index], float(value))
+    return mins, maxes
+
+
+def smooth_closed_ring(points: list[np.ndarray], iterations: int = 6) -> list[np.ndarray]:
+    smoothed = [np.array(point, dtype=float) for point in points]
+    point_count = len(smoothed)
+    if point_count < 5:
+        return smoothed
+
+    for _ in range(iterations):
+        next_ring: list[np.ndarray] = []
+        for index in range(point_count):
+            next_ring.append(
+                (
+                    smoothed[(index - 2) % point_count]
+                    + (4.0 * smoothed[(index - 1) % point_count])
+                    + (6.0 * smoothed[index])
+                    + (4.0 * smoothed[(index + 1) % point_count])
+                    + smoothed[(index + 2) % point_count]
+                )
+                / 16.0
+            )
+        smoothed = next_ring
+    return smoothed
+
+
+def delete_base_shell_ring_faces(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    node_index, _, _ = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+    indices = read_accessor_scalars(gltf, bin_chunk, primitive["indices"])
+    ring_stride = 9
+    ring_rows = (6, 7)
+    if len(positions) % ring_stride != 0:
+        raise ValueError("Case_Base_Shell vertex layout is not divisible into expected 9-ring columns")
+
+    column_count = len(positions) // ring_stride
+    target_vertex_indices = {
+        (column_index * ring_stride) + ring_row
+        for column_index in range(column_count)
+        for ring_row in ring_rows
+    }
+
+    original_edge_counts: dict[tuple[int, int], int] = {}
+    for index_offset in range(0, len(indices), 3):
+        triangle = indices[index_offset : index_offset + 3]
+        for vertex_a, vertex_b in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            edge = (min(vertex_a, vertex_b), max(vertex_a, vertex_b))
+            original_edge_counts[edge] = original_edge_counts.get(edge, 0) + 1
+
+    original_boundary_edges = {
+        edge for edge, edge_count in original_edge_counts.items() if edge_count == 1
+    }
+
+    kept_positions: list[list[float]] = []
+    old_to_new: dict[int, int] = {}
+    removed_vertex_indices: set[int] = set(target_vertex_indices)
+    for old_index, row in enumerate(positions):
+        if old_index in target_vertex_indices:
+            continue
+        old_to_new[old_index] = len(kept_positions)
+        kept_positions.append(list(row))
+
+    kept_old_indices: list[int] = []
+    removed_triangle_count = 0
+    for index_offset in range(0, len(indices), 3):
+        triangle = indices[index_offset : index_offset + 3]
+        if any(vertex_index in target_vertex_indices for vertex_index in triangle):
+            removed_triangle_count += 1
+            continue
+        kept_old_indices.extend(triangle)
+
+    kept_edge_counts: dict[tuple[int, int], int] = {}
+    for index_offset in range(0, len(kept_old_indices), 3):
+        triangle = kept_old_indices[index_offset : index_offset + 3]
+        for vertex_a, vertex_b in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            edge = (min(vertex_a, vertex_b), max(vertex_a, vertex_b))
+            kept_edge_counts[edge] = kept_edge_counts.get(edge, 0) + 1
+
+    introduced_boundary_edges = {
+        edge
+        for edge, edge_count in kept_edge_counts.items()
+        if edge_count == 1 and edge not in original_boundary_edges
+    }
+
+    bridge_lower_row = min(ring_rows) - 1
+    bridge_upper_row = max(ring_rows) + 1
+    bridge_segment_count = 0
+    bridge_triangle_count = 0
+
+    for column_index in range(column_count - 1):
+        lower_left_old = (column_index * ring_stride) + bridge_lower_row
+        lower_right_old = ((column_index + 1) * ring_stride) + bridge_lower_row
+        upper_left_old = (column_index * ring_stride) + bridge_upper_row
+        upper_right_old = ((column_index + 1) * ring_stride) + bridge_upper_row
+        lower_edge = (min(lower_left_old, lower_right_old), max(lower_left_old, lower_right_old))
+        upper_edge = (min(upper_left_old, upper_right_old), max(upper_left_old, upper_right_old))
+
+        if lower_edge not in introduced_boundary_edges or upper_edge not in original_boundary_edges:
+            continue
+
+        kept_old_indices.extend(
+            [
+                lower_left_old,
+                lower_right_old,
+                upper_left_old,
+                upper_right_old,
+                upper_left_old,
+                lower_right_old,
+            ]
+        )
+        bridge_segment_count += 1
+        bridge_triangle_count += 2
+
+    kept_indices = [old_to_new[vertex_index] for vertex_index in kept_old_indices]
+
+    normals = [[0.0, 0.0, 0.0] for _ in kept_positions]
+    for index_offset in range(0, len(kept_indices), 3):
+        i0, i1, i2 = kept_indices[index_offset : index_offset + 3]
+        p0 = np.array(kept_positions[i0], dtype=float)
+        p1 = np.array(kept_positions[i1], dtype=float)
+        p2 = np.array(kept_positions[i2], dtype=float)
+        face = np.cross(p1 - p0, p2 - p0)
+        for vertex_index in (i0, i1, i2):
+            normals[vertex_index][0] += float(face[0])
+            normals[vertex_index][1] += float(face[1])
+            normals[vertex_index][2] += float(face[2])
+    kept_normals = [list(normalize_vector(np.array(row, dtype=float))) for row in normals]
+
+    position_mins, position_maxes = compute_rows_min_max(kept_positions)
+    normal_mins, normal_maxes = compute_rows_min_max(kept_normals)
+
+    position_bytes = b"".join(struct.pack("<3f", *row) for row in kept_positions)
+    normal_bytes = b"".join(struct.pack("<3f", *row) for row in kept_normals)
+    index_bytes = b"".join(struct.pack("<H", value) for value in kept_indices)
+
+    position_offset = append_aligned_bytes(bin_chunk, position_bytes)
+    normal_offset = append_aligned_bytes(bin_chunk, normal_bytes)
+    index_offset = append_aligned_bytes(bin_chunk, index_bytes, alignment=4)
+
+    position_view = append_buffer_view(gltf, position_offset, len(position_bytes), target=34962)
+    normal_view = append_buffer_view(gltf, normal_offset, len(normal_bytes), target=34962)
+    index_view = append_buffer_view(gltf, index_offset, len(index_bytes), target=34963)
+
+    new_position_accessor = append_accessor(
+        gltf,
+        position_view,
+        5126,
+        len(kept_positions),
+        "VEC3",
+        mins=position_mins,
+        maxes=position_maxes,
+    )
+    new_normal_accessor = append_accessor(
+        gltf,
+        normal_view,
+        5126,
+        len(kept_normals),
+        "VEC3",
+        mins=normal_mins,
+        maxes=normal_maxes,
+    )
+    new_index_accessor = append_accessor(
+        gltf,
+        index_view,
+        5123,
+        len(kept_indices),
+        "SCALAR",
+    )
+
+    primitive["attributes"] = {
+        "POSITION": new_position_accessor,
+        "NORMAL": new_normal_accessor,
+    }
+    primitive["indices"] = new_index_accessor
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "delete_ring_faces",
+        "ringRows": list(ring_rows),
+        "columnCount": column_count,
+        "targetVertexCount": len(target_vertex_indices),
+        "removedVertexCount": len(removed_vertex_indices),
+        "removedTriangleCount": removed_triangle_count,
+        "bridgeSegmentCount": bridge_segment_count,
+        "bridgeTriangleCount": bridge_triangle_count,
+        "keptVertexCount": len(kept_positions),
+        "keptTriangleCount": len(kept_indices) // 3,
+    }
+
+
+def smooth_base_shell_upper_rings(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    node_index, _, _ = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+
+    ring_stride = 7
+    if len(positions) % ring_stride != 0:
+        raise ValueError("Case_Base_Shell vertex layout is not divisible into expected 7-ring columns")
+
+    column_count = len(positions) // ring_stride
+    updated_rows = [list(row) for row in positions]
+    moved_rows = 0
+    max_delta_mm = 0.0
+    ring_configs = (
+        (5, 4),
+        (6, 2),
+    )
+
+    for target_row, iterations in ring_configs:
+        original_ring = [
+            np.array(positions[(column_index * ring_stride) + target_row], dtype=float)
+            for column_index in range(column_count)
+        ]
+        smoothed_ring = smooth_closed_ring(original_ring, iterations=iterations)
+        for column_index, smoothed_point in enumerate(smoothed_ring):
+            target_index = (column_index * ring_stride) + target_row
+            delta_mm = float(np.linalg.norm((smoothed_point - original_ring[column_index]) * 1000.0))
+            updated_rows[target_index] = [float(value) for value in smoothed_point]
+            if delta_mm > 1e-6:
+                moved_rows += 1
+                max_delta_mm = max(max_delta_mm, delta_mm)
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "smooth_upper_rings",
+        "ringRows": [target_row + 1 for target_row, _ in ring_configs],
+        "columnCount": column_count,
+        "iterationsByRing": {str(target_row + 1): iterations for target_row, iterations in ring_configs},
+        "movedRows": moved_rows,
+        "maxDeltaMm": round(max_delta_mm, 4),
+    }
+
+
+def restore_base_shell_reference_ring(
+    gltf: dict,
+    bin_chunk: bytearray,
+    reference_positions: list[list[float]],
+    *,
+    source_ring_stride: int = 9,
+    source_row_index: int = 4,
+    target_ring_stride: int = 7,
+    target_row_index: int = 4,
+) -> dict[str, object]:
+    node_index, _, _ = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+
+    if len(reference_positions) % source_ring_stride != 0:
+        raise ValueError("Reference Case_Base_Shell positions do not match expected source ring stride")
+    if len(positions) % target_ring_stride != 0:
+        raise ValueError("Current Case_Base_Shell positions do not match expected target ring stride")
+
+    source_column_count = len(reference_positions) // source_ring_stride
+    target_column_count = len(positions) // target_ring_stride
+    if source_column_count != target_column_count:
+        raise ValueError("Case_Base_Shell column counts do not match between reference and target")
+
+    updated_rows = [list(row) for row in positions]
+    moved_rows = 0
+    max_delta_mm = 0.0
+    for column_index in range(target_column_count):
+        source_index = (column_index * source_ring_stride) + source_row_index
+        target_index = (column_index * target_ring_stride) + target_row_index
+        source_point = np.array(reference_positions[source_index], dtype=float)
+        target_point = np.array(positions[target_index], dtype=float)
+        delta_mm = float(np.linalg.norm((source_point - target_point) * 1000.0))
+        updated_rows[target_index] = [float(value) for value in source_point]
+        if delta_mm > 1e-6:
+            moved_rows += 1
+            max_delta_mm = max(max_delta_mm, delta_mm)
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "restore_reference_ring",
+        "sourceRow": source_row_index + 1,
+        "targetRow": target_row_index + 1,
+        "columnCount": target_column_count,
+        "movedRows": moved_rows,
+        "maxDeltaMm": round(max_delta_mm, 4),
+    }
+
+
+def restore_base_shell_reference_row(
+    gltf: dict,
+    bin_chunk: bytearray,
+    reference_positions: list[list[float]],
+    *,
+    source_ring_stride: int,
+    source_row_index: int,
+    target_ring_stride: int,
+    target_row_index: int,
+) -> dict[str, object]:
+    node_index, _, _ = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+
+    if len(reference_positions) % source_ring_stride != 0:
+        raise ValueError("Reference Case_Base_Shell positions do not match expected source ring stride")
+    if len(positions) % target_ring_stride != 0:
+        raise ValueError("Current Case_Base_Shell positions do not match expected target ring stride")
+
+    source_column_count = len(reference_positions) // source_ring_stride
+    target_column_count = len(positions) // target_ring_stride
+    if source_column_count != target_column_count:
+        raise ValueError("Case_Base_Shell column counts do not match between reference and target")
+
+    updated_rows = [list(row) for row in positions]
+    moved_rows = 0
+    max_delta_mm = 0.0
+    for column_index in range(target_column_count):
+        source_index = (column_index * source_ring_stride) + source_row_index
+        target_index = (column_index * target_ring_stride) + target_row_index
+        source_point = np.array(reference_positions[source_index], dtype=float)
+        target_point = np.array(positions[target_index], dtype=float)
+        delta_mm = float(np.linalg.norm((source_point - target_point) * 1000.0))
+        updated_rows[target_index] = [float(value) for value in source_point]
+        if delta_mm > 1e-6:
+            moved_rows += 1
+            max_delta_mm = max(max_delta_mm, delta_mm)
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "restore_reference_row",
+        "sourceRow": source_row_index + 1,
+        "targetRow": target_row_index + 1,
+        "columnCount": target_column_count,
+        "movedRows": moved_rows,
+        "maxDeltaMm": round(max_delta_mm, 4),
+    }
+
+
+def delete_base_shell_outermost_ring(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    node_index, _, _ = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+    indices = read_accessor_scalars(gltf, bin_chunk, primitive["indices"])
+    ring_stride = 7
+    target_row = ring_stride - 1
+    if len(positions) % ring_stride != 0:
+        raise ValueError("Case_Base_Shell vertex layout is not divisible into expected 7-ring columns")
+
+    column_count = len(positions) // ring_stride
+    target_vertex_indices = {(column_index * ring_stride) + target_row for column_index in range(column_count)}
+
+    kept_positions: list[list[float]] = []
+    old_to_new: dict[int, int] = {}
+    for old_index, row in enumerate(positions):
+        if old_index in target_vertex_indices:
+            continue
+        old_to_new[old_index] = len(kept_positions)
+        kept_positions.append(list(row))
+
+    kept_indices: list[int] = []
+    removed_triangle_count = 0
+    for index_offset in range(0, len(indices), 3):
+        triangle = indices[index_offset : index_offset + 3]
+        if any(vertex_index in target_vertex_indices for vertex_index in triangle):
+            removed_triangle_count += 1
+            continue
+        kept_indices.extend(old_to_new[vertex_index] for vertex_index in triangle)
+
+    normals = [[0.0, 0.0, 0.0] for _ in kept_positions]
+    for index_offset in range(0, len(kept_indices), 3):
+        i0, i1, i2 = kept_indices[index_offset : index_offset + 3]
+        p0 = np.array(kept_positions[i0], dtype=float)
+        p1 = np.array(kept_positions[i1], dtype=float)
+        p2 = np.array(kept_positions[i2], dtype=float)
+        face = np.cross(p1 - p0, p2 - p0)
+        for vertex_index in (i0, i1, i2):
+            normals[vertex_index][0] += float(face[0])
+            normals[vertex_index][1] += float(face[1])
+            normals[vertex_index][2] += float(face[2])
+    kept_normals = [list(normalize_vector(np.array(row, dtype=float))) for row in normals]
+
+    position_mins, position_maxes = compute_rows_min_max(kept_positions)
+    normal_mins, normal_maxes = compute_rows_min_max(kept_normals)
+
+    position_bytes = b"".join(struct.pack("<3f", *row) for row in kept_positions)
+    normal_bytes = b"".join(struct.pack("<3f", *row) for row in kept_normals)
+    index_bytes = b"".join(struct.pack("<H", value) for value in kept_indices)
+
+    position_offset = append_aligned_bytes(bin_chunk, position_bytes)
+    normal_offset = append_aligned_bytes(bin_chunk, normal_bytes)
+    index_offset = append_aligned_bytes(bin_chunk, index_bytes, alignment=4)
+
+    position_view = append_buffer_view(gltf, position_offset, len(position_bytes), target=34962)
+    normal_view = append_buffer_view(gltf, normal_offset, len(normal_bytes), target=34962)
+    index_view = append_buffer_view(gltf, index_offset, len(index_bytes), target=34963)
+
+    new_position_accessor = append_accessor(
+        gltf,
+        position_view,
+        5126,
+        len(kept_positions),
+        "VEC3",
+        mins=position_mins,
+        maxes=position_maxes,
+    )
+    new_normal_accessor = append_accessor(
+        gltf,
+        normal_view,
+        5126,
+        len(kept_normals),
+        "VEC3",
+        mins=normal_mins,
+        maxes=normal_maxes,
+    )
+    new_index_accessor = append_accessor(
+        gltf,
+        index_view,
+        5123,
+        len(kept_indices),
+        "SCALAR",
+    )
+
+    primitive["attributes"] = {
+        "POSITION": new_position_accessor,
+        "NORMAL": new_normal_accessor,
+    }
+    primitive["indices"] = new_index_accessor
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "delete_outermost_ring",
+        "ringRow": target_row + 1,
+        "columnCount": column_count,
+        "removedVertexCount": len(target_vertex_indices),
+        "removedTriangleCount": removed_triangle_count,
+        "keptVertexCount": len(kept_positions),
+        "keptTriangleCount": len(kept_indices) // 3,
+    }
+
+
+def seal_base_shell_to_tray(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    node_index, to_product, to_local = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+    product_positions = transform_local_rows(positions, to_product)
+
+    ring_stride = 6
+    if len(product_positions) % ring_stride != 0:
+        raise ValueError("Case_Base_Shell vertex layout is not divisible into expected 6-ring columns")
+
+    column_count = len(product_positions) // ring_stride
+    base_row_index = 3
+    top_row_index = 5
+    updated_product_positions = [np.array(point, dtype=float) for point in product_positions]
+    moved_rows = 0
+    moved_columns = 0
+    max_delta_mm = 0.0
+    max_gap_mm = 0.0
+
+    for column_index in range(column_count):
+        base_index = (column_index * ring_stride) + base_row_index
+        top_index = (column_index * ring_stride) + top_row_index
+
+        base_point = np.array(updated_product_positions[base_index], dtype=float)
+        top_point = np.array(updated_product_positions[top_index], dtype=float)
+
+        target_x = float(base_point[0])
+        target_z = float(base_point[2])
+        tray_top_y = tray_surface_top_y(target_x, target_z)
+        target_top_y = tray_top_y + BASE_SHELL_SEAL_CLEARANCE_M
+        next_top_point = np.array([target_x, target_top_y, target_z], dtype=float)
+
+        top_delta_mm = float(np.linalg.norm((next_top_point - top_point) * 1000.0))
+
+        if top_delta_mm > 1e-6:
+            updated_product_positions[top_index] = next_top_point
+            moved_rows += 1
+            max_delta_mm = max(max_delta_mm, top_delta_mm)
+        if top_delta_mm > 1e-6:
+            moved_columns += 1
+
+        max_gap_mm = max(max_gap_mm, abs((target_top_y - tray_top_y) * 1000.0))
+
+    updated_rows: list[list[float]] = []
+    for updated_point in updated_product_positions:
+        local_point = to_local @ np.array(
+            [float(updated_point[0]), float(updated_point[1]), float(updated_point[2]), 1.0],
+            dtype=float,
+        )
+        updated_rows.append(
+            [
+                float(local_point[0] / max(local_point[3], 1e-12)),
+                float(local_point[1] / max(local_point[3], 1e-12)),
+                float(local_point[2] / max(local_point[3], 1e-12)),
+            ]
+        )
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "seal_to_tray_surface",
+        "columnCount": column_count,
+        "referenceRow": base_row_index + 1,
+        "topRow": top_row_index + 1,
+        "movedColumns": moved_columns,
+        "movedRows": moved_rows,
+        "sealClearanceMm": round(BASE_SHELL_SEAL_CLEARANCE_M * 1000.0, 4),
+        "maxDeltaMm": round(max_delta_mm, 4),
+        "maxGapMm": round(max_gap_mm, 4),
+    }
+
+
+def solidify_base_shell(gltf: dict, bin_chunk: bytearray, thickness_m: float = BASE_SHELL_WALL_THICKNESS_M) -> dict[str, object]:
+    node_index, to_product, to_local = build_product_space_matrices(gltf, "Case_Base_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    positions_local_raw = read_accessor_rows(gltf, bin_chunk, position_accessor)
+    indices_raw = read_accessor_scalars(gltf, bin_chunk, primitive["indices"])
+    positions_local, indices, cleanup_stats = clean_indexed_surface_mesh(positions_local_raw, indices_raw)
+    indices, notch_stitch_stats = stitch_sharp_boundary_notch(positions_local, indices)
+    normals_local = compute_indexed_vertex_normals(positions_local, indices)
+
+    product_positions = transform_local_rows(positions_local, to_product)
+    transform_linear = to_product[:3, :3]
+    normal_matrix = np.transpose(np.linalg.inv(transform_linear))
+    product_normals = [
+        normalize_vector(normal_matrix @ np.array(row, dtype=float))
+        for row in normals_local
+    ]
+
+    shell_center = np.mean(np.stack(product_positions, axis=0), axis=0)
+    average_alignment = float(
+        np.mean(
+            [
+                np.dot(product_normals[index], product_positions[index] - shell_center)
+                for index in range(len(product_positions))
+            ]
+        )
+    )
+    outward_scale = 1.0 if average_alignment >= 0.0 else -1.0
+    outer_positions_product = [
+        np.array(point, dtype=float) + (product_normals[index] * thickness_m * outward_scale)
+        for index, point in enumerate(product_positions)
+    ]
+    coincident_groups: dict[tuple[float, float, float], list[int]] = {}
+    for index, point in enumerate(product_positions):
+        key = tuple(round(float(value), 9) for value in point)
+        coincident_groups.setdefault(key, []).append(index)
+    for group_indices in coincident_groups.values():
+        if len(group_indices) <= 1:
+            continue
+        averaged_outer = np.mean(np.stack([outer_positions_product[index] for index in group_indices], axis=0), axis=0)
+        for index in group_indices:
+            outer_positions_product[index] = np.array(averaged_outer, dtype=float)
+
+    edge_counts: dict[tuple[int, int], int] = {}
+    boundary_oriented_edges: dict[tuple[int, int], tuple[int, int]] = {}
+    triangle_indices = [tuple(indices[offset : offset + 3]) for offset in range(0, len(indices), 3)]
+    for triangle in triangle_indices:
+        for vertex_a, vertex_b in (
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ):
+            edge = (min(vertex_a, vertex_b), max(vertex_a, vertex_b))
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+            boundary_oriented_edges[edge] = (vertex_a, vertex_b)
+
+    solid_positions_local: list[list[float]] = []
+    solid_normals_local: list[list[float]] = []
+
+    def append_product_triangle(p0_product: np.ndarray, p1_product: np.ndarray, p2_product: np.ndarray) -> None:
+        local_triangle: list[np.ndarray] = []
+        for product_point in (p0_product, p1_product, p2_product):
+            local_point = to_local @ np.array(
+                [float(product_point[0]), float(product_point[1]), float(product_point[2]), 1.0],
+                dtype=float,
+            )
+            local_triangle.append(local_point[:3] / max(local_point[3], 1e-12))
+
+        p0_local, p1_local, p2_local = local_triangle
+        normal_local = normalize_vector(np.cross(p1_local - p0_local, p2_local - p0_local))
+        for point_local in local_triangle:
+            solid_positions_local.append([float(value) for value in point_local])
+            solid_normals_local.append([float(value) for value in normal_local])
+
+    for vertex_a, vertex_b, vertex_c in triangle_indices:
+        append_product_triangle(
+            outer_positions_product[vertex_a],
+            outer_positions_product[vertex_b],
+            outer_positions_product[vertex_c],
+        )
+        append_product_triangle(product_positions[vertex_a], product_positions[vertex_c], product_positions[vertex_b])
+
+    bridge_triangle_count = 0
+    skipped_boundary_edges = 0
+    for edge, edge_count in edge_counts.items():
+        if edge_count != 1:
+            continue
+        vertex_a, vertex_b = boundary_oriented_edges[edge]
+        inner_a = np.array(product_positions[vertex_a], dtype=float)
+        inner_b = np.array(product_positions[vertex_b], dtype=float)
+        outer_a = np.array(outer_positions_product[vertex_a], dtype=float)
+        outer_b = np.array(outer_positions_product[vertex_b], dtype=float)
+        edge_direction = outer_b - outer_a
+        if float(np.linalg.norm(edge_direction)) <= 1e-10:
+            skipped_boundary_edges += 1
+            continue
+        average_normal = normalize_vector(product_normals[vertex_a] + product_normals[vertex_b])
+        preferred_normal = np.cross(edge_direction, average_normal)
+        if float(np.linalg.norm(preferred_normal)) <= 1e-10:
+            preferred_normal = np.cross(edge_direction, outer_a - inner_a)
+        side_triangles = oriented_quad_triangles(
+            outer_a,
+            outer_b,
+            inner_b,
+            inner_a,
+            preferred_normal,
+        )
+        for side_triangle in side_triangles:
+            append_product_triangle(*side_triangle)
+            bridge_triangle_count += 1
+
+    position_bytes = struct.pack(
+        "<" + ("f" * (len(solid_positions_local) * 3)),
+        *(value for row in solid_positions_local for value in row),
+    )
+    normal_bytes = struct.pack(
+        "<" + ("f" * (len(solid_normals_local) * 3)),
+        *(value for row in solid_normals_local for value in row),
+    )
+    position_offset = append_aligned_bytes(bin_chunk, position_bytes)
+    normal_offset = append_aligned_bytes(bin_chunk, normal_bytes)
+    gltf["buffers"][0]["byteLength"] = len(bin_chunk)
+
+    position_view_index = append_buffer_view(gltf, position_offset, len(position_bytes), target=34962)
+    normal_view_index = append_buffer_view(gltf, normal_offset, len(normal_bytes), target=34962)
+    position_mins = [min(row[index] for row in solid_positions_local) for index in range(3)]
+    position_maxes = [max(row[index] for row in solid_positions_local) for index in range(3)]
+    normal_mins = [min(row[index] for row in solid_normals_local) for index in range(3)]
+    normal_maxes = [max(row[index] for row in solid_normals_local) for index in range(3)]
+
+    position_accessor_index = append_accessor(
+        gltf,
+        position_view_index,
+        component_type=5126,
+        count=len(solid_positions_local),
+        accessor_type="VEC3",
+        mins=position_mins,
+        maxes=position_maxes,
+    )
+    normal_accessor_index = append_accessor(
+        gltf,
+        normal_view_index,
+        component_type=5126,
+        count=len(solid_normals_local),
+        accessor_type="VEC3",
+        mins=normal_mins,
+        maxes=normal_maxes,
+    )
+
+    primitive["attributes"] = {
+        "POSITION": position_accessor_index,
+        "NORMAL": normal_accessor_index,
+    }
+    primitive.pop("indices", None)
+    primitive["mode"] = 4
+
+    return {
+        "node": "Case_Base_Shell",
+        "operation": "solidify_shell",
+        "wallThicknessMm": round(thickness_m * 1000.0, 4),
+        "surfaceMode": "sealed_source_as_inner_surface",
+        "sourceVertexCount": cleanup_stats["sourceVertexCount"],
+        "cleanedSourceVertexCount": len(positions_local),
+        "removedSourceVertexCount": cleanup_stats["removedVertexCount"],
+        "sourceTriangleCount": cleanup_stats["sourceTriangleCount"],
+        "cleanedSourceTriangleCount": len(indices) // 3,
+        "removedDegenerateSourceTriangleCount": cleanup_stats["removedDegenerateTriangleCount"],
+        "removedDuplicateSourceTriangleCount": cleanup_stats["removedDuplicateTriangleCount"],
+        "notchStitchChangeLog": notch_stitch_stats,
+        "boundaryEdgeCount": sum(1 for count in edge_counts.values() if count == 1),
+        "bridgeTriangleCount": bridge_triangle_count,
+        "skippedBoundaryEdges": skipped_boundary_edges,
+        "outputVertexCount": len(solid_positions_local),
+        "outputTriangleCount": len(solid_positions_local) // 3,
+    }
+
+
 def shorten_lid_side_wall_height(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
     node_index, to_product, to_local = build_product_space_matrices(gltf, "Case_Lid_Shell")
     primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
@@ -690,6 +1736,58 @@ def shorten_lid_side_wall_height(gltf: dict, bin_chunk: bytearray) -> dict[str, 
     return {
         "node": "Case_Lid_Shell",
         "operation": "shorten_side_wall_height",
+        "movedRows": moved_rows,
+        "maxDeltaYmm": round(max_delta_y_mm, 4),
+    }
+
+
+def press_lid_shell_edge_flat(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
+    node_index, to_product, to_local = build_product_space_matrices(gltf, "Case_Lid_Shell")
+    primitive = gltf["meshes"][gltf["nodes"][node_index]["mesh"]]["primitives"][0]
+    position_accessor = primitive["attributes"]["POSITION"]
+    normal_accessor = primitive["attributes"]["NORMAL"]
+    positions = read_accessor_rows(gltf, bin_chunk, position_accessor)
+    product_positions = transform_local_rows(positions, to_product)
+
+    updated_rows: list[list[float]] = []
+    moved_rows = 0
+    max_delta_y_mm = 0.0
+
+    for row, point in zip(positions, product_positions):
+        x_mm = float(point[0] * 1000.0)
+        y_mm = float(point[1] * 1000.0)
+        z_mm = float(point[2] * 1000.0)
+        updated_point = np.array(point, dtype=float)
+
+        if 13.5 <= x_mm <= 36.8 and -12.6 <= z_mm <= -6.8 and 8.6 <= y_mm <= 13.8:
+            x_weight = smoothstep(13.5, 19.0, x_mm) * (1.0 - smoothstep(34.2, 36.8, x_mm))
+            z_weight = smoothstep(6.8, 8.8, -z_mm)
+            low_band_weight = 1.0 - smoothstep(12.3, 13.8, y_mm)
+            weight = min(1.0, x_weight * z_weight * low_band_weight * 1.75)
+            target_floor_y_mm = lerp(12.0, 11.35, smoothstep(14.0, 36.0, x_mm))
+            if target_floor_y_mm > y_mm and weight > 1e-6:
+                updated_point[1] = lerp(y_mm, target_floor_y_mm, weight) / 1000.0
+                max_delta_y_mm = max(max_delta_y_mm, abs(y_mm - (updated_point[1] * 1000.0)))
+
+        local_point = to_local @ np.array([updated_point[0], updated_point[1], updated_point[2], 1.0], dtype=float)
+        updated_rows.append(
+            [
+                float(local_point[0] / max(local_point[3], 1e-12)),
+                float(local_point[1] / max(local_point[3], 1e-12)),
+                float(local_point[2] / max(local_point[3], 1e-12)),
+            ]
+        )
+        if np.linalg.norm(updated_point - point) > 1e-10:
+            moved_rows += 1
+
+    updated_normals = recalculate_normals(gltf, bin_chunk, primitive, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, position_accessor, updated_rows)
+    write_accessor_rows(gltf, bin_chunk, normal_accessor, updated_normals)
+    update_accessor_min_max(gltf, position_accessor, updated_rows)
+    update_accessor_min_max(gltf, normal_accessor, updated_normals)
+    return {
+        "node": "Case_Lid_Shell",
+        "operation": "press_edge_flat",
         "movedRows": moved_rows,
         "maxDeltaYmm": round(max_delta_y_mm, 4),
     }
@@ -883,6 +1981,11 @@ def apply_phase_2(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
     product_inverse = np.linalg.inv(get_world_matrix(product_root_index))
     pin_world = product_inverse @ get_world_matrix(pin_index) @ np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
     pin_center_product = tuple(float(value) * 1000.0 for value in (pin_world[:3] / max(pin_world[3], 1e-12)))
+    base_shell_node_index = named_node_indices["Case_Base_Shell"]
+    base_shell_primitive = gltf["meshes"][gltf["nodes"][base_shell_node_index]["mesh"]]["primitives"][0]
+    base_shell_reference_positions = read_accessor_rows(
+        gltf, bin_chunk, base_shell_primitive["attributes"]["POSITION"]
+    )
     shell_change = deform_shell_band(
         gltf,
         bin_chunk,
@@ -901,12 +2004,38 @@ def apply_phase_2(gltf: dict, bin_chunk: bytearray) -> dict[str, object]:
     )
     wall_height_change = depress_base_shell_for_tray_join(gltf, bin_chunk)
     edge_alignment_change = snap_base_shell_edge_to_ramp_profile(gltf, bin_chunk)
+    ring_delete_change = delete_base_shell_ring_faces(gltf, bin_chunk)
+    upper_ring_smooth_change = smooth_base_shell_upper_rings(gltf, bin_chunk)
+    reference_ring_change = restore_base_shell_reference_ring(
+        gltf,
+        bin_chunk,
+        base_shell_reference_positions,
+    )
+    outermost_ring_delete_change = delete_base_shell_outermost_ring(gltf, bin_chunk)
+    reference_wall_row_change = restore_base_shell_reference_row(
+        gltf,
+        bin_chunk,
+        base_shell_reference_positions,
+        source_ring_stride=9,
+        source_row_index=3,
+        target_ring_stride=6,
+        target_row_index=3,
+    )
+    shell_tray_seal_change = seal_base_shell_to_tray(gltf, bin_chunk)
+    shell_solidify_change = solidify_base_shell(gltf, bin_chunk)
     return {
         "phase": 2,
         "name": PHASE_NAMES[2],
         "shellChangeLog": shell_change,
         "wallHeightChangeLog": wall_height_change,
         "edgeAlignmentChangeLog": edge_alignment_change,
+        "ringDeleteChangeLog": ring_delete_change,
+        "upperRingSmoothChangeLog": upper_ring_smooth_change,
+        "referenceRingRestoreChangeLog": reference_ring_change,
+        "outermostRingDeleteChangeLog": outermost_ring_delete_change,
+        "referenceWallRowRestoreChangeLog": reference_wall_row_change,
+        "shellTraySealChangeLog": shell_tray_seal_change,
+        "shellSolidifyChangeLog": shell_solidify_change,
     }
 
 

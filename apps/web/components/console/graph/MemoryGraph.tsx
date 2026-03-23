@@ -12,9 +12,12 @@ import * as d3 from "d3";
 import {
   type MemoryNode,
   type MemoryEdge,
+  getMemoryKind,
   isAssistantRootMemoryNode,
   isFileMemoryNode,
+  isPinnedMemoryNode,
   isOrdinaryMemoryNode,
+  isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { apiPost } from "@/lib/api";
 import { useModal } from "@/components/ui/modal-dialog";
@@ -73,6 +76,8 @@ const ASSISTANT_CENTER_ID = "__assistant_center__";
 const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
+  core: "#dd8a62",
+  summary: "#b68a2f",
   file: "#8a7a6a",
   centerGradStart: "#c8734a",
   centerGradEnd: "#e8925a",
@@ -97,6 +102,8 @@ function getNodeSourceKinds(node: MemoryNode): string[] {
 function nodeRadius(node: MemoryNode, isCenter: boolean): number {
   if (isCenter) return CENTER_NODE_RADIUS;
   if (isFileMemoryNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
+  if (isSummaryMemoryNode(node)) return MEMORY_NODE_RADIUS + 4;
+  if (isPinnedMemoryNode(node)) return MEMORY_NODE_RADIUS + 2;
   return MEMORY_NODE_RADIUS;
 }
 
@@ -112,6 +119,20 @@ function getLabel(node: MemoryNode): string {
   return node.content.length > 12
     ? node.content.slice(0, 12) + "..."
     : node.content;
+}
+
+function getMemoryNodeColor(node: MemoryNode): string {
+  if (isSummaryMemoryNode(node)) {
+    return COLORS.summary;
+  }
+  if (isPinnedMemoryNode(node)) {
+    return COLORS.core;
+  }
+  const kind = getMemoryKind(node);
+  if (kind === "profile" || kind === "preference" || kind === "goal") {
+    return COLORS.core;
+  }
+  return node.type === "permanent" ? COLORS.permanent : COLORS.temporary;
 }
 
 function truncateCenterLabel(label: string): string {
@@ -496,9 +517,11 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
       const isFileEdge = link.edge_type === "file";
       const isCenterEdge = link.edge_type === "center";
+      const isSummaryEdge = link.edge_type === "summary";
       const isPermanent =
         !isFileEdge &&
         !isCenterEdge &&
+        !isSummaryEdge &&
         ((src.type === "permanent" && tgt.type === "permanent") ||
           link.edge_type === "manual");
       const lineWidth = isFileEdge ? 1 : 0.5 + link.strength * 1.5;
@@ -510,6 +533,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (isFileEdge) {
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
+      } else if (isSummaryEdge) {
+        ctx.setLineDash([]);
+        ctx.strokeStyle = "rgba(182, 138, 47, 0.45)";
       } else if (isCenterEdge) {
         ctx.setLineDash([3, 6]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.25)";
@@ -560,9 +586,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.save();
         ctx.shadowColor = isCenter
           ? COLORS.centerGradStart
-          : node.type === "permanent"
-          ? COLORS.permanent
-          : COLORS.temporary;
+          : getMemoryNodeColor(node);
         ctx.shadowBlur = 18;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
@@ -622,10 +646,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.stroke();
       } else {
         /* memory node circle */
-        const color =
-          node.type === "permanent" ? COLORS.permanent : COLORS.temporary;
+        const radius = nodeRadius(node, false);
+        const color = getMemoryNodeColor(node);
         ctx.beginPath();
-        ctx.arc(node.x, node.y, MEMORY_NODE_RADIUS, 0, Math.PI * 2);
+        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
 
@@ -633,9 +657,24 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           ctx.setLineDash([4, 3]);
         }
         ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = isSummaryMemoryNode(node) ? 2.4 : 1.5;
         ctx.stroke();
         ctx.setLineDash([]);
+
+        if (isSummaryMemoryNode(node)) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, Math.max(radius - 6, 6), 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 246, 221, 0.95)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        if (isPinnedMemoryNode(node)) {
+          ctx.beginPath();
+          ctx.arc(node.x + radius - 3, node.y - radius + 3, 4, 0, Math.PI * 2);
+          ctx.fillStyle = "#fff8e6";
+          ctx.fill();
+        }
       }
 
       if (isSearched) {
@@ -648,7 +687,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ? node.y + CENTER_NODE_RADIUS + 14
         : isFileMemoryNode(node)
         ? node.y + FILE_NODE_H / 2 + 12
-        : node.y + MEMORY_NODE_RADIUS + 14;
+        : node.y + nodeRadius(node, false) + 14;
 
       ctx.fillStyle = isFaded
         ? "rgba(42, 32, 24, 0.3)"

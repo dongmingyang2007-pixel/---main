@@ -73,6 +73,9 @@ class RealtimeSession:
     _partial_transcript: str = ""
     _current_transcript: str = ""
     _current_response_text: str = ""
+    _text_response_text: str = ""
+    _audio_response_text: str = ""
+    _response_text_channel: str | None = None
     _upstream_ws: websockets.ClientConnection | None = None
     _last_activity: float = field(default_factory=time.time)
     _session_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -91,6 +94,58 @@ class RealtimeSession:
     def touch(self) -> None:
         """Update last activity timestamp."""
         self._last_activity = time.time()
+
+    def _reset_response_text_tracking(self) -> None:
+        self._current_response_text = ""
+        self._text_response_text = ""
+        self._audio_response_text = ""
+        self._response_text_channel = None
+
+    def _reconcile_response_text(self, *, channel: str, candidate: str) -> str:
+        """Merge one response-text channel into the visible assistant transcript.
+
+        DashScope omni may stream both ``response.text.delta`` and
+        ``response.audio_transcript.*`` for the same turn. We keep separate
+        channel buffers and only emit the minimal suffix needed to advance the
+        visible transcript, so the UI does not render duplicated assistant text.
+        """
+        if not candidate:
+            return ""
+
+        current = self._current_response_text
+        preferred = self._response_text_channel
+
+        if preferred is None:
+            self._response_text_channel = channel
+            self._current_response_text = candidate
+            return candidate
+
+        if channel == "text":
+            if candidate == current:
+                self._response_text_channel = "text"
+                return ""
+            if candidate.startswith(current):
+                self._response_text_channel = "text"
+                delta = candidate[len(current):]
+                self._current_response_text = candidate
+                return delta
+            return ""
+
+        if preferred == "audio":
+            if candidate == current or current.startswith(candidate):
+                return ""
+            if candidate.startswith(current):
+                delta = candidate[len(current):]
+                self._current_response_text = candidate
+                return delta
+            return ""
+
+        if candidate.startswith(current):
+            delta = candidate[len(current):]
+            if delta:
+                self._current_response_text = candidate
+            return delta
+        return ""
 
     @property
     def idle_seconds(self) -> float:
@@ -237,22 +292,38 @@ class RealtimeSession:
                 outgoing.append(base64.b64decode(audio_b64))
             self.touch()
 
-        elif event_type in {"response.text.delta", "response.audio_transcript.delta"}:
+        elif event_type == "response.text.delta":
             delta = event.get("delta", "")
-            self._current_response_text += delta
-            outgoing.append({"type": "response.text", "text": delta})
+            self._text_response_text += delta
+            visible_delta = self._reconcile_response_text(
+                channel="text",
+                candidate=self._text_response_text,
+            )
+            if visible_delta:
+                outgoing.append({"type": "response.text", "text": visible_delta})
+            self.touch()
+
+        elif event_type == "response.audio_transcript.delta":
+            delta = event.get("delta", "")
+            self._audio_response_text += delta
+            visible_delta = self._reconcile_response_text(
+                channel="audio",
+                candidate=self._audio_response_text,
+            )
+            if visible_delta:
+                outgoing.append({"type": "response.text", "text": visible_delta})
             self.touch()
 
         elif event_type == "response.audio_transcript.done":
             transcript = event.get("transcript", "")
             if transcript:
-                if transcript.startswith(self._current_response_text):
-                    delta = transcript[len(self._current_response_text):]
-                else:
-                    delta = transcript
-                self._current_response_text = transcript
-                if delta:
-                    outgoing.append({"type": "response.text", "text": delta})
+                self._audio_response_text = transcript
+                visible_delta = self._reconcile_response_text(
+                    channel="audio",
+                    candidate=self._audio_response_text,
+                )
+                if visible_delta:
+                    outgoing.append({"type": "response.text", "text": visible_delta})
             self.touch()
 
         elif event_type == "response.done":
@@ -314,7 +385,7 @@ class RealtimeSession:
             return
         await self._upstream_ws.send(json.dumps({"type": "response.cancel"}))
         self._ai_speaking = False
-        self._current_response_text = ""
+        self._reset_response_text_tracking()
 
     async def close(self) -> None:
         """Gracefully close upstream connection."""
@@ -336,7 +407,7 @@ class RealtimeSession:
         user = self._current_transcript
         ai = self._current_response_text
         self._current_transcript = ""
-        self._current_response_text = ""
+        self._reset_response_text_tracking()
         return user, ai
 
 

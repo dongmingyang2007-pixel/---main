@@ -4,6 +4,33 @@ import { useState, useEffect, useCallback } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import { getApiHttpBaseUrl } from "@/lib/env";
 
+export type MemoryKind =
+  | "profile"
+  | "preference"
+  | "goal"
+  | "episodic"
+  | "fact"
+  | "summary";
+
+export interface MemoryMetadataJson extends Record<string, unknown> {
+  memory_kind?: MemoryKind;
+  node_kind?: string;
+  pinned?: boolean;
+  salience?: number;
+  importance?: number;
+  last_used_at?: string;
+  last_used_source?: string;
+  last_retrieval_score?: number;
+  retrieval_count?: number;
+  source_count?: number;
+  source_memory_ids?: string[];
+  summary_group_key?: string;
+  visibility?: "public" | "private" | string;
+  owner_user_id?: string;
+  auto_generated?: boolean;
+  promoted_by?: string;
+}
+
 export interface MemoryNode {
   id: string;
   workspace_id: string;
@@ -15,7 +42,7 @@ export interface MemoryNode {
   parent_memory_id: string | null;
   position_x: number | null;
   position_y: number | null;
-  metadata_json: Record<string, unknown>;
+  metadata_json: MemoryMetadataJson;
   created_at: string;
   updated_at: string;
   // D3 simulation fields (added at runtime)
@@ -41,11 +68,63 @@ export function isOrdinaryMemoryNode(node: MemoryNode): boolean {
   return !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node);
 }
 
+export function getMemoryMetadata(
+  value: MemoryNode | MemoryMetadataJson | null | undefined,
+): MemoryMetadataJson {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  if ("metadata_json" in value && value.metadata_json && typeof value.metadata_json === "object") {
+    return value.metadata_json as MemoryMetadataJson;
+  }
+  return value as MemoryMetadataJson;
+}
+
+export function getMemoryKind(node: MemoryNode | MemoryMetadataJson): MemoryKind | null {
+  const metadata = getMemoryMetadata(node);
+  const kind = metadata.memory_kind;
+  return typeof kind === "string" && kind.length > 0 ? kind : null;
+}
+
+export function isSummaryMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  const metadata = getMemoryMetadata(node);
+  return metadata.node_kind === "summary" || metadata.memory_kind === "summary";
+}
+
+export function isPinnedMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  return getMemoryMetadata(node).pinned === true;
+}
+
+export function getMemorySalience(node: MemoryNode | MemoryMetadataJson): number | null {
+  const salience = getMemoryMetadata(node).salience;
+  return typeof salience === "number" && Number.isFinite(salience) ? salience : null;
+}
+
+export function getMemoryRetrievalCount(node: MemoryNode | MemoryMetadataJson): number {
+  const count = getMemoryMetadata(node).retrieval_count;
+  return typeof count === "number" && Number.isFinite(count) ? count : 0;
+}
+
+export function getMemoryLastUsedAt(node: MemoryNode | MemoryMetadataJson): string | null {
+  const value = getMemoryMetadata(node).last_used_at;
+  return typeof value === "string" && value ? value : null;
+}
+
+export function getMemoryLastUsedSource(node: MemoryNode | MemoryMetadataJson): string | null {
+  const value = getMemoryMetadata(node).last_used_source;
+  return typeof value === "string" && value ? value : null;
+}
+
+export function getSummarySourceCount(node: MemoryNode | MemoryMetadataJson): number {
+  const value = getMemoryMetadata(node).source_count;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export interface MemoryEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual";
+  edge_type: "auto" | "manual" | "summary" | "file" | "center";
   strength: number;
   created_at: string;
   // D3 fields
@@ -98,7 +177,7 @@ function normalizeStreamNode(
     position_y:
       node.position_y !== undefined ? node.position_y : (previous?.position_y ?? null),
     metadata_json:
-      (node.metadata_json as Record<string, unknown> | undefined) ||
+      (node.metadata_json as MemoryMetadataJson | undefined) ||
       previous?.metadata_json ||
       {},
     created_at: node.created_at || previous?.created_at || now,

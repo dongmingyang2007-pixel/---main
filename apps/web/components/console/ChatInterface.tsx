@@ -23,6 +23,7 @@ import {
   VOICE_ACTIVE_STATES,
   getPipelineModelId,
   modelSupportsCapability,
+  normalizeRetrievalTrace,
   normalizeSearchSources,
   toMessage,
   getApiErrorMessage,
@@ -390,12 +391,14 @@ export function ChatInterface({
             const finalId = (event.data.id as string) || tempAssistantId;
             const memoriesExtracted = event.data.memories_extracted as string | undefined;
             const sources = normalizeSearchSources(event.data.sources);
+            const retrievalTrace = normalizeRetrievalTrace(event.data.retrieval_trace);
             finalizedAssistantId = finalId;
             messageListRef.current?.finalizeMessage(tempAssistantId, {
               id: finalId,
               isStreaming: false,
               memories_extracted: memoriesExtracted,
               sources,
+              retrievalTrace,
             });
           } else if (event.event === "error") {
             const errorMsg =
@@ -622,7 +625,7 @@ export function ChatInterface({
       }
 
       setMessages((prev) => {
-        let next = prev.slice();
+        const next = prev.slice();
 
         if (normalizedUserText) {
           const userId = liveTurnIdsRef.current.userId;

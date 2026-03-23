@@ -20,16 +20,11 @@ from app.core.errors import ApiError
 from app.db.session import SessionLocal
 from app.models import Conversation, Membership, Message, ModelCatalog, Project, User
 from app.services.context_loader import (
-    build_system_prompt,
-    extract_personality,
-    filter_knowledge_chunks,
-    load_conversation_context,
-    load_permanent_memories,
     load_recent_messages,
-    search_rag_knowledge,
 )
 from app.services.composed_realtime import ComposedRealtimeSession, decode_pending_media
 from app.services.asr_client import RealtimeTranscriptionBridge
+from app.services.memory_context import build_memory_context, touch_memories_from_trace
 from app.services.realtime_bridge import (
     RealtimeSession,
     register_session,
@@ -46,6 +41,7 @@ router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 SESSION_MONITOR_INTERVAL_SECONDS = 5.0
 UPSTREAM_CONNECT_TIMEOUT_SECONDS = 10.0
 UPSTREAM_SESSION_UPDATE_TIMEOUT_SECONDS = 10.0
+COMPOSED_TRAILING_AUDIO_GRACE_SECONDS = 0.75
 MODEL_API_UNCONFIGURED_MESSAGE = (
     "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
 )
@@ -161,39 +157,23 @@ async def _load_initial_context(
     db: Session,
     session: RealtimeSession,
 ) -> str:
-    """Load personality, memories, recent messages and build system prompt."""
-    project, conversation = load_conversation_context(
-        db,
-        workspace_id=session.workspace_id,
-        project_id=session.project_id,
-        conversation_id=session.conversation_id,
-    )
-
-    personality = extract_personality(project.description)
-
-    memories = load_permanent_memories(
-        db,
-        workspace_id=session.workspace_id,
-        project_id=session.project_id,
-        conversation_created_by=conversation.created_by,
-    )
-    memory_texts = [m.content for m in memories if m.content]
+    """Load initial layered prompt context for realtime sessions."""
     recent_messages = load_recent_messages(
         db,
         conversation_id=session.conversation_id,
         limit=max(settings.realtime_context_history_turns * 2, 0),
     )
-
-    # Store on session for reuse during RAG context refresh
-    session._personality = personality
-    session._memory_texts = memory_texts
-
-    return build_system_prompt(
-        personality=personality,
-        memories=memory_texts,
-        knowledge_chunks=[],
+    context = await build_memory_context(
+        db,
+        workspace_id=session.workspace_id,
+        project_id=session.project_id,
+        conversation_id=session.conversation_id,
+        user_message="",
         recent_messages=recent_messages,
+        include_recent_history=True,
     )
+    session._retrieval_trace = context.retrieval_trace
+    return context.system_prompt
 
 
 async def _post_turn_tasks(
@@ -224,6 +204,11 @@ async def _post_turn_tasks(
         db_save.query(Conversation).filter(
             Conversation.id == session.conversation_id
         ).update({"updated_at": now})
+        touch_memories_from_trace(
+            db_save,
+            retrieval_trace=getattr(session, "_retrieval_trace", None),
+            used_at=now,
+        )
         db_save.commit()
     except Exception:
         db_save.rollback()
@@ -240,40 +225,28 @@ async def _post_turn_tasks(
         ai_text,
     )
 
-    # Async RAG search to enrich next turn context
+    # Refresh layered context after a few turns so the next turn sees the latest
+    # memories, summaries, and relevant linked documents.
     if session.turn_count % settings.realtime_rag_refresh_turns == 0:
         try:
             db: Session = SessionLocal()
             try:
-                results = await search_rag_knowledge(
+                recent_messages = load_recent_messages(
+                    db,
+                    conversation_id=session.conversation_id,
+                    limit=max(settings.realtime_context_history_turns * 2, 0),
+                )
+                context = await build_memory_context(
                     db,
                     workspace_id=session.workspace_id,
                     project_id=session.project_id,
-                    query=user_text,
-                    limit=5,
+                    conversation_id=session.conversation_id,
+                    user_message=user_text,
+                    recent_messages=recent_messages,
+                    include_recent_history=True,
                 )
-                if results:
-                    chunks = filter_knowledge_chunks(
-                        db,
-                        workspace_id=session.workspace_id,
-                        project_id=session.project_id,
-                        results=results,
-                    )
-                    chunk_texts = [c["chunk_text"] for c in chunks if c.get("chunk_text")]
-                    if chunk_texts:
-                        session._knowledge_chunks = chunk_texts
-                        recent_messages = load_recent_messages(
-                            db,
-                            conversation_id=session.conversation_id,
-                            limit=max(settings.realtime_context_history_turns * 2, 0),
-                        )
-                        new_prompt = build_system_prompt(
-                            personality=session._personality,
-                            memories=session._memory_texts,
-                            knowledge_chunks=session._knowledge_chunks,
-                            recent_messages=recent_messages,
-                        )
-                        await session.send_session_update(new_prompt)
+                session._retrieval_trace = context.retrieval_trace
+                await session.send_session_update(context.system_prompt)
             finally:
                 db.close()
         except Exception:
@@ -323,6 +296,11 @@ async def _persist_composed_turn(
         db.query(Conversation).filter(
             Conversation.id == session.conversation_id
         ).update({"updated_at": now})
+        touch_memories_from_trace(
+            db,
+            retrieval_trace=getattr(session, "_retrieval_trace", None),
+            used_at=now,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -820,6 +798,7 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
     transcription_bridge: RealtimeTranscriptionBridge | None = None
     idle_task: asyncio.Task[str | None] | None = None
     awaiting_transcript_final = False
+    ignore_trailing_audio_until = 0.0
     realtime_asr_model_id = DEFAULT_PIPELINE_MODELS["realtime_asr"]
     try:
         init_raw = await asyncio.wait_for(ws.receive_json(), timeout=10)
@@ -939,6 +918,12 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                     break
 
                 if "bytes" in message and message["bytes"]:
+                    now = asyncio.get_running_loop().time()
+                    if ignore_trailing_audio_until and now < ignore_trailing_audio_until:
+                        session.touch_activity()
+                        receive_task = asyncio.create_task(ws.receive())
+                        continue
+                    ignore_trailing_audio_until = 0.0
                     is_new_utterance = not session.has_buffered_audio
                     audio_chunk_forwarded = False
                     if is_new_utterance and session.is_processing:
@@ -995,7 +980,12 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                     if msg_type == "session.end":
                         break
                     if msg_type == "audio.stop":
+                        ignore_trailing_audio_until = 0.0
                         if transcription_bridge is None:
+                            if not session.has_buffered_audio:
+                                session.touch_activity()
+                                receive_task = asyncio.create_task(ws.receive())
+                                continue
                             maybe_task, consumed_media = await session.start_turn(ws)
                             if consumed_media:
                                 await ws.send_json({"type": "media.cleared"})
@@ -1041,26 +1031,52 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                     final_text = event.get("text", "")
                     session.set_live_transcript(final_text, final=True)
                     await ws.send_json({"type": "transcript.final", "text": final_text})
-                    if awaiting_transcript_final:
+                    auto_start_turn = (
+                        not awaiting_transcript_final
+                        and session.has_buffered_audio
+                        and not session.is_processing
+                    )
+                    if awaiting_transcript_final or auto_start_turn:
                         maybe_task, consumed_media = await session.start_turn(ws)
                         if consumed_media:
                             await ws.send_json({"type": "media.cleared"})
                         if maybe_task is not None:
                             turn_task = maybe_task
+                            ignore_trailing_audio_until = (
+                                asyncio.get_running_loop().time() + COMPOSED_TRAILING_AUDIO_GRACE_SECONDS
+                                if auto_start_turn
+                                else 0.0
+                            )
+                        else:
+                            ignore_trailing_audio_until = 0.0
                         awaiting_transcript_final = False
-                        await transcription_bridge.close()
-                        transcription_bridge = None
+                        if transcription_bridge is not None:
+                            await transcription_bridge.close()
+                            transcription_bridge = None
                 elif event_type == "transcript.empty":
                     session.clear_live_transcript()
-                    if awaiting_transcript_final:
+                    auto_start_turn = (
+                        not awaiting_transcript_final
+                        and session.has_buffered_audio
+                        and not session.is_processing
+                    )
+                    if awaiting_transcript_final or auto_start_turn:
                         maybe_task, consumed_media = await session.start_turn(ws)
                         if consumed_media:
                             await ws.send_json({"type": "media.cleared"})
                         if maybe_task is not None:
                             turn_task = maybe_task
+                            ignore_trailing_audio_until = (
+                                asyncio.get_running_loop().time() + COMPOSED_TRAILING_AUDIO_GRACE_SECONDS
+                                if auto_start_turn
+                                else 0.0
+                            )
+                        else:
+                            ignore_trailing_audio_until = 0.0
                         awaiting_transcript_final = False
-                        await transcription_bridge.close()
-                        transcription_bridge = None
+                        if transcription_bridge is not None:
+                            await transcription_bridge.close()
+                            transcription_bridge = None
                 elif event_type == "error":
                     logger.warning("Composed realtime transcription bridge failed: %s", event.get("message", ""))
                     await ws.send_json({

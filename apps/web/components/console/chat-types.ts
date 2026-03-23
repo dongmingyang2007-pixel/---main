@@ -16,12 +16,47 @@ export interface ExtractedFact {
   importance: number;
 }
 
+export interface RetrievalTraceMemory {
+  id: string;
+  type?: string;
+  category?: string;
+  memory_kind?: string | null;
+  source?: string | null;
+  score?: number | null;
+  semantic_score?: number | null;
+  pinned?: boolean;
+  salience?: number | null;
+  content: string;
+}
+
+export interface RetrievalTraceChunk {
+  id?: string | null;
+  data_item_id?: string | null;
+  filename?: string | null;
+  score?: number | null;
+  chunk_text: string;
+}
+
+export interface RetrievalTrace {
+  strategy?: string | null;
+  memory_counts?: {
+    static?: number;
+    relevant?: number;
+    graph?: number;
+    temporary?: number;
+  };
+  memories: RetrievalTraceMemory[];
+  knowledge_chunks: RetrievalTraceChunk[];
+  linked_file_chunks: RetrievalTraceChunk[];
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   reasoningContent?: string | null;
   sources?: SearchSource[];
+  retrievalTrace?: RetrievalTrace | null;
   audioBase64?: string | null;
   memories_extracted?: string;
   extracted_facts?: ExtractedFact[];
@@ -36,6 +71,7 @@ export interface ApiMessage {
   reasoning_content?: string | null;
   metadata_json?: {
     sources?: unknown;
+    retrieval_trace?: unknown;
     [key: string]: unknown;
   };
   created_at?: string;
@@ -228,6 +264,120 @@ export function normalizeSearchSources(value: unknown): SearchSource[] {
   });
 }
 
+function normalizeTraceMemory(value: unknown): RetrievalTraceMemory | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const id = typeof candidate.id === "string" ? candidate.id : "";
+  const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  if (!id || !content) {
+    return null;
+  }
+  return {
+    id,
+    type: typeof candidate.type === "string" ? candidate.type : undefined,
+    category: typeof candidate.category === "string" ? candidate.category : undefined,
+    memory_kind:
+      typeof candidate.memory_kind === "string" ? candidate.memory_kind : null,
+    source: typeof candidate.source === "string" ? candidate.source : null,
+    score:
+      typeof candidate.score === "number" && Number.isFinite(candidate.score)
+        ? candidate.score
+        : null,
+    semantic_score:
+      typeof candidate.semantic_score === "number" &&
+      Number.isFinite(candidate.semantic_score)
+        ? candidate.semantic_score
+        : null,
+    pinned: candidate.pinned === true,
+    salience:
+      typeof candidate.salience === "number" && Number.isFinite(candidate.salience)
+        ? candidate.salience
+        : null,
+    content,
+  };
+}
+
+function normalizeTraceChunk(value: unknown): RetrievalTraceChunk | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const chunkText =
+    typeof candidate.chunk_text === "string" ? candidate.chunk_text.trim() : "";
+  if (!chunkText) {
+    return null;
+  }
+  return {
+    id: typeof candidate.id === "string" ? candidate.id : null,
+    data_item_id:
+      typeof candidate.data_item_id === "string" ? candidate.data_item_id : null,
+    filename: typeof candidate.filename === "string" ? candidate.filename : null,
+    score:
+      typeof candidate.score === "number" && Number.isFinite(candidate.score)
+        ? candidate.score
+        : null,
+    chunk_text: chunkText,
+  };
+}
+
+export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const memories = Array.isArray(candidate.memories)
+    ? candidate.memories
+        .map((item) => normalizeTraceMemory(item))
+        .filter((item): item is RetrievalTraceMemory => item !== null)
+    : [];
+  const knowledgeChunks = Array.isArray(candidate.knowledge_chunks)
+    ? candidate.knowledge_chunks
+        .map((item) => normalizeTraceChunk(item))
+        .filter((item): item is RetrievalTraceChunk => item !== null)
+    : [];
+  const linkedFileChunks = Array.isArray(candidate.linked_file_chunks)
+    ? candidate.linked_file_chunks
+        .map((item) => normalizeTraceChunk(item))
+        .filter((item): item is RetrievalTraceChunk => item !== null)
+    : [];
+  const memoryCounts =
+    candidate.memory_counts && typeof candidate.memory_counts === "object"
+      ? {
+          static:
+            typeof (candidate.memory_counts as Record<string, unknown>).static === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>).static as number)
+              : undefined,
+          relevant:
+            typeof (candidate.memory_counts as Record<string, unknown>).relevant === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>).relevant as number)
+              : undefined,
+          graph:
+            typeof (candidate.memory_counts as Record<string, unknown>).graph === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>).graph as number)
+              : undefined,
+          temporary:
+            typeof (candidate.memory_counts as Record<string, unknown>).temporary === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>).temporary as number)
+              : undefined,
+        }
+      : undefined;
+
+  if (!memories.length && !knowledgeChunks.length && !linkedFileChunks.length) {
+    return null;
+  }
+
+  return {
+    strategy:
+      typeof candidate.strategy === "string" ? candidate.strategy : null,
+    memory_counts: memoryCounts,
+    memories,
+    knowledge_chunks: knowledgeChunks,
+    linked_file_chunks: linkedFileChunks,
+  };
+}
+
 export function toMessage(message: ApiMessage): Message {
   const meta = message.metadata_json;
   const rawFacts = meta?.extracted_facts;
@@ -248,6 +398,7 @@ export function toMessage(message: ApiMessage): Message {
     content: message.content,
     reasoningContent: message.reasoning_content,
     sources: normalizeSearchSources(meta?.sources),
+    retrievalTrace: normalizeRetrievalTrace(meta?.retrieval_trace),
     extracted_facts: extractedFacts,
     animateOnMount: false,
     isStreaming: false,

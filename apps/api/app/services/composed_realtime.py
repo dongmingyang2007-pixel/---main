@@ -40,6 +40,7 @@ ALLOWED_SYNTHETIC_VIDEO_MEDIA_TYPES = {
 ALLOWED_SYNTHETIC_MEDIA_TYPES = ALLOWED_SYNTHETIC_IMAGE_MEDIA_TYPES | ALLOWED_SYNTHETIC_VIDEO_MEDIA_TYPES
 
 logger = logging.getLogger(__name__)
+_IMMEDIATE_TTS_BOUNDARY_CHARS = {"。", "！", "？", "!", "?"}
 
 
 @dataclass
@@ -116,11 +117,36 @@ def split_text_for_realtime_tts(text: str) -> list[str]:
     if not stripped:
         return []
 
-    parts = re.split(r"(?<=[。！？!?\.])\s+", stripped)
-    chunks = [part.strip() for part in parts if part.strip()]
-    if chunks:
-        return chunks
-    return [stripped]
+    chunks: list[str] = []
+    buffer: list[str] = []
+
+    for index, char in enumerate(stripped):
+        if char == "\n":
+            segment = "".join(buffer).strip()
+            if segment:
+                chunks.append(segment)
+            buffer = []
+            continue
+
+        buffer.append(char)
+        next_char = stripped[index + 1] if index + 1 < len(stripped) else ""
+
+        should_flush = False
+        if char in _IMMEDIATE_TTS_BOUNDARY_CHARS:
+            should_flush = True
+        elif char == "." and (not next_char or next_char.isspace()):
+            should_flush = True
+
+        if should_flush:
+            segment = "".join(buffer).strip()
+            if segment:
+                chunks.append(segment)
+            buffer = []
+
+    tail = "".join(buffer).strip()
+    if tail:
+        chunks.append(tail)
+    return chunks or [stripped]
 
 
 class ComposedRealtimeSession:

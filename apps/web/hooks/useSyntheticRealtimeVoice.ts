@@ -83,6 +83,7 @@ export function useSyntheticRealtimeVoice({
     projectId,
     wsPath: "/api/v1/realtime/composed-voice",
     audioSendMode: "vad-gated",
+    blockCaptureWhileAiSpeaking: true,
     enableInterrupt: true,
     vadConfig: {
       speechThreshold: 0.015,

@@ -1,4 +1,4 @@
-import { DEFAULT_LOCAL_API_PORT, LOOPBACK_HOSTS, LOCAL_BIND_HOSTS, isLoopbackHost } from "@/lib/network-hosts";
+import { DEFAULT_LOCAL_API_PORT, LOCAL_BIND_HOSTS, isLoopbackHost } from "@/lib/network-hosts";
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");

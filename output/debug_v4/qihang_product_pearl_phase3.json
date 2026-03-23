@@ -1,6 +1,6 @@
 {
   "modelGlbPath": "output/debug_v4/qihang_product_pearl_phase3.glb",
-  "modelGlbSha256": "eb7987142e093f4f45f389bd3553750f3738d8df0d11198b9954293825740f56",
+  "modelGlbSha256": "fd274c48530a893621ae236262aa8a3a31ff7e00bd1ed8a6014eb834dcb1d900",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
@@ -10,10 +10,10 @@
     "nodes": 85,
     "meshes": 38,
     "materials": 21,
-    "bufferViews": 135,
-    "accessors": 135,
+    "bufferViews": 143,
+    "accessors": 143,
     "animations": 0,
-    "binBytes": 1730932
+    "binBytes": 2911852
   },
   "sceneRoots": [
     "QIHANG_Product"
@@ -324,23 +324,23 @@
   "partBoundingBoxes": {
     "Case_Base_Shell": {
       "bboxMinMm": [
-        -42.944,
-        -11.4034,
-        -16.2
+        -43.744,
+        -12.2034,
+        -17.0
       ],
       "bboxMaxMm": [
-        42.944,
-        11.4034,
-        16.2
+        43.7257,
+        9.4137,
+        17.0
       ],
       "bboxSizeMm": [
-        85.888,
-        22.8068,
-        32.4
+        87.4697,
+        21.6171,
+        34.0
       ],
       "bboxCenterMm": [
-        0.0,
-        0.0,
+        -0.0091,
+        -1.3949,
         0.0
       ]
     },
@@ -486,7 +486,7 @@
   },
   "sourceInputPath": "apps/web/public/qihang_product_pearl_V2.glb",
   "sourceInputSha256": "9cbad1a7bfd7687a66734037492422f58dc48373ad0b29571d0804f10ad1def0",
-  "outputSha256": "eb7987142e093f4f45f389bd3553750f3738d8df0d11198b9954293825740f56",
+  "outputSha256": "fd274c48530a893621ae236262aa8a3a31ff7e00bd1ed8a6014eb834dcb1d900",
   "phase": 3,
   "phaseName": "lid_shell_cover",
   "phaseLogs": [
@@ -670,67 +670,67 @@
         }
       ],
       "trayChangeLog": {
-        "integrationMode": "split_internal_surfaces",
+        "integrationMode": "split_internal_solids",
         "platformChangeLog": {
           "node": "Case_Base_Platform_V4",
           "meshIndex": 36,
           "nodeIndex": 83,
-          "triangleCount": 536,
+          "triangleCount": 4112,
           "bboxMinProductMm": [
-            -36.5,
-            0.9,
-            -15.1
+            -41.226,
+            7.8,
+            -14.6189
           ],
           "bboxMaxProductMm": [
             -19.6,
-            11.1,
-            15.1
+            9.25,
+            14.6189
           ],
           "bboxSizeProductMm": [
-            16.9,
-            10.2,
-            30.2
+            21.626,
+            1.45,
+            29.2378
           ]
         },
         "rampChangeLog": {
           "node": "Case_Base_Arc_Ramp_V4",
           "meshIndex": 37,
           "nodeIndex": 84,
-          "triangleCount": 1696,
+          "triangleCount": 11168,
           "bboxMinProductMm": [
-            -22.8,
-            -0.85,
-            -15.1
+            -29.6494,
+            -2.7,
+            -14.6189
           ],
           "bboxMaxProductMm": [
-            38.8,
-            11.1,
-            15.1
+            41.226,
+            9.25,
+            14.6189
           ],
           "bboxSizeProductMm": [
-            61.6,
+            70.8754,
             11.95,
-            30.2
+            29.2378
           ]
         },
         "splitProfile": {
-          "boundaryBackMm": -22.8,
+          "boundaryBackMm": -19.6,
           "boundaryMidMm": -19.6,
-          "boundaryFrontMm": -20.7274,
+          "boundaryFrontMm": -23.2022,
           "platformTopMm": 9.25,
-          "rampStartTopMm": 6.0,
-          "rampBackAtEarbudMm": 10.6146,
-          "rampFrontAtEarbudMm": 1.3854,
-          "rampBackAtCameraMm": 10.6146,
-          "rampFrontAtCameraMm": 1.3854
+          "rampStartTopMm": 4.15,
+          "rampBackAtEarbudMm": 8.7646,
+          "rampFrontAtEarbudMm": -0.4646,
+          "rampBackAtCameraMm": 8.7646,
+          "rampFrontAtCameraMm": -0.4646
         }
       },
       "shellJoinChangeLog": {
         "node": "Case_Base_Shell",
         "joinMode": "depressed_top_band",
-        "movedRows": 280,
-        "maxDeltaYmm": 10.3058,
-        "maxDeltaZmm": 0.1574,
+        "movedRows": 341,
+        "maxDeltaYmm": 11.8699,
+        "maxDeltaZmm": 1.4772,
         "joinStartXmm": -31.5,
         "joinEndXmm": 42.5
       }
@@ -740,9 +740,9 @@
       "name": "base_shell_split",
       "shellChangeLog": {
         "node": "Case_Base_Shell",
-        "movedRows": 148,
-        "maxDeltaYmm": 2.0615,
-        "maxDeltaZmm": 2.3097,
+        "movedRows": 119,
+        "maxDeltaYmm": 1.8312,
+        "maxDeltaZmm": 1.7325,
         "dropAtEarbudMm": 0.0,
         "dropAtCameraMm": 2.8975,
         "centerShiftLeftMm": 0.0,
@@ -753,20 +753,110 @@
       "wallHeightChangeLog": {
         "node": "Case_Base_Shell",
         "joinMode": "depressed_top_band",
-        "movedRows": 63,
-        "maxDeltaYmm": 0.4697,
-        "maxDeltaZmm": 0.0459,
+        "movedRows": 100,
+        "maxDeltaYmm": 0.4744,
+        "maxDeltaZmm": 0.2752,
         "joinStartXmm": -31.5,
         "joinEndXmm": 42.5
       },
       "edgeAlignmentChangeLog": {
         "node": "Case_Base_Shell",
         "operation": "snap_edge_to_ramp_profile",
-        "movedRows": 269,
-        "maxDeltaYmm": 4.2148,
-        "maxDeltaZmm": 0.99,
+        "movedRows": 255,
+        "maxDeltaYmm": 4.9434,
+        "maxDeltaZmm": 0.9898,
         "snapStartXmm": -22.8,
         "snapEndXmm": 38.9
+      },
+      "ringDeleteChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "delete_ring_faces",
+        "ringRows": [
+          6,
+          7
+        ],
+        "columnCount": 129,
+        "targetVertexCount": 258,
+        "removedVertexCount": 258,
+        "removedTriangleCount": 768,
+        "bridgeSegmentCount": 128,
+        "bridgeTriangleCount": 256,
+        "keptVertexCount": 903,
+        "keptTriangleCount": 1536
+      },
+      "upperRingSmoothChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "smooth_upper_rings",
+        "ringRows": [
+          6,
+          7
+        ],
+        "columnCount": 129,
+        "iterationsByRing": {
+          "6": 4,
+          "7": 2
+        },
+        "movedRows": 258,
+        "maxDeltaMm": 4.1906
+      },
+      "referenceRingRestoreChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "restore_reference_ring",
+        "sourceRow": 5,
+        "targetRow": 5,
+        "columnCount": 129,
+        "movedRows": 20,
+        "maxDeltaMm": 1.1356
+      },
+      "outermostRingDeleteChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "delete_outermost_ring",
+        "ringRow": 7,
+        "columnCount": 129,
+        "removedVertexCount": 129,
+        "removedTriangleCount": 256,
+        "keptVertexCount": 774,
+        "keptTriangleCount": 1280
+      },
+      "referenceWallRowRestoreChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "restore_reference_row",
+        "sourceRow": 4,
+        "targetRow": 4,
+        "columnCount": 129,
+        "movedRows": 26,
+        "maxDeltaMm": 3.5988
+      },
+      "shellTraySealChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "seal_to_tray_surface",
+        "columnCount": 129,
+        "referenceRow": 4,
+        "topRow": 6,
+        "movedColumns": 129,
+        "movedRows": 129,
+        "sealClearanceMm": 0.0,
+        "maxDeltaMm": 7.7745,
+        "maxGapMm": 0.0
+      },
+      "shellSolidifyChangeLog": {
+        "node": "Case_Base_Shell",
+        "operation": "solidify_shell",
+        "wallThicknessMm": 0.8,
+        "surfaceMode": "sealed_source_as_inner_surface",
+        "sourceVertexCount": 774,
+        "cleanedSourceVertexCount": 641,
+        "removedSourceVertexCount": 133,
+        "sourceTriangleCount": 1280,
+        "cleanedSourceTriangleCount": 1152,
+        "removedDegenerateSourceTriangleCount": 128,
+        "removedDuplicateSourceTriangleCount": 0,
+        "notchStitchChangeLog": null,
+        "boundaryEdgeCount": 128,
+        "bridgeTriangleCount": 256,
+        "skippedBoundaryEdges": 0,
+        "outputVertexCount": 7680,
+        "outputTriangleCount": 2560
       }
     },
     {

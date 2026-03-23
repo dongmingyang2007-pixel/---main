@@ -33,6 +33,8 @@ from app.schemas.memory import (
     MemoryUpdate,
 )
 from app.services.embedding import embed_and_store, search_similar
+from app.services.memory_context import search_project_memories_for_tool
+from app.services.memory_metadata import normalize_memory_metadata
 from app.services.memory_file_context import sync_data_item_links_for_memory
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 from app.services.memory_visibility import (
@@ -244,6 +246,18 @@ def _sync_memory_embedding(memory: Memory, db: Session) -> None:
         db.rollback()
 
 
+def _trigger_memory_compaction(workspace_id: str, project_id: str) -> None:
+    try:
+        from app.tasks.worker_tasks import compact_project_memories_task
+
+        if settings.env == "test":
+            compact_project_memories_task(workspace_id, project_id)
+        else:
+            compact_project_memories_task.delay(workspace_id, project_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @router.get("", response_model=MemoryGraphOut)
 def get_memory_graph(
     project_id: str = Query(...),
@@ -426,7 +440,12 @@ def create_memory(
         parent_memory_id=payload.parent_memory_id,
         position_x=payload.position_x,
         position_y=payload.position_y,
-        metadata_json=payload.metadata_json,
+        metadata_json=normalize_memory_metadata(
+            content=payload.content,
+            category=payload.category,
+            memory_type=payload.type,
+            metadata=payload.metadata_json,
+        ),
     )
     db.add(memory)
     if root_changed:
@@ -434,6 +453,8 @@ def create_memory(
     db.commit()
     db.refresh(memory)
     _sync_memory_embedding(memory, db)
+    if memory.type == "permanent":
+        _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
 
 
@@ -721,12 +742,26 @@ def update_memory(
                 metadata,
                 owner_user_id=(memory.metadata_json or {}).get("owner_user_id"),
             )
-        memory.metadata_json = metadata
+        memory.metadata_json = normalize_memory_metadata(
+            content=memory.content,
+            category=memory.category,
+            memory_type=memory.type,
+            metadata=metadata,
+        )
+    else:
+        memory.metadata_json = normalize_memory_metadata(
+            content=memory.content,
+            category=memory.category,
+            memory_type=memory.type,
+            metadata=dict(memory.metadata_json or {}),
+        )
     memory.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(memory)
     _sync_memory_embedding(memory, db)
+    if memory.type == "permanent":
+        _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
 
 
@@ -769,6 +804,7 @@ def delete_memory(
     _delete_memory_embeddings(db, memory.id)
     db.delete(memory)
     db.commit()
+    _trigger_memory_compaction(workspace_id, memory.project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -808,7 +844,12 @@ def promote_memory(
     memory.type = "permanent"
     metadata = dict(memory.metadata_json or {})
     metadata["promoted_by"] = "user"
-    memory.metadata_json = build_private_memory_metadata(metadata, owner_user_id=owner_user_id)
+    memory.metadata_json = normalize_memory_metadata(
+        content=memory.content,
+        category=memory.category,
+        memory_type="permanent",
+        metadata=build_private_memory_metadata(metadata, owner_user_id=owner_user_id),
+    )
     memory.source_conversation_id = None
     if memory.parent_memory_id is None:
         project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
@@ -817,6 +858,7 @@ def promote_memory(
     memory.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(memory)
+    _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
 
 
@@ -834,12 +876,26 @@ async def search_memory(
         db.commit()
 
     try:
-        results = await search_similar(
+        project_conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.workspace_id == workspace_id,
+                Conversation.project_id == payload.project_id,
+            )
+            .order_by(Conversation.updated_at.desc())
+            .first()
+        )
+        results = await search_project_memories_for_tool(
             db,
             workspace_id=workspace_id,
             project_id=payload.project_id,
+            conversation_id=project_conversation.id if project_conversation else "",
+            conversation_created_by=(
+                project_conversation.created_by if project_conversation else current_user.id
+            ),
             query=payload.query,
-            limit=payload.top_k,
+            top_k=payload.top_k,
+            semantic_search_fn=search_similar,
         )
     except Exception:  # noqa: BLE001
         query = (
@@ -875,7 +931,7 @@ async def search_memory(
             for memory in memories
         ]
 
-    memory_ids = [result["memory_id"] for result in results if result.get("memory_id")]
+    memory_ids = [result["id"] for result in results if result.get("id")]
     memories_by_id = {
         memory.id: memory
         for memory in db.query(Memory)
@@ -896,7 +952,7 @@ async def search_memory(
 
     output: list[MemorySearchResult] = []
     for result in results:
-        memory_id = result.get("memory_id")
+        memory_id = result.get("id")
         if not memory_id:
             continue
         memory = memories_by_id.get(memory_id)
@@ -913,8 +969,8 @@ async def search_memory(
         output.append(
             MemorySearchResult(
                 memory=MemoryOut.model_validate(memory, from_attributes=True),
-                score=result.get("score", 0.0),
-                chunk_text=result.get("chunk_text", memory.content),
+                score=float(result.get("score") or 0.0),
+                chunk_text=str(result.get("content") or memory.content),
             )
         )
     return output
