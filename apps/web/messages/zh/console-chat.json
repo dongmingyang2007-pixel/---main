@@ -31,6 +31,7 @@
   "micPermissionDenied": "麦克风权限被拒绝",
   "realtimeEntry": "实时对话",
   "realtimeRetry": "重试对话",
+  "realtimeTitle": "AI 助手",
   "realtimePreparing": "正在准备...",
   "realtimeReconnecting": "重连中...",
   "realtimeListening": "聆听中",

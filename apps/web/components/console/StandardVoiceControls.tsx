@@ -61,6 +61,7 @@ export function StandardVoiceControls({
   const isRecording = dictation.isActive;
   const isConnecting = dictation.state === "connecting" || dictation.state === "reconnecting";
   const statusText = isConnecting ? t("realtimePreparing") : t("voiceRecording");
+  // Warm accent colors inherited from CSS custom properties (--voice-accent)
 
   return (
     <>

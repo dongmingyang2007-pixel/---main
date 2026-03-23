@@ -31,6 +31,7 @@
   "micPermissionDenied": "Microphone permission denied",
   "realtimeEntry": "Realtime Voice",
   "realtimeRetry": "Retry Voice",
+  "realtimeTitle": "AI Assistant",
   "realtimePreparing": "Preparing...",
   "realtimeReconnecting": "Reconnecting...",
   "realtimeListening": "Listening",

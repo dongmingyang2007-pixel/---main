@@ -28,26 +28,27 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function WaveformBars({ volume, color }: { volume: number; color: string }) {
-  const barCount = 5;
-  const bars = Array.from({ length: barCount }, (_, i) => {
-    const base = 4;
-    const maxH = 20;
-    const h = base + volume * maxH * (1 + Math.sin(i * 1.2)) * 0.5;
-    return Math.min(h, maxH);
-  });
-
+function WaveformBars({ levels, barCount = 5 }: { levels: number[]; barCount?: number }) {
   return (
-    <div className="rt-waveform">
-      {bars.map((h, i) => (
+    <div className={`rt-waveform${barCount > 5 ? " is-large" : ""}`}>
+      {Array.from({ length: barCount }, (_, i) => (
         <div
           key={i}
           className="rt-waveform-bar"
-          style={{ height: `${h}px`, backgroundColor: color }}
+          style={{ height: `${(levels[i % levels.length] || 0.15) * 100}%` }}
         />
       ))}
     </div>
   );
+}
+
+/** Convert volume (0-1) to an array of bar levels for WaveformBars */
+function volumeToLevels(volume: number, count: number): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    const base = 0.15;
+    const h = base + volume * (1 + Math.sin(i * 1.2)) * 0.42;
+    return Math.min(h, 1);
+  });
 }
 
 export default function RealtimeVoicePanel({
@@ -129,90 +130,66 @@ export default function RealtimeVoicePanel({
   const isListening = state === "listening" || state === "ready";
   const isSpeaking = state === "ai_speaking";
 
-  const indicatorColor = isListening ? "#22c55e" : isSpeaking ? "#818cf8" : "#64748b";
-  const waveColor = isListening ? "#4ade80" : "#818cf8";
+  // Derive status class for the dot indicator
+  const statusClass = isMuted
+    ? "muted"
+    : isSpeaking
+      ? "speaking"
+      : isListening
+        ? "listening"
+        : state === "connecting" || state === "reconnecting"
+          ? "connecting"
+          : state === "error"
+            ? "error"
+            : "idle";
 
-  const statusText = isSynthetic
-    ? state === "connecting"
-      ? t("syntheticPreparing")
-      : state === "reconnecting"
-        ? t("realtimeReconnecting")
-        : isListening
-          ? t("syntheticListening")
-          : isSpeaking
-            ? t("syntheticSpeaking")
-            : state === "error"
-              ? t("realtimeConnectionFailed")
-              : ""
-    : state === "connecting"
-      ? t("realtimePreparing")
-      : state === "reconnecting"
-        ? t("realtimeReconnecting")
-        : isListening
-          ? t("realtimeListening")
-          : isSpeaking
-            ? t("realtimeSpeaking")
-            : state === "error"
-              ? t("realtimeConnectionFailed")
-              : "";
+  const waveformLevels = volumeToLevels(isListening ? userVolume : aiVolume, 8);
 
   const entryLabel = isSynthetic ? t("syntheticEntry") : t("realtimeEntry");
-  const panelTitle = isSynthetic ? t("syntheticAssistant") : t("realtimeAssistant");
 
-  // Idle / error state: entry button
+  const handleHangup = useCallback(() => {
+    setExpanded(false);
+    disconnect();
+  }, [disconnect]);
+
+  // ─── Idle / error state: entry capsule ────────────────────────
   if (state === "idle" || state === "error") {
     return (
-      <div className="rt-float rt-entry" onClick={connect}>
-        <span className="rt-entry-icon">
-          <svg
-            width={18}
-            height={18}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-          </svg>
-        </span>
-        <span className="rt-entry-label">
-          {state === "error" ? t("realtimeRetry") : entryLabel}
-        </span>
-      </div>
-    );
-  }
-
-  // Active state: collapsed pill
-  if (!expanded) {
-    return (
-      <div className="rt-float rt-pill" onClick={() => setExpanded(true)}>
-        <div className="rt-indicator" style={{ backgroundColor: indicatorColor }} />
-        {state === "connecting" ? (
-          <div className="rt-spinner" />
-        ) : (
-          <WaveformBars volume={isListening ? userVolume : aiVolume} color={waveColor} />
-        )}
-        <span className="rt-pill-status">{statusText}</span>
-        <span className="rt-pill-timer">{formatTime(timer)}</span>
-        <button
-          className="rt-hangup-small"
-          onClick={(e) => {
-            e.stopPropagation();
-            disconnect();
-          }}
-        >
-          ✕
+      <div className="rt-float">
+        <button className="rt-capsule" onClick={connect} style={{ cursor: "pointer" }}>
+          <span className="rt-capsule-label">
+            {state === "error" ? t("realtimeRetry") : entryLabel}
+          </span>
         </button>
       </div>
     );
   }
 
-  // Expanded panel
+  // ─── Active + collapsed: capsule with info ────────────────────
+  if (!expanded) {
+    return (
+      <div className="rt-float">
+        <div className="rt-capsule">
+          <span className={`rt-status-dot is-${statusClass}`} />
+          <span className="rt-capsule-label">
+            {t("realtimeTitle") || "AI \u52A9\u624B"}
+          </span>
+          <span className="rt-capsule-timer">{formatTime(timer)}</span>
+          <WaveformBars levels={waveformLevels} barCount={3} />
+          <button
+            className="rt-capsule-expand"
+            onClick={() => setExpanded(true)}
+          >
+            ━
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Active + expanded: card ──────────────────────────────────
   return (
-    <div className="rt-float rt-panel">
+    <div className="rt-float">
       {/* Hidden file inputs for synthetic media */}
       {isSynthetic && (
         <>
@@ -246,143 +223,107 @@ export default function RealtimeVoicePanel({
         </>
       )}
 
-      <div className="rt-panel-header">
-        <div className="rt-panel-header-left">
-          <div className="rt-indicator" style={{ backgroundColor: indicatorColor }} />
-          <span className="rt-panel-title">{panelTitle}</span>
-          <span className="rt-panel-timer">{formatTime(timer)}</span>
-        </div>
-        <button className="rt-collapse-btn" onClick={() => setExpanded(false)}>
-          −
-        </button>
-      </div>
-
-      {/* Synthetic-only: media toolbar */}
-      {isSynthetic && (
-        <div className="rt-media-toolbar">
-          <button
-            type="button"
-            className="chat-audio-btn"
-            onClick={() => uploadRef.current?.click()}
-          >
-            {allowVideoInput ? t("syntheticUpload") : t("syntheticUploadImageOnly")}
-          </button>
-          <button
-            type="button"
-            className="chat-audio-btn"
-            onClick={() => captureRef.current?.click()}
-          >
-            {t("syntheticCapture")}
-          </button>
-          {pendingMedia ? (
-            <button type="button" className="chat-audio-btn" onClick={clearPendingMedia}>
-              {t("syntheticClearMedia")}
-            </button>
-          ) : null}
-        </div>
-      )}
-
-      {/* Synthetic-only: pending media badge */}
-      {isSynthetic && pendingMedia ? (
-        <div className="rt-pending-media">
-          <span className="profile-model-badge">
-            {pendingMedia.kind === "video" ? t("syntheticVideo") : t("syntheticImage")}
+      <div className="rt-card">
+        <div className="rt-card-header">
+          <span className={`rt-status-dot is-${statusClass}`} />
+          <span className="rt-card-title">
+            {t("realtimeTitle") || "AI \u52A9\u624B"}
           </span>
-          <span>{pendingMedia.filename}</span>
+          <span className="rt-card-timer">{formatTime(timer)}</span>
+          <button className="rt-card-collapse" onClick={() => setExpanded(false)}>
+            ━
+          </button>
         </div>
-      ) : null}
 
-      <div className="rt-transcript" ref={transcriptRef}>
-        {transcript.map((entry, i) => (
-          <div key={i} className={`rt-transcript-entry rt-transcript-${entry.role}`}>
-            <div className="rt-transcript-label">
-              {entry.role === "user" ? t("realtimeUser") : t("realtimeAI")}
-            </div>
-            <div className="rt-transcript-bubble">
+        <WaveformBars levels={waveformLevels} barCount={8} />
+
+        <div className="rt-card-transcript" ref={transcriptRef}>
+          {transcript.slice(-2).map((entry, i) => (
+            <div
+              key={i}
+              className={`rt-card-transcript-line${entry.role === "user" ? " is-user" : ""}`}
+            >
               {entry.text}
               {!entry.final && <span className="rt-cursor">▊</span>}
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div className="rt-controls">
-        <button
-          className={`rt-control-btn ${isMuted ? "rt-muted" : ""}`}
-          onClick={toggleMute}
-          title={isMuted ? t("realtimeUnmute") : t("realtimeMute")}
-        >
-          {isMuted ? (
-            <svg
-              width={18}
-              height={18}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="1" y1="1" x2="23" y2="23" />
-              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .74-.11 1.45-.32 2.12" />
-            </svg>
-          ) : (
-            <svg
-              width={18}
-              height={18}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
+        <div className="rt-card-controls">
+          <button
+            className={`rt-card-control-btn${isMuted ? " is-muted" : ""}`}
+            onClick={toggleMute}
+            title={isMuted ? t("realtimeUnmute") : t("realtimeMute")}
+          >
+            <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              {isMuted && <line x1="1" y1="1" x2="23" y2="23" stroke="#ef4444" strokeWidth={2.5} />}
             </svg>
+          </button>
+
+          <button className="rt-card-hangup" onClick={handleHangup}>
+            <svg viewBox="0 0 24 24" width={20} height={20} fill="currentColor">
+              <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth={2.5} />
+              <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth={2.5} />
+            </svg>
+          </button>
+
+          {isSynthetic ? (
+            <button
+              className="rt-card-control-btn"
+              title={t("syntheticUpload")}
+              onClick={() => uploadRef.current?.click()}
+            >
+              <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </button>
+          ) : (
+            <button className="rt-card-control-btn" title={t("realtimeSpeaker")}>
+              <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+            </button>
           )}
-        </button>
-        <button className="rt-hangup" onClick={disconnect}>
-          ✕
-        </button>
-        {isSynthetic ? (
-          <button
-            className="rt-control-btn"
-            title={t("syntheticUpload")}
-            onClick={() => uploadRef.current?.click()}
-          >
-            <svg
-              width={14}
-              height={14}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
+        </div>
+
+        {/* Media bar for synthetic mode */}
+        {isSynthetic && pendingMedia && (
+          <div className="rt-card-media">
+            <span className="profile-model-badge">
+              {pendingMedia.kind === "video" ? t("syntheticVideo") : t("syntheticImage")}
+            </span>
+            <span>{pendingMedia.filename}</span>
+            <button type="button" className="chat-audio-btn" onClick={clearPendingMedia}>
+              {t("syntheticClearMedia")}
+            </button>
+          </div>
+        )}
+
+        {/* Synthetic-only: media toolbar */}
+        {isSynthetic && (
+          <div className="rt-media-toolbar">
+            <button
+              type="button"
+              className="chat-audio-btn"
+              onClick={() => uploadRef.current?.click()}
             >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </button>
-        ) : (
-          <button className="rt-control-btn" title={t("realtimeSpeaker")}>
-            <svg
-              width={14}
-              height={14}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
+              {allowVideoInput ? t("syntheticUpload") : t("syntheticUploadImageOnly")}
+            </button>
+            <button
+              type="button"
+              className="chat-audio-btn"
+              onClick={() => captureRef.current?.click()}
             >
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            </svg>
-          </button>
+              {t("syntheticCapture")}
+            </button>
+          </div>
         )}
       </div>
     </div>
