@@ -17,6 +17,7 @@ export interface ChatInputBarProps {
   disabled: boolean;
   isTyping: boolean;
   isStandardMode: boolean;
+  searchAvailable: boolean;
   autoReadEnabled: boolean;
   onAutoReadToggle: () => void;
   /** Streaming dictation text that should replace the current dictated draft. */
@@ -30,6 +31,7 @@ export function ChatInputBar({
   disabled,
   isTyping,
   isStandardMode,
+  searchAvailable,
   autoReadEnabled,
   onAutoReadToggle,
   liveExternalInputText,
@@ -41,10 +43,16 @@ export function ChatInputBar({
   const [thinkState, setThinkState] = useState<"auto" | "on" | "off">("auto");
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
   const liveExternalBaseRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!searchAvailable) {
+      setSearchState("auto");
+    }
+  }, [searchAvailable]);
 
   useEffect(() => {
     if (!isLiveExternalInputActive) {
@@ -61,8 +69,15 @@ export function ChatInputBar({
       }
       return appendNaturalText(base, draft);
     });
-    inputRef.current?.focus();
+    textareaRef.current?.focus();
   }, [isLiveExternalInputActive, liveExternalInputText]);
+
+  const handleInput = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
 
   const handleImageFileSelected = useCallback(
     (file: File | null) => {
@@ -90,7 +105,13 @@ export function ChatInputBar({
     const enableThinking =
       thinkState === "on" ? true : thinkState === "off" ? false : null;
     const enableSearch =
-      searchState === "on" ? true : searchState === "off" ? false : null;
+      !searchAvailable
+        ? null
+        : searchState === "on"
+          ? true
+          : searchState === "off"
+            ? false
+            : null;
 
     onSend(text, {
       enableThinking,
@@ -100,14 +121,17 @@ export function ChatInputBar({
 
     setInput("");
     setPendingImageFile(null);
-  }, [disabled, input, isLiveExternalInputActive, isTyping, onSend, pendingImageFile, searchState, thinkState]);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  }, [disabled, input, isLiveExternalInputActive, isTyping, onSend, pendingImageFile, searchAvailable, searchState, thinkState]);
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
-  }
+  };
 
   return (
     <>
@@ -136,100 +160,107 @@ export function ChatInputBar({
           event.target.value = "";
         }}
       />
-      <input
-        ref={inputRef}
-        className="chat-input"
-        type="text"
-        placeholder={t("inputPlaceholder")}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
-        disabled={isTyping || disabled || isLiveExternalInputActive}
-      />
-      <div className="chat-tool-chips">
-        {isStandardMode ? (
-          <button
-            type="button"
-            className="chat-tool-chip"
-            data-state={autoReadEnabled ? "on" : "auto"}
-            onClick={onAutoReadToggle}
-          >
-            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            </svg>
-            {t("voiceAutoRead")}
-          </button>
-        ) : null}
-        {isStandardMode ? (
-          <button
-            type="button"
-            className="chat-tool-chip"
-            onClick={() => imageUploadRef.current?.click()}
+      <div className="chat-input-bar">
+        <div className="chat-input-container">
+          <textarea
+            ref={textareaRef}
+            className="chat-input-textarea"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); handleInput(); }}
+            onKeyDown={handleKeyDown}
+            placeholder={t("inputPlaceholder")}
+            rows={1}
             disabled={isTyping || disabled || isLiveExternalInputActive}
-          >
-            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <rect x={3} y={3} width={18} height={18} rx={2} ry={2} />
-              <circle cx={8.5} cy={8.5} r={1.5} />
-              <path d="M21 15l-5-5L5 21" />
-            </svg>
-            {t("imageUpload")}
-          </button>
-        ) : null}
-        {isStandardMode ? (
-          <button
-            type="button"
-            className="chat-tool-chip"
-            onClick={() => imageCaptureRef.current?.click()}
-            disabled={isTyping || disabled || isLiveExternalInputActive}
-          >
-            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-              <circle cx={12} cy={13} r={4} />
-            </svg>
-            {t("imageCapture")}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="chat-tool-chip"
-          data-state={searchState}
-          onClick={() => setSearchState((s) => cycleState(s))}
-        >
-          <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-            <circle cx={11} cy={11} r={8} />
-            <line x1={21} y1={21} x2={16.65} y2={16.65} />
-          </svg>
-          {t("tool.search")}
-        </button>
-        <button
-          type="button"
-          className="chat-tool-chip"
-          data-state={thinkState}
-          onClick={() => setThinkState((s) => cycleState(s))}
-        >
-          <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-            <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7.5V19h6v-2.5c2-2 4-4.5 4-7.5a7 7 0 0 0-7-7z" />
-            <line x1={9} y1={22} x2={15} y2={22} />
-          </svg>
-          {t("tool.think")}
-        </button>
-      </div>
-      <button
-        className="chat-send"
-        onClick={handleSubmit}
-        disabled={(!input.trim() && !pendingImageFile) || isTyping || disabled || isLiveExternalInputActive}
-      >
-        {t("send")}
-      </button>
-      {isStandardMode && pendingImageFile ? (
-        <div className="chat-attachment-chip">
-          <span className="chat-attachment-name">{pendingImageFile.name}</span>
-          <button type="button" className="chat-audio-btn" onClick={clearPendingImage}>
-            {t("imageClear")}
-          </button>
+          />
+          <div className="chat-input-toolbar">
+            {isStandardMode ? (
+              <button
+                type="button"
+                className="chat-tool-chip"
+                data-state={autoReadEnabled ? "on" : "auto"}
+                onClick={onAutoReadToggle}
+              >
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                </svg>
+                {t("voiceAutoRead")}
+              </button>
+            ) : null}
+            {isStandardMode ? (
+              <button
+                type="button"
+                className="chat-tool-chip"
+                onClick={() => imageUploadRef.current?.click()}
+                disabled={isTyping || disabled || isLiveExternalInputActive}
+              >
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x={3} y={3} width={18} height={18} rx={2} ry={2} />
+                  <circle cx={8.5} cy={8.5} r={1.5} />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+                {t("imageUpload")}
+              </button>
+            ) : null}
+            {isStandardMode ? (
+              <button
+                type="button"
+                className="chat-tool-chip"
+                onClick={() => imageCaptureRef.current?.click()}
+                disabled={isTyping || disabled || isLiveExternalInputActive}
+              >
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx={12} cy={13} r={4} />
+                </svg>
+                {t("imageCapture")}
+              </button>
+            ) : null}
+            {searchAvailable ? (
+              <button
+                type="button"
+                className="chat-tool-chip"
+                data-state={searchState}
+                onClick={() => setSearchState((s) => cycleState(s))}
+              >
+                <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                  <circle cx={11} cy={11} r={8} />
+                  <line x1={21} y1={21} x2={16.65} y2={16.65} />
+                </svg>
+                {t("tool.search")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="chat-tool-chip"
+              data-state={thinkState}
+              onClick={() => setThinkState((s) => cycleState(s))}
+            >
+              <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7.5V19h6v-2.5c2-2 4-4.5 4-7.5a7 7 0 0 0-7-7z" />
+                <line x1={9} y1={22} x2={15} y2={22} />
+              </svg>
+              {t("tool.think")}
+            </button>
+            {isStandardMode && pendingImageFile ? (
+              <div className="chat-attachment-chip">
+                <span className="chat-attachment-name">{pendingImageFile.name}</span>
+                <button type="button" className="chat-audio-btn" onClick={clearPendingImage}>
+                  {t("imageClear")}
+                </button>
+              </div>
+            ) : null}
+            <button
+              className={`chat-input-send${input.trim() || pendingImageFile ? " has-content" : ""}`}
+              style={{ marginLeft: "auto" }}
+              onClick={handleSubmit}
+              disabled={(!input.trim() && !pendingImageFile) || isTyping || disabled || isLiveExternalInputActive}
+            >
+              {t("send")}
+            </button>
+          </div>
         </div>
-      ) : null}
+      </div>
     </>
   );
 }
