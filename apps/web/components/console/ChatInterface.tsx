@@ -23,6 +23,7 @@ import {
   VOICE_ACTIVE_STATES,
   getPipelineModelId,
   modelSupportsCapability,
+  normalizeSearchSources,
   toMessage,
   getApiErrorMessage,
 } from "./chat-types";
@@ -34,12 +35,17 @@ interface ChatInterfaceProps {
     conversationId: string;
     previewText: string;
   }) => void;
+  onConversationLoaded?: (payload: {
+    conversationId: string;
+    messages: ApiMessage[];
+  }) => void;
 }
 
 export function ChatInterface({
   conversationId,
   projectId,
   onConversationActivity,
+  onConversationLoaded,
 }: ChatInterfaceProps) {
   const t = useTranslations("console-chat");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -55,8 +61,13 @@ export function ChatInterface({
   const [liveDictationText, setLiveDictationText] = useState("");
   const [isLiveDictating, setIsLiveDictating] = useState(false);
   const [isStreamingActive, setIsStreamingActive] = useState(false);
+  const [pendingAutoRead, setPendingAutoRead] = useState<{
+    messageId: string;
+    audioBase64?: string | null;
+  } | null>(null);
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
+  const messagesRef = useRef<Message[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const runtimeMessageCounterRef = useRef(0);
   const liveTurnIdsRef = useRef<{
@@ -80,6 +91,43 @@ export function ChatInterface({
     runtimeMessageCounterRef.current += 1;
     return `${prefix}-${Date.now()}-${runtimeMessageCounterRef.current}`;
   }, []);
+  const queueAutoRead = useCallback((messageId: string, audioBase64?: string | null) => {
+    setPendingAutoRead({ messageId, audioBase64 });
+  }, []);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    if (!pendingAutoRead) {
+      return;
+    }
+
+    const targetMessage = messages.find((message) => message.id === pendingAutoRead.messageId);
+    if (!targetMessage || targetMessage.isStreaming) {
+      return;
+    }
+
+    const hasPlayableContent = Boolean(
+      targetMessage.content.trim() || targetMessage.audioBase64 || pendingAutoRead.audioBase64,
+    );
+    if (!hasPlayableContent) {
+      return;
+    }
+
+    if (pendingAutoRead.audioBase64) {
+      messageListRef.current?.playReadAloud(
+        pendingAutoRead.messageId,
+        pendingAutoRead.audioBase64,
+      );
+    } else {
+      messageListRef.current?.playReadAloud(pendingAutoRead.messageId);
+    }
+    setPendingAutoRead((current) =>
+      current?.messageId === pendingAutoRead.messageId ? null : current,
+    );
+  }, [messages, pendingAutoRead]);
 
   useEffect(() => {
     if (!projectId) {
@@ -160,10 +208,20 @@ export function ChatInterface({
         if (!cancelled) {
           const list = Array.isArray(data) ? data : [];
           setMessages(list.map(toMessage));
+          onConversationLoaded?.({
+            conversationId,
+            messages: list,
+          });
         }
       })
       .catch(() => {
-        if (!cancelled) setMessages([]);
+        if (!cancelled) {
+          setMessages([]);
+          onConversationLoaded?.({
+            conversationId,
+            messages: [],
+          });
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingMessages(false);
@@ -172,7 +230,7 @@ export function ChatInterface({
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, onConversationLoaded]);
 
   const handleSend = useCallback(
     async (
@@ -189,6 +247,7 @@ export function ChatInterface({
 
       const imageFile = options.imageFile ?? null;
       const enableThinking = options.enableThinking ?? null;
+      const enableSearch = options.enableSearch ?? null;
 
       if (imageFile) {
         const submittedText = content || t("imageDefaultPrompt");
@@ -217,6 +276,11 @@ export function ChatInterface({
           } else if (enableThinking === false) {
             formData.append("enable_thinking", "false");
           }
+          if (enableSearch === true) {
+            formData.append("enable_search", "true");
+          } else if (enableSearch === false) {
+            formData.append("enable_search", "false");
+          }
 
           const response = await apiPostFormData<ImageMessageResponse>(
             `/api/v1/chat/conversations/${conversationId}/image`,
@@ -224,20 +288,15 @@ export function ChatInterface({
           );
 
           const assistantMessage: Message = {
+            ...toMessage(response.message),
             id: response.message?.id || `img-a-${Date.now()}`,
-            role: "assistant",
-            content: response.message?.content || "",
-            reasoningContent: response.message?.reasoning_content,
             audioBase64: response.audio_response,
             animateOnMount: true,
             isStreaming: false,
           };
           setMessages((prev) => [...prev, assistantMessage]);
           if (autoReadEnabled && response.audio_response) {
-            messageListRef.current?.playReadAloud(
-              assistantMessage.id,
-              response.audio_response,
-            );
+            queueAutoRead(assistantMessage.id, response.audio_response);
           }
         } catch (error) {
           const errorContent = isApiRequestError(error)
@@ -283,10 +342,17 @@ export function ChatInterface({
             : enableThinking === false
               ? false
               : undefined,
+        enable_search:
+          enableSearch === true
+            ? true
+            : enableSearch === false
+              ? false
+              : undefined,
       };
 
       const tempAssistantId = `stream-a-${Date.now()}`;
       let streamStarted = false;
+      let finalizedAssistantId: string | null = null;
 
       try {
         const abortController = new AbortController();
@@ -323,10 +389,13 @@ export function ChatInterface({
           } else if (event.event === "message_done") {
             const finalId = (event.data.id as string) || tempAssistantId;
             const memoriesExtracted = event.data.memories_extracted as string | undefined;
+            const sources = normalizeSearchSources(event.data.sources);
+            finalizedAssistantId = finalId;
             messageListRef.current?.finalizeMessage(tempAssistantId, {
               id: finalId,
               isStreaming: false,
               memories_extracted: memoriesExtracted,
+              sources,
             });
           } else if (event.event === "error") {
             const errorMsg =
@@ -344,22 +413,67 @@ export function ChatInterface({
           }
         }
 
-        // Stream finished normally — ensure finalized
-        messageListRef.current?.finalizeMessage(tempAssistantId, {
-          id: tempAssistantId,
-          isStreaming: false,
-        });
+        if (!finalizedAssistantId) {
+          finalizedAssistantId = tempAssistantId;
+          messageListRef.current?.finalizeMessage(tempAssistantId, {
+            id: tempAssistantId,
+            isStreaming: false,
+          });
+        }
 
         if (autoReadEnabled) {
-          messageListRef.current?.playReadAloud(tempAssistantId);
+          queueAutoRead(finalizedAssistantId);
         }
       } catch (error) {
+        const streamStatus =
+          typeof error === "object" &&
+          error !== null &&
+          "status" in error &&
+          typeof error.status === "number"
+            ? error.status
+            : null;
+        const streamUnavailable =
+          streamStatus === 404 || streamStatus === 405 || streamStatus === 501;
+
         if (error instanceof DOMException && error.name === "AbortError") {
           // User clicked stop — finalize whatever we have so far
           messageListRef.current?.finalizeMessage(tempAssistantId, {
             id: tempAssistantId,
             isStreaming: false,
           });
+        } else if (streamUnavailable) {
+          setMessages((prev) => prev.filter((message) => message.id !== tempAssistantId));
+          try {
+            setIsTyping(true);
+            const response = await apiPost<ApiMessage>(
+              `/api/v1/chat/conversations/${conversationId}/messages`,
+              streamBody,
+            );
+            const aiMessage: Message = {
+              ...toMessage(response),
+              id: response.id || `a-${Date.now()}`,
+              animateOnMount: true,
+              isStreaming: false,
+            };
+            setMessages((prev) => [...prev, aiMessage]);
+            if (autoReadEnabled) {
+              queueAutoRead(aiMessage.id);
+            }
+          } catch (fallbackError) {
+            const errorContent = isApiRequestError(fallbackError)
+              ? getApiErrorMessage(fallbackError, t)
+              : t("errors.generic");
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `err-${Date.now()}`,
+                role: "assistant",
+                content: errorContent,
+              },
+            ]);
+          } finally {
+            setIsTyping(false);
+          }
         } else if (streamStarted) {
           // Stream failed after starting — show error in the existing placeholder
           messageListRef.current?.updateMessage(
@@ -386,7 +500,7 @@ export function ChatInterface({
             };
             setMessages((prev) => [...prev, aiMessage]);
             if (autoReadEnabled) {
-              messageListRef.current?.playReadAloud(aiMessage.id);
+              queueAutoRead(aiMessage.id);
             }
           } catch (fallbackError) {
             const errorContent = isApiRequestError(fallbackError)
@@ -409,7 +523,7 @@ export function ChatInterface({
         setIsStreamingActive(false);
       }
     },
-    [autoReadEnabled, conversationId, isStreamingActive, isTyping, onConversationActivity, t],
+    [autoReadEnabled, conversationId, isStreamingActive, isTyping, onConversationActivity, queueAutoRead, t],
   );
 
   const handleLiveTranscriptUpdate = useCallback(
@@ -435,6 +549,16 @@ export function ChatInterface({
       const nextText = final ? text.trim() : text;
 
       let messageId = liveTurnIdsRef.current[slot];
+      const existingMessage = messageId
+        ? messagesRef.current.find((message) => message.id === messageId)
+        : null;
+      if (
+        existingMessage &&
+        !existingMessage.isStreaming &&
+        !(final && existingMessage.content.trim() === nextText.trim())
+      ) {
+        messageId = null;
+      }
       if (!messageId) {
         messageId = nextRuntimeMessageId(role === "user" ? "rt-u" : "rt-a");
         liveTurnIdsRef.current[slot] = messageId;
@@ -460,8 +584,15 @@ export function ChatInterface({
         };
         return next;
       });
+
+      if (role === "user" && final) {
+        onConversationActivity?.({
+          conversationId,
+          previewText: nextText.trim(),
+        });
+      }
     },
-    [conversationId, nextRuntimeMessageId],
+    [conversationId, nextRuntimeMessageId, onConversationActivity],
   );
 
   const handleRealtimeTurnComplete = useCallback(
@@ -504,18 +635,10 @@ export function ChatInterface({
                 isStreaming: false,
               };
             }
-          } else {
-            next = [
-              ...next,
-              {
-                id: nextRuntimeMessageId("rt-u"),
-                role: "user",
-                content: normalizedUserText,
-                animateOnMount: false,
-                isStreaming: false,
-              },
-            ];
           }
+          // Note: do NOT create a new message in the else branch —
+          // handleLiveTranscriptUpdate already added it via onTranscriptUpdate.
+          // Creating another one would cause duplicate user messages.
         }
 
         if (normalizedAssistantText) {
@@ -529,25 +652,17 @@ export function ChatInterface({
                 isStreaming: false,
               };
             }
-          } else {
-            next = [
-              ...next,
-              {
-                id: nextRuntimeMessageId("rt-a"),
-                role: "assistant",
-                content: normalizedAssistantText,
-                animateOnMount: true,
-                isStreaming: false,
-              },
-            ];
           }
+          // Note: do NOT create a new message in the else branch —
+          // handleLiveTranscriptUpdate already added it via onTranscriptUpdate.
+          // Creating another one would cause duplicate assistant messages.
         }
 
         return next;
       });
       liveTurnIdsRef.current = { userId: null, assistantId: null };
     },
-    [conversationId, nextRuntimeMessageId, onConversationActivity],
+    [conversationId, onConversationActivity],
   );
 
   const chatMode =
@@ -630,18 +745,48 @@ export function ChatInterface({
   const llmModelId = getPipelineModelId(pipelineItems, "llm", "qwen3.5-plus");
   const syntheticModeAvailable = modelSupportsCapability(catalogItems, llmModelId, "vision");
   const syntheticVideoAvailable = modelSupportsCapability(catalogItems, llmModelId, "video");
+  const webSearchAvailable = modelSupportsCapability(catalogItems, llmModelId, "web_search");
   const isStandardMode = chatMode === "standard";
   const noConversation = !conversationId;
+  const currentModeLabel =
+    chatMode === "omni_realtime"
+      ? t("mode.omni")
+      : chatMode === "synthetic_realtime"
+        ? t("mode.synthetic")
+        : t("mode.standard");
+  const workspaceHint = noConversation
+    ? t("emptyHint")
+    : messages.length === 0 && !loadingMessages
+      ? t("emptyConversationHint")
+      : t("description");
 
   return (
     <div className="chat-interface">
-      <ChatModePanel
-        chatMode={chatMode}
-        projectDefaultMode={projectDefaultMode}
-        syntheticModeAvailable={syntheticModeAvailable}
-        onModeChange={handleModeChange}
-        disabled={noConversation}
-      />
+      <div className="chat-workspace-header" data-testid="chat-workspace-header">
+        <div className="chat-workspace-copy">
+          <div className="chat-workspace-kicker">{t("title")}</div>
+          <div className="chat-workspace-description">{workspaceHint}</div>
+        </div>
+
+        <div className="chat-workspace-controls">
+          <div className="chat-workspace-badges" data-testid="chat-toolbar-state">
+            <span className="chat-workspace-badge is-accent">{currentModeLabel}</span>
+            {conversationId ? (
+              <span className="chat-workspace-badge">
+                {t("toolbar.messages", { count: messages.length })}
+              </span>
+            ) : null}
+          </div>
+
+          <ChatModePanel
+            chatMode={chatMode}
+            projectDefaultMode={projectDefaultMode}
+            syntheticModeAvailable={syntheticModeAvailable}
+            onModeChange={handleModeChange}
+            disabled={noConversation}
+          />
+        </div>
+      </div>
 
       {loadingMessages && (
         <div className="chat-messages">
@@ -693,6 +838,7 @@ export function ChatInterface({
           disabled={noConversation}
           isTyping={isTyping || isStreamingActive}
           isStandardMode={isStandardMode}
+          searchAvailable={webSearchAvailable}
           autoReadEnabled={autoReadEnabled}
           onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
           liveExternalInputText={liveDictationText}

@@ -896,6 +896,9 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           break;
 
         case "transcript.final":
+          // Flush any audio still queued from the previous AI response so the
+          // new response plays immediately instead of waiting for old audio.
+          resetPlaybackQueue();
           currentUserTextRef.current = msg.text || "";
           cfg.onTranscriptUpdate?.({
             role: "user",
