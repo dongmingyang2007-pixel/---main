@@ -20,37 +20,23 @@ export function ChatModePanel({
   disabled,
 }: ChatModePanelProps) {
   const t = useTranslations("console-chat");
-
-  const options: { key: ChatMode; label: string; isDisabled?: boolean }[] = [
+  const options = [
     { key: "standard", label: t("mode.standard") },
     { key: "omni_realtime", label: t("mode.omni") },
-    {
-      key: "synthetic_realtime",
-      label: t("mode.synthetic"),
-      isDisabled: !syntheticModeAvailable,
-    },
+    { key: "synthetic_realtime", label: t("mode.synthetic") },
   ];
-
   return (
-    <div className="chat-mode-switcher">
-      {options.map((option) => (
-        <button
-          key={option.key}
-          type="button"
-          className={`chat-mode-chip${chatMode === option.key ? " is-active" : ""}`}
-          onClick={() => {
-            if (!option.isDisabled && !disabled) {
-              onModeChange(option.key);
-            }
-          }}
-          disabled={option.isDisabled || disabled}
-        >
-          {option.label}
-          {projectDefaultMode === option.key ? (
-            <span className="chat-mode-default">{t("mode.default")}</span>
-          ) : null}
-        </button>
+    <select
+      className="chat-mode-dropdown"
+      value={chatMode}
+      disabled={disabled}
+      onChange={(e) => onModeChange(e.target.value as ChatMode)}
+    >
+      {options.map((o) => (
+        <option key={o.key} value={o.key} disabled={o.key === "synthetic_realtime" && !syntheticModeAvailable}>
+          {o.label}{o.key === projectDefaultMode ? ` (${t("mode.default")})` : ""}
+        </option>
       ))}
-    </div>
+    </select>
   );
 }

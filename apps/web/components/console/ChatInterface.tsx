@@ -762,7 +762,7 @@ export function ChatInterface({
 
   return (
     <div className="chat-interface">
-      <div className="chat-workspace-header" data-testid="chat-workspace-header">
+      <div className="chat-workspace-header" style={{ padding: "20px 24px 14px" }} data-testid="chat-workspace-header">
         <div className="chat-workspace-copy">
           <div className="chat-workspace-kicker">{t("title")}</div>
           <div className="chat-workspace-description">{workspaceHint}</div>
