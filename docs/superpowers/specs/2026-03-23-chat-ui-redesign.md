@@ -13,7 +13,9 @@ Redesign the console's chat page layout, realtime voice floating panel, assistan
 
 ### Layout (top to bottom)
 
-1. **Search bar** — collapsed to icon by default, expands on click to full-width input. Filters conversation list in real-time.
+**Implementation target:** The chat sidebar is rendered inline within `chat/page.tsx` (`ChatPageContent` component), NOT the global `Sidebar.tsx`. All Section 1 changes modify `chat/page.tsx`.
+
+1. **Search bar** — collapsed to icon by default, expands on click to full-width input. Client-side filter on conversation titles only (no server search). Debounce: 200ms. Clearing restores full list at previous scroll position.
 2. **Project selector + New button** — horizontal row: left is a compact capsule-style dropdown for project selection, right is a square `+` icon button for creating new conversations. Both fit on one line.
 3. **Conversation list** — scrollable area filling remaining height.
 
@@ -29,7 +31,7 @@ Left 3px warm-brown vertical bar (`#C7734A`) + background `rgba(199, 115, 74, 0.
 
 ### Context menu
 
-Right-click or long-press on a conversation item opens a floating menu with: Rename, Delete, Pin to top.
+Right-click or long-press on a conversation item opens a floating menu with: Delete. (Rename and Pin to top deferred to a future iteration — requires backend API changes.)
 
 ### Scrollbar
 
@@ -72,12 +74,12 @@ Replace the three side-by-side badge buttons with a single dropdown/select. Opti
 - **Assistant messages:** Remove bordered bubble. Replace with left 3px warm-brown vertical bar + white/very-light background card, no border. Assistant logo circle (24px) on the left, shown only on the first message in a consecutive group.
 - **Same-role spacing:** 6px between consecutive same-role messages
 - **Cross-role spacing:** 20px between role switches
-- **Read-aloud button:** Move from below the message to the top-right corner, fades in on hover
+- **Read-aloud button:** Move from below the message to the top-right corner of the message container (absolutely positioned within the message wrapper, not overlapping content). Fades in on hover of the message wrapper.
 
 ### Input bar
 
 Redesign to ChatGPT-style integrated input:
-- Multi-line auto-expanding textarea
+- Multi-line auto-expanding `<textarea>`. Max height: 160px (~6 lines); beyond this, content scrolls within the textarea. Enter sends message, Shift+Enter inserts newline.
 - Tool buttons (mic, camera, search, deep think, attachment) inside the textarea at the bottom
 - Send button on the right side of the textarea, gray when empty, warm-brown gradient + micro-bounce animation when content exists
 - No top border line; use a subtle upward box-shadow for separation
@@ -100,8 +102,8 @@ Position: fixed bottom-right (24px inset).
 
 Content: status dot + "AI 助手" label + timer + 3-bar mini waveform + expand button (`━`).
 
-- Status dot colors: active = amber breathing pulse, connecting = amber blink, muted = gray
-- Mini waveform: 3 thin bars, real-time audio-driven height
+- Status dot colors: listening = bright amber `#E8925A` breathing pulse, speaking = deeper amber `#C7734A` steady, connecting = amber `#E8925A` blink, muted = gray `#64748b`, error = warm red `#DC6B4A`
+- Mini waveform: 3 thin bars, real-time audio-driven height. `WaveformBars` component accepts a `barCount` prop (3 for capsule, 8 for expanded).
 - Border-radius: 999px (full pill)
 
 ### Expanded state (card)
@@ -137,7 +139,7 @@ When in synthetic realtime mode, an additional row appears below the controls: i
 
 Replace `280px | 1fr | 220px` with `minmax(280px, 1fr) | minmax(320px, 1.5fr)`.
 
-Responsive: < 768px stacks to single column.
+Responsive: < 768px stacks to single column. Stacking order: Hero header → Personality/Knowledge → Model Configuration.
 
 ### Hero header (compact)
 
@@ -166,7 +168,7 @@ Keeps the mode tab switcher (Standard / Omni / Synthetic) and model slot rows. R
 
 ### Remove `/app/assistants` list route
 
-The standalone assistants list page at `/app/assistants` is removed. Its functionality merges into the home page `/app`. The detail page `/app/assistants/[id]` remains.
+The standalone assistants list page at `/app/assistants` is replaced with a `redirect("/app")` (using `next/navigation`) to avoid 404s from bookmarks/external links. The detail page `/app/assistants/[id]` remains.
 
 ### New home page layout
 
@@ -212,8 +214,8 @@ All changes use existing CSS variable system. Key values:
 | File | Changes |
 |------|---------|
 | `apps/web/app/[locale]/(console)/app/page.tsx` | Rewrite: merge assistants list, new card grid layout |
-| `apps/web/app/[locale]/(console)/app/chat/page.tsx` | Sidebar restructure, remove outer card wrapper |
-| `apps/web/app/[locale]/(console)/app/assistants/page.tsx` | Remove or redirect to `/app` |
+| `apps/web/app/[locale]/(console)/app/chat/page.tsx` | Sidebar restructure (search bar, conversation item redesign, context menu, responsive drawer), remove outer card wrapper |
+| `apps/web/app/[locale]/(console)/app/assistants/page.tsx` | Replace with redirect to `/app` |
 | `apps/web/app/[locale]/(console)/app/assistants/[id]/page.tsx` | 2-column layout, compact hero, inline stats |
 | `apps/web/components/console/ChatInterface.tsx` | Mode selector dropdown, message padding, input bar redesign |
 | `apps/web/components/console/ChatInputBar.tsx` | Integrated textarea with inline tool buttons |
@@ -225,3 +227,6 @@ All changes use existing CSS variable system. Key values:
 | `apps/web/styles/globals.css` | New/updated CSS classes for all redesigned components |
 | `apps/web/messages/zh/console-chat.json` | Add new i18n keys (search placeholder, context menu labels) |
 | `apps/web/messages/en/console-chat.json` | Add new i18n keys |
+| `apps/web/messages/zh/console.json` | Add keys for merged home page (header, card labels) |
+| `apps/web/messages/en/console.json` | Add keys for merged home page |
+| `apps/web/components/console/MobileTabBar.tsx` | Verify nav links still correct after route changes |
