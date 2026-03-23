@@ -771,16 +771,7 @@ export function ChatInterface({
           <div className="chat-workspace-description">{workspaceHint}</div>
         </div>
 
-        <div className="chat-workspace-controls">
-          <div className="chat-workspace-badges" data-testid="chat-toolbar-state">
-            <span className="chat-workspace-badge is-accent">{currentModeLabel}</span>
-            {conversationId ? (
-              <span className="chat-workspace-badge">
-                {t("toolbar.messages", { count: messages.length })}
-              </span>
-            ) : null}
-          </div>
-
+        <div className="chat-workspace-controls" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <ChatModePanel
             chatMode={chatMode}
             projectDefaultMode={projectDefaultMode}
@@ -788,6 +779,11 @@ export function ChatInterface({
             onModeChange={handleModeChange}
             disabled={noConversation}
           />
+          {conversationId ? (
+            <span className="chat-workspace-badge" data-testid="chat-toolbar-state">
+              {t("toolbar.messages", { count: messages.length })}
+            </span>
+          ) : null}
         </div>
       </div>
 
