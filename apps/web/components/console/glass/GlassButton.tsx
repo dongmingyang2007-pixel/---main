@@ -2,9 +2,11 @@ import { type ButtonHTMLAttributes, type ReactNode } from "react";
 import clsx from "clsx";
 
 type GlassButtonVariant = "primary" | "secondary" | "ghost";
+type GlassButtonSize = "small" | "medium";
 
 interface GlassButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: GlassButtonVariant;
+  size?: GlassButtonSize;
   children: ReactNode;
 }
 
@@ -29,8 +31,14 @@ const variantStyles: Record<GlassButtonVariant, React.CSSProperties> = {
   },
 };
 
+const sizeStyles: Record<GlassButtonSize, React.CSSProperties> = {
+  small: { padding: "5px 12px", fontSize: "11px" },
+  medium: { padding: "9px 20px", fontSize: "12px" },
+};
+
 export function GlassButton({
   variant = "primary",
+  size = "medium",
   children,
   className,
   style,
@@ -41,9 +49,8 @@ export function GlassButton({
       className={clsx("glass-button", `glass-button--${variant}`, className)}
       style={{
         borderRadius: "var(--console-radius-md)",
-        padding: "9px 20px",
+        ...sizeStyles[size],
         fontWeight: 600,
-        fontSize: "12px",
         cursor: "pointer",
         display: "inline-flex",
         alignItems: "center",
