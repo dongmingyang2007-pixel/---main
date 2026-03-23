@@ -241,5 +241,16 @@
   "time.justNow": "Just now",
   "time.minutesAgo": "{n}m ago",
   "time.hoursAgo": "{n}h ago",
-  "time.daysAgo": "{n}d ago"
+  "time.daysAgo": "{n}d ago",
+  "home.title": "My AI Assistants",
+  "home.description": "Create and manage your personalized AI assistants",
+  "home.createNew": "Create New",
+  "home.createCardLabel": "Create New AI Assistant",
+  "home.modelSlots": "{count} model slots",
+  "home.conversations": "{count} conversations",
+  "home.startChat": "Start Chat",
+  "home.settings": "Settings",
+  "home.recentTitle": "Recent Conversations",
+  "home.noAssistants": "No assistants yet. Create one to get started.",
+  "home.noRecent": "No recent conversations."
 }

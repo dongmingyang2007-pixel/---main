@@ -241,5 +241,16 @@
   "time.justNow": "刚刚",
   "time.minutesAgo": "{n}分钟前",
   "time.hoursAgo": "{n}小时前",
-  "time.daysAgo": "{n}天前"
+  "time.daysAgo": "{n}天前",
+  "home.title": "我的 AI 助手",
+  "home.description": "创建和管理你的个性化 AI 助手",
+  "home.createNew": "创建新助手",
+  "home.createCardLabel": "创建新的 AI 助手",
+  "home.modelSlots": "{count} 个模型槽位",
+  "home.conversations": "{count} 次对话",
+  "home.startChat": "开始聊天",
+  "home.settings": "设置",
+  "home.recentTitle": "最近对话",
+  "home.noAssistants": "还没有助手，创建一个开始吧。",
+  "home.noRecent": "暂无最近对话。"
 }
