@@ -623,97 +623,145 @@ export const ChatMessageList = forwardRef<
   /* ---------- render ---------- */
 
   return (
-    <div className="chat-messages">
+    <div className="chat-messages" style={{ padding: "16px 24px" }}>
       {messages.length === 0 && !isTyping && (
         <div className="chat-empty">
           {noConversation ? t("emptyHint") : t("emptyConversationHint")}
         </div>
       )}
 
-      {messages.map((msg) => (
+      {messages.map((msg, index) => (
         (() => {
           const assistantSources = msg.role === "assistant" ? msg.sources ?? [] : [];
           const citationSnippets = buildCitationSnippetMap(msg.content);
+          const showAvatar = msg.role === "assistant" && (index === 0 || messages[index - 1]?.role !== "assistant");
           return (
         <div
           key={msg.id}
           className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
         >
-          {msg.role === "assistant" && (
-            <div className="chat-avatar-ai" aria-hidden="true">
-              <span className="chat-avatar-ai-char">{"\u94ED"}</span>
+          {showAvatar && (
+            <div className="chat-avatar-ai" style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg, #C7734A, #E8925A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff", fontWeight: 700, flexShrink: 0 }} aria-hidden="true">
+              铭
             </div>
           )}
-          <div className="chat-message-stack">
-            {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
-              <CollapsibleReasoning
-                content={msg.reasoningContent.trim()}
-                animate={Boolean(msg.animateOnMount)}
-                label={t("reasoningLabel")}
-              />
-            ) : null}
-            <div className="chat-bubble">
-              {msg.role === "assistant" ? (
-                <AssistantMessageBody message={msg} t={t} />
-              ) : (
-                <AnimatedMessageText
-                  text={msg.content}
+          <div className="chat-message-wrapper">
+            <div className="chat-message-stack">
+              {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
+                <CollapsibleReasoning
+                  content={msg.reasoningContent.trim()}
                   animate={Boolean(msg.animateOnMount)}
-                  streaming={Boolean(msg.isStreaming)}
+                  label={t("reasoningLabel")}
                 />
+              ) : null}
+              <div className="chat-bubble">
+                {msg.role === "assistant" ? (
+                  <AssistantMessageBody message={msg} t={t} />
+                ) : (
+                  <AnimatedMessageText
+                    text={msg.content}
+                    animate={Boolean(msg.animateOnMount)}
+                    streaming={Boolean(msg.isStreaming)}
+                  />
+                )}
+              </div>
+              {msg.role === "assistant" && assistantSources.length ? (
+                <div className="chat-sources" aria-label={t("sourcesLabel")}>
+                  {assistantSources.map((source, index) => {
+                    const displayIndex = getSourceDisplayIndex(source, index + 1);
+                    const summary =
+                      resolveSourceSummary(source, citationSnippets, index + 1) ||
+                      t("sourceNoSummary");
+
+                    return (
+                      <article
+                        key={`${source.url}-${displayIndex}`}
+                        id={getSourceCardId(msg.id, displayIndex)}
+                        className="chat-source-card"
+                      >
+                        <div className="chat-source-head">
+                          <div className="chat-source-head-main">
+                            <SourceFavicon source={source} />
+                            <div className="chat-source-head-copy">
+                              <a
+                                className="chat-source-title"
+                                href={source.url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {source.title}
+                              </a>
+                              <div className="chat-source-domain">{formatSourceDomain(source)}</div>
+                            </div>
+                          </div>
+                          <span className="chat-source-index">[{displayIndex}]</span>
+                        </div>
+                        <a
+                          className="chat-source-url"
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {source.url}
+                        </a>
+                        <div className="chat-source-summary">{summary}</div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {msg.role === "assistant" && msg.extracted_facts && msg.extracted_facts.length > 0 && (
+                <div className="chat-memory-card">
+                  <div className="chat-memory-card-header">
+                    <div className="chat-memory-card-icon">
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx={12} cy={12} r={10} />
+                        <path d="M12 8v4l3 3" />
+                      </svg>
+                    </div>
+                    <span className="chat-memory-card-label">{t("memory.remembered")}</span>
+                  </div>
+                  <div className="chat-memory-card-facts">
+                    {msg.extracted_facts.map((fact, idx) => (
+                      <div key={idx} className="chat-memory-fact">
+                        <div className="chat-memory-fact-header">
+                          <span className="chat-memory-fact-category">{fact.category || "general"}</span>
+                          <span
+                            className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
+                            title={`Importance: ${(fact.importance * 100).toFixed(0)}%`}
+                          >
+                            {fact.importance >= 0.9 ? "permanent" : fact.importance >= 0.7 ? "temporary" : "ignored"}
+                            {" "}
+                            {(fact.importance * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="chat-memory-fact-text">{fact.fact}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {msg.role === "assistant" && msg.memories_extracted && !(msg.extracted_facts && msg.extracted_facts.length > 0) && (
+                <div className="chat-memory-card">
+                  <div className="chat-memory-card-header">
+                    <div className="chat-memory-card-icon">
+                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx={12} cy={12} r={10} />
+                        <path d="M12 8v4l3 3" />
+                      </svg>
+                    </div>
+                    <span className="chat-memory-card-label">{t("memory.remembered")}</span>
+                  </div>
+                  <div className="chat-memory-card-body">{msg.memories_extracted}</div>
+                </div>
               )}
             </div>
-            {msg.role === "assistant" && assistantSources.length ? (
-              <div className="chat-sources" aria-label={t("sourcesLabel")}>
-                {assistantSources.map((source, index) => {
-                  const displayIndex = getSourceDisplayIndex(source, index + 1);
-                  const summary =
-                    resolveSourceSummary(source, citationSnippets, index + 1) ||
-                    t("sourceNoSummary");
-
-                  return (
-                    <article
-                      key={`${source.url}-${displayIndex}`}
-                      id={getSourceCardId(msg.id, displayIndex)}
-                      className="chat-source-card"
-                    >
-                      <div className="chat-source-head">
-                        <div className="chat-source-head-main">
-                          <SourceFavicon source={source} />
-                          <div className="chat-source-head-copy">
-                            <a
-                              className="chat-source-title"
-                              href={source.url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {source.title}
-                            </a>
-                            <div className="chat-source-domain">{formatSourceDomain(source)}</div>
-                          </div>
-                        </div>
-                        <span className="chat-source-index">[{displayIndex}]</span>
-                      </div>
-                      <a
-                        className="chat-source-url"
-                        href={source.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {source.url}
-                      </a>
-                      <div className="chat-source-summary">{summary}</div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
             {msg.role === "assistant" &&
             (msg.content.trim() ||
               msg.audioBase64 ||
               loadingReadAloudId === msg.id ||
               readingMessageId === msg.id) ? (
-              <div className="chat-message-actions">
+              <div className="chat-message-hover-actions">
                 <button
                   className={`chat-audio-btn ${readingMessageId === msg.id ? "is-active" : ""}`}
                   onClick={() => void handleReadAloud(msg)}
@@ -739,51 +787,6 @@ export const ChatMessageList = forwardRef<
                 </button>
               </div>
             ) : null}
-            {msg.role === "assistant" && msg.extracted_facts && msg.extracted_facts.length > 0 && (
-              <div className="chat-memory-card">
-                <div className="chat-memory-card-header">
-                  <div className="chat-memory-card-icon">
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx={12} cy={12} r={10} />
-                      <path d="M12 8v4l3 3" />
-                    </svg>
-                  </div>
-                  <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-                </div>
-                <div className="chat-memory-card-facts">
-                  {msg.extracted_facts.map((fact, idx) => (
-                    <div key={idx} className="chat-memory-fact">
-                      <div className="chat-memory-fact-header">
-                        <span className="chat-memory-fact-category">{fact.category || "general"}</span>
-                        <span
-                          className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                          title={`Importance: ${(fact.importance * 100).toFixed(0)}%`}
-                        >
-                          {fact.importance >= 0.9 ? "permanent" : fact.importance >= 0.7 ? "temporary" : "ignored"}
-                          {" "}
-                          {(fact.importance * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      <div className="chat-memory-fact-text">{fact.fact}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {msg.role === "assistant" && msg.memories_extracted && !(msg.extracted_facts && msg.extracted_facts.length > 0) && (
-              <div className="chat-memory-card">
-                <div className="chat-memory-card-header">
-                  <div className="chat-memory-card-icon">
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx={12} cy={12} r={10} />
-                      <path d="M12 8v4l3 3" />
-                    </svg>
-                  </div>
-                  <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-                </div>
-                <div className="chat-memory-card-body">{msg.memories_extracted}</div>
-              </div>
-            )}
           </div>
         </div>
           );
@@ -792,11 +795,13 @@ export const ChatMessageList = forwardRef<
 
       {isTyping && (
         <div className="chat-message is-assistant">
-          <div className="chat-message-stack">
-            <div className="chat-bubble is-typing">
-              <span className="typing-dot" />
-              <span className="typing-dot" />
-              <span className="typing-dot" />
+          <div className="chat-message-wrapper">
+            <div className="chat-message-stack">
+              <div className="chat-bubble is-typing">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+              </div>
             </div>
           </div>
         </div>
