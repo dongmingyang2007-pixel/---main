@@ -1002,7 +1002,7 @@ export default function AssistantDetailPage() {
     <PageTransition>
       <div className="console-page-shell" style={{ padding: "28px 32px", maxWidth: 1120 }}>
         {/* Compact header bar */}
-        <GlassCard className="assistant-detail-hero">
+        <GlassCard className="assistant-detail-hero-compact">
           <div className="assistant-detail-compact-header">
             <div
               style={{
@@ -1041,8 +1041,11 @@ export default function AssistantDetailPage() {
               <p style={{ fontSize: 12, color: "var(--console-text-secondary, var(--text-secondary))", lineHeight: 1.4, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {personalityExcerpt || t("canvas.personalityUnset")}
               </p>
+              <div className="assistant-detail-hero-stats">
+                {t("profile.stat.conversations")}: {conversationCount} &middot; {t("profile.card.knowledge")}: {knowledgeItems.length} &middot; {t("graph.createdAt")}: {formatDate(project?.created_at || "")}
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <div className="assistant-detail-hero-actions">
               <Link href={`/app/chat?project_id=${projectId}`} style={{ textDecoration: "none" }}>
                 <GlassButton variant="primary">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1093,11 +1096,12 @@ export default function AssistantDetailPage() {
           </div>
         ) : null}
 
-        {/* Three-column body: info | models | stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 220px", gap: 16, marginTop: 16 }}>
-          {/* Left column: Personality + Knowledge */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <GlassCard>
+        {/* Two-column body: info | models */}
+        <div className="assistant-detail-grid-2col" style={{ marginTop: 16 }}>
+          {/* Left column: Personality + Knowledge combined */}
+          <div className="assistant-detail-combined-card">
+            {/* Personality section */}
+            <div style={{ padding: 16 }}>
               <div className="assistant-detail-section-header">
                 <h3 className="assistant-detail-section-title">{t("profile.card.personality")}</h3>
                 <button type="button" className="assistant-detail-action-link" onClick={() => { setSettingsError(""); setSettingsOpen(true); }}>
@@ -1112,9 +1116,12 @@ export default function AssistantDetailPage() {
                   {meta.personality || t("canvas.personalityUnset")}
                 </div>
               </div>
-            </GlassCard>
+            </div>
 
-            <GlassCard>
+            <div className="assistant-detail-combined-divider" />
+
+            {/* Knowledge section */}
+            <div style={{ padding: 16 }}>
               <div className="assistant-detail-section-header">
                 <h3 className="assistant-detail-section-title">{t("profile.card.knowledge")}</h3>
                 <button type="button" className="assistant-detail-action-link" onClick={openKnowledgeManager}>
@@ -1137,10 +1144,10 @@ export default function AssistantDetailPage() {
                   </div>
                 )}
               </div>
-            </GlassCard>
+            </div>
           </div>
 
-          {/* Center column: Model configuration with segmented mode tabs */}
+          {/* Right column: Model configuration with segmented mode tabs */}
           <GlassCard>
             <div className="assistant-detail-section-header" style={{ marginBottom: 12 }}>
               <h3 className="assistant-detail-section-title">{t("profile.card.models")}</h3>
@@ -1201,39 +1208,6 @@ export default function AssistantDetailPage() {
             ))}
           </GlassCard>
 
-          {/* Right column: Stats + Meta */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <GlassCard>
-              <h3 className="assistant-detail-section-title" style={{ marginBottom: 12 }}>{t("profile.card.activity")}</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: "var(--console-text-muted, #6b7280)" }}>{t("profile.stat.conversations")}</span>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))" }}>{conversationCount}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: "var(--console-text-muted, #6b7280)" }}>{t("profile.card.knowledge")}</span>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))" }}>{knowledgeItems.length}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: "var(--console-text-muted, #6b7280)" }}>{t("profile.stat.hours")}</span>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))" }}>&mdash;</span>
-                </div>
-              </div>
-            </GlassCard>
-
-            <GlassCard>
-              <h3 className="assistant-detail-section-title" style={{ marginBottom: 8 }}>{t("graph.createdAt")}</h3>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--console-text-primary, var(--text-primary))" }}>
-                {formatDate(project?.created_at || "")}
-              </div>
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--console-border, rgba(0,0,0,0.06))" }}>
-                <div style={{ fontSize: 11, color: "var(--console-text-muted, #6b7280)", marginBottom: 4 }}>{t("profile.defaultMode")}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--console-accent, #6366f1)" }}>
-                  {modeOptions.find((option) => option.key === project?.default_chat_mode)?.title || t("profile.mode.standard")}
-                </div>
-              </div>
-            </GlassCard>
-          </div>
         </div>
 
         {settingsOpen ? (
