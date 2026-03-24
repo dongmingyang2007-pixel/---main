@@ -9780,6 +9780,72 @@ button {
   width: 100%;
 }
 
+/* ── Compact source chips (ChatGPT-style) ── */
+.chat-sources-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chat-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+  text-decoration: none;
+  color: var(--console-text-primary, var(--text-primary));
+  font-size: 12px;
+  line-height: 1;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  cursor: pointer;
+}
+.chat-source-chip:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+.chat-source-chip .chat-source-favicon {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  border-radius: 3px;
+}
+.chat-source-chip .chat-source-favicon-img {
+  width: 14px;
+  height: 14px;
+}
+.chat-source-chip .chat-source-favicon-fallback {
+  font-size: 9px;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-source-chip-domain {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--console-text-secondary, var(--text-secondary));
+  font-size: 12px;
+}
+.chat-source-chip-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--accent, #6366f1);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .chat-source-card {
   padding: 12px 13px;
   border-radius: 14px;
@@ -11823,6 +11889,7 @@ button {
 
 .chat-message-stack {
   max-width: 78%;
+  min-width: 0;
 }
 
 /* ── Message actions (read-aloud etc) ─────── */
@@ -12836,7 +12903,14 @@ button {
 }
 
 /* Message wrapper for hover actions */
-.chat-message-wrapper { position: relative; }
+.chat-message-wrapper {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+.chat-message.is-user .chat-message-wrapper { justify-content: flex-end; }
+.chat-message.is-assistant .chat-message-wrapper { justify-content: flex-start; }
 .chat-message-hover-actions {
   position: absolute; top: 4px; right: 4px;
   opacity: 0; transition: opacity 150ms ease;

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ComponentPropsWithoutRef,
   Fragment,
   forwardRef,
   useCallback,
@@ -105,7 +106,7 @@ function CollapsibleReasoning({
   animate: boolean;
   label: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => animate);
   const previewLength = 80;
   const isLong = content.length > previewLength;
   const preview = isLong ? content.slice(0, previewLength) + "..." : content;
@@ -387,9 +388,13 @@ function CollapsibleRetrievalTrace({
 
 const CITATION_PATTERN = /\[ref_(\d+)\]/g;
 
-type CitationPart =
-  | { kind: "text"; value: string }
-  | { kind: "citation"; index: number; raw: string };
+type MarkdownNode = {
+  type?: string;
+  value?: string;
+  url?: string;
+  title?: string | null;
+  children?: MarkdownNode[];
+};
 
 function getSourceDisplayIndex(source: SearchSource, fallbackIndex: number): number {
   return source.index > 0 ? source.index : fallbackIndex;
@@ -399,28 +404,20 @@ function getSourceCardId(messageId: string, sourceIndex: number): string {
   return `chat-source-${messageId}-${sourceIndex}`;
 }
 
-function parseCitationParts(text: string): CitationPart[] {
-  const parts: CitationPart[] = [];
-  let lastIndex = 0;
-
-  for (const match of text.matchAll(CITATION_PATTERN)) {
-    const start = match.index ?? 0;
-    if (start > lastIndex) {
-      parts.push({ kind: "text", value: text.slice(lastIndex, start) });
-    }
-    parts.push({
-      kind: "citation",
-      index: Number.parseInt(match[1] || "0", 10),
-      raw: match[0],
-    });
-    lastIndex = start + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push({ kind: "text", value: text.slice(lastIndex) });
-  }
-
-  return parts.length ? parts : [{ kind: "text", value: text }];
+function MarkdownLink({
+  href,
+  children,
+}: ComponentPropsWithoutRef<"a">) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: "var(--console-accent, #6366f1)", textDecoration: "underline" }}
+    >
+      {children}
+    </a>
+  );
 }
 
 function buildCitationSnippetMap(text: string): Map<number, string> {
@@ -449,6 +446,127 @@ function buildCitationSnippetMap(text: string): Map<number, string> {
   }
 
   return snippets;
+}
+
+function replaceCitationTextNode(
+  node: MarkdownNode,
+  {
+    messageId,
+    sourceIndices,
+  }: {
+    messageId: string;
+    sourceIndices: Set<number>;
+  },
+): MarkdownNode[] {
+  const value = typeof node.value === "string" ? node.value : "";
+  if (!value) {
+    return [node];
+  }
+
+  const nextNodes: MarkdownNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of value.matchAll(CITATION_PATTERN)) {
+    const raw = match[0];
+    const matchIndex = match.index ?? 0;
+    const citationIndex = Number.parseInt(match[1] || "0", 10);
+    if (!sourceIndices.has(citationIndex)) {
+      continue;
+    }
+    if (matchIndex > lastIndex) {
+      nextNodes.push({
+        type: "text",
+        value: value.slice(lastIndex, matchIndex),
+      });
+    }
+    nextNodes.push({
+      type: "link",
+      url: `#${getSourceCardId(messageId, citationIndex)}`,
+      title: raw,
+      children: [{ type: "text", value: `[${citationIndex}]` }],
+    });
+    lastIndex = matchIndex + raw.length;
+  }
+
+  if (!nextNodes.length) {
+    return [node];
+  }
+
+  if (lastIndex < value.length) {
+    nextNodes.push({
+      type: "text",
+      value: value.slice(lastIndex),
+    });
+  }
+
+  return nextNodes;
+}
+
+function injectCitationLinks(
+  node: MarkdownNode,
+  {
+    messageId,
+    sourceIndices,
+  }: {
+    messageId: string;
+    sourceIndices: Set<number>;
+  },
+): void {
+  if (!Array.isArray(node.children) || node.children.length === 0) {
+    return;
+  }
+
+  const nextChildren: MarkdownNode[] = [];
+  for (const child of node.children) {
+    if (!child || typeof child !== "object") {
+      nextChildren.push(child);
+      continue;
+    }
+
+    if (child.type === "text") {
+      nextChildren.push(
+        ...replaceCitationTextNode(child, {
+          messageId,
+          sourceIndices,
+        }),
+      );
+      continue;
+    }
+
+    if (
+      child.type !== "link" &&
+      child.type !== "linkReference" &&
+      child.type !== "definition" &&
+      child.type !== "inlineCode" &&
+      child.type !== "code" &&
+      child.type !== "math" &&
+      child.type !== "inlineMath" &&
+      child.type !== "html"
+    ) {
+      injectCitationLinks(child, {
+        messageId,
+        sourceIndices,
+      });
+    }
+
+    nextChildren.push(child);
+  }
+
+  node.children = nextChildren;
+}
+
+function createCitationRemarkPlugin(
+  messageId: string,
+  sourceIndices: Set<number>,
+) {
+  return function remarkCitationLinks() {
+    return (tree: MarkdownNode) => {
+      injectCitationLinks(tree, {
+        messageId,
+        sourceIndices,
+      });
+    };
+  };
 }
 
 function formatSourceDomain(source: SearchSource): string {
@@ -514,6 +632,61 @@ function SourceFavicon({
   );
 }
 
+function SourceAwareAssistantMarkdown({
+  message,
+  sourceEntries,
+}: {
+  message: Message;
+  sourceEntries: Map<number, {
+    source: SearchSource;
+    displayIndex: number;
+    previewSummary: string;
+  }>;
+}) {
+  const citationPlugin = createCitationRemarkPlugin(
+    message.id,
+    new Set(sourceEntries.keys()),
+  );
+  const citationHrefMap = new Map(
+    Array.from(sourceEntries.values()).map((entry) => [
+      `#${getSourceCardId(message.id, entry.displayIndex)}`,
+      entry,
+    ]),
+  );
+
+  return (
+    <div className="chat-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath, citationPlugin]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          a: ({ href, children }) => {
+            const entry = href ? citationHrefMap.get(href) : undefined;
+            if (entry) {
+              return (
+                <CitationAnchor
+                  messageId={message.id}
+                  source={entry.source}
+                  displayIndex={entry.displayIndex}
+                  previewSummary={entry.previewSummary}
+                />
+              );
+            }
+
+            return (
+              <MarkdownLink href={href}>
+                {children}
+              </MarkdownLink>
+            );
+          },
+        }}
+      >
+        {message.content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function CitationAnchor({
   messageId,
   source,
@@ -561,7 +734,6 @@ function AssistantMessageBody({
     );
   }
 
-  const citationParts = parseCitationParts(message.content);
   const citationSnippets = buildCitationSnippetMap(message.content);
   const sourceEntries = new Map(
     sources.map((source, index) => {
@@ -572,30 +744,16 @@ function AssistantMessageBody({
       return [displayIndex, { source, displayIndex, previewSummary }];
     }),
   );
-  const hasCitationAnchors = citationParts.some((part) => part.kind === "citation");
+  const hasCitationAnchors = Array.from(message.content.matchAll(CITATION_PATTERN)).some((match) =>
+    sourceEntries.has(Number.parseInt(match[1] || "0", 10)),
+  );
 
   return (
     <>
-      {citationParts.map((part, index) => {
-        if (part.kind === "text") {
-          return <Fragment key={`text-${index}`}>{part.value}</Fragment>;
-        }
-
-        const entry = sourceEntries.get(part.index);
-        if (!entry) {
-          return <Fragment key={`raw-${index}`}>{part.raw}</Fragment>;
-        }
-
-        return (
-          <CitationAnchor
-            key={`cite-${index}`}
-            messageId={message.id}
-            source={entry.source}
-            displayIndex={entry.displayIndex}
-            previewSummary={entry.previewSummary}
-          />
-        );
-      })}
+      <SourceAwareAssistantMarkdown
+        message={message}
+        sourceEntries={sourceEntries}
+      />
       {!hasCitationAnchors ? (
         <span className="chat-citation-inline-list">
           {" "}
@@ -645,6 +803,8 @@ export interface ChatMessageListHandle {
     final: {
       id: string;
       isStreaming: boolean;
+      content?: string;
+      reasoningContent?: string | null;
       memories_extracted?: string;
       sources?: SearchSource[];
       retrievalTrace?: Message["retrievalTrace"];
@@ -825,6 +985,8 @@ export const ChatMessageList = forwardRef<
         final: {
           id: string;
           isStreaming: boolean;
+          content?: string;
+          reasoningContent?: string | null;
           memories_extracted?: string;
           sources?: SearchSource[];
           retrievalTrace?: Message["retrievalTrace"];
@@ -906,46 +1068,23 @@ export const ChatMessageList = forwardRef<
                 )}
               </div>
               {msg.role === "assistant" && assistantSources.length ? (
-                <div className="chat-sources" aria-label={t("sourcesLabel")}>
+                <div className="chat-sources-compact" aria-label={t("sourcesLabel")}>
                   {assistantSources.map((source, index) => {
                     const displayIndex = getSourceDisplayIndex(source, index + 1);
-                    const summary =
-                      resolveSourceSummary(source, citationSnippets, index + 1) ||
-                      t("sourceNoSummary");
-
                     return (
-                      <article
+                      <a
                         key={`${source.url}-${displayIndex}`}
                         id={getSourceCardId(msg.id, displayIndex)}
-                        className="chat-source-card"
+                        className="chat-source-chip"
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={source.title || source.url}
                       >
-                        <div className="chat-source-head">
-                          <div className="chat-source-head-main">
-                            <SourceFavicon source={source} />
-                            <div className="chat-source-head-copy">
-                              <a
-                                className="chat-source-title"
-                                href={source.url}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {source.title}
-                              </a>
-                              <div className="chat-source-domain">{formatSourceDomain(source)}</div>
-                            </div>
-                          </div>
-                          <span className="chat-source-index">[{displayIndex}]</span>
-                        </div>
-                        <a
-                          className="chat-source-url"
-                          href={source.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {source.url}
-                        </a>
-                        <div className="chat-source-summary">{summary}</div>
-                      </article>
+                        <SourceFavicon source={source} />
+                        <span className="chat-source-chip-domain">{formatSourceDomain(source)}</span>
+                        <span className="chat-source-chip-index">{displayIndex}</span>
+                      </a>
                     );
                   })}
                 </div>
