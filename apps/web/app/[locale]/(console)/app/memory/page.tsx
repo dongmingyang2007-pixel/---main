@@ -5,13 +5,7 @@ import { useTranslations } from "next-intl";
 import { motion } from "framer-motion";
 import { useProjectContext } from "@/lib/ProjectContext";
 import {
-  getMemoryKind,
-  getMemoryLastUsedAt,
-  getMemoryRetrievalCount,
-  isFileMemoryNode,
   isOrdinaryMemoryNode,
-  isPinnedMemoryNode,
-  isSummaryMemoryNode,
   useGraphData,
 } from "@/hooks/useGraphData";
 import MemoryGraph from "@/components/console/graph/MemoryGraph";
@@ -44,31 +38,6 @@ export default function MemoryPage() {
   const memoryCount = ordinaryNodes.length;
   const assistantName =
     projects.find((project) => project.id === projectId)?.name || t("memory.title");
-  const summaryCount = ordinaryNodes.filter((node) => isSummaryMemoryNode(node)).length;
-  const pinnedCount = ordinaryNodes.filter((node) => isPinnedMemoryNode(node)).length;
-  const recentlyUsedCount = ordinaryNodes.filter((node) => getMemoryLastUsedAt(node)).length;
-  const fileCount = data.nodes.filter((node) => isFileMemoryNode(node)).length;
-  const topCategories = useMemo(() => {
-    const counts = new Map<string, number>();
-    ordinaryNodes.forEach((node) => {
-      const category = node.category.trim() || getMemoryKind(node) || t("memory.uncategorized");
-      counts.set(category, (counts.get(category) || 0) + 1);
-    });
-    return [...counts.entries()]
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, 5);
-  }, [ordinaryNodes, t]);
-  const hottestMemories = useMemo(
-    () =>
-      [...ordinaryNodes]
-        .sort((left, right) => {
-          const rightScore = getMemoryRetrievalCount(right) * 1000 + new Date(right.updated_at).getTime();
-          const leftScore = getMemoryRetrievalCount(left) * 1000 + new Date(left.updated_at).getTime();
-          return rightScore - leftScore;
-        })
-        .slice(0, 3),
-    [ordinaryNodes],
-  );
 
   if (!projectId) {
     return (
@@ -347,84 +316,6 @@ export default function MemoryPage() {
       </div>
 
       {/* ── Content ── */}
-      <div className="memory-overview">
-        <div className="memory-kpi-grid">
-          <article className="memory-kpi-card">
-            <span className="memory-kpi-label">{t("memory.metricTotal")}</span>
-            <strong className="memory-kpi-value">{memoryCount}</strong>
-            <span className="memory-kpi-meta">{t("memory.metricTotalMeta")}</span>
-          </article>
-          <article className="memory-kpi-card">
-            <span className="memory-kpi-label">{t("memory.metricSummary")}</span>
-            <strong className="memory-kpi-value">{summaryCount}</strong>
-            <span className="memory-kpi-meta">{t("memory.metricSummaryMeta")}</span>
-          </article>
-          <article className="memory-kpi-card">
-            <span className="memory-kpi-label">{t("memory.metricCore")}</span>
-            <strong className="memory-kpi-value">{pinnedCount}</strong>
-            <span className="memory-kpi-meta">{t("memory.metricCoreMeta")}</span>
-          </article>
-          <article className="memory-kpi-card">
-            <span className="memory-kpi-label">{t("memory.metricActive")}</span>
-            <strong className="memory-kpi-value">{recentlyUsedCount}</strong>
-            <span className="memory-kpi-meta">
-              {t("memory.metricActiveMeta", { files: fileCount })}
-            </span>
-          </article>
-        </div>
-        <div className="memory-overview-panel">
-          <div className="memory-overview-panel-header">
-            <div>
-              <div className="memory-overview-eyebrow">{t("memory.strategyEyebrow")}</div>
-              <div className="memory-overview-title">{t("memory.strategyTitle")}</div>
-            </div>
-            <div className="memory-overview-flow">
-              <span>{t("memory.strategyStatic")}</span>
-              <span>{t("memory.strategyRelevant")}</span>
-              <span>{t("memory.strategyGraph")}</span>
-              <span>{t("memory.strategyFiles")}</span>
-            </div>
-          </div>
-          <div className="memory-overview-panel-body">
-            <div className="memory-overview-cluster">
-              <div className="memory-overview-subtitle">{t("memory.topCategories")}</div>
-              <div className="memory-overview-tags">
-                {topCategories.length ? (
-                  topCategories.map(([category, count]) => (
-                    <span key={category} className="memory-overview-tag">
-                      {category} <strong>{count}</strong>
-                    </span>
-                  ))
-                ) : (
-                  <span className="memory-overview-empty">{t("memory.noResults")}</span>
-                )}
-              </div>
-            </div>
-            <div className="memory-overview-cluster">
-              <div className="memory-overview-subtitle">{t("memory.hotMemories")}</div>
-              <div className="memory-overview-list">
-                {hottestMemories.length ? (
-                  hottestMemories.map((node) => (
-                    <div key={node.id} className="memory-overview-list-item">
-                      <div className="memory-overview-list-copy">
-                        <span className="memory-overview-list-category">
-                          {node.category || getMemoryKind(node) || t("memory.uncategorized")}
-                        </span>
-                        <span className="memory-overview-list-text">{node.content}</span>
-                      </div>
-                      <span className="memory-overview-list-score">
-                        {t("memory.usedCount", { count: getMemoryRetrievalCount(node) })}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <span className="memory-overview-empty">{t("memory.noUsageYet")}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
       <div className="memory-content">
         {loading ? (
           <div

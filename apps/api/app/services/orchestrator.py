@@ -171,6 +171,76 @@ _THINKING_HINTS = (
     "strategy",
     "explain",
 )
+_CONTEXT_ROUTE_HINTS_MEMORY = (
+    "你记得我",
+    "你还记得",
+    "你记不记得",
+    "我上次说过",
+    "我之前说过",
+    "我前面说过",
+    "我刚才说过",
+    "之前提到",
+    "前面提到",
+    "刚才提到",
+    "earlier conversation",
+    "previous conversation",
+    "remember what i said",
+    "what did i say",
+    "what do you remember about me",
+    "did i mention before",
+)
+_CONTEXT_ROUTE_HINTS_RAG = (
+    "知识库",
+    "资料里",
+    "文档里",
+    "文件里",
+    "上传的资料",
+    "上传的文档",
+    "上传的文件",
+    "根据文档",
+    "根据资料",
+    "结合文档",
+    "结合资料",
+    "结合我上传",
+    "根据我上传",
+    "project knowledge",
+    "knowledge base",
+    "uploaded document",
+    "uploaded file",
+    "uploaded files",
+    "uploaded materials",
+    "based on the document",
+    "based on the file",
+)
+_CONTEXT_ROUTE_HINTS_NONE = (
+    "介绍一下你自己",
+    "介绍你自己",
+    "自我介绍",
+    "你是谁",
+    "who are you",
+    "introduce yourself",
+    "tell me about yourself",
+    "夸夸你",
+    "你很棒",
+    "你真棒",
+    "你很不错",
+    "辛苦了",
+)
+_CONTEXT_ROUTE_HINTS_PERSONAL = (
+    "结合我",
+    "根据我",
+    "基于我",
+    "按我的",
+    "围绕我",
+    "about me",
+    "based on me",
+    "using my",
+    "my earlier",
+    "my previous",
+)
+_CONTEXT_ROUTE_VALUES = {"none", "profile_only", "memory_only", "full_rag"}
+
+ContextRoute = Literal["none", "profile_only", "memory_only", "full_rag"]
 
 WebSearchRoute = Literal["local_only", "web_only", "local_then_web", "no_search"]
 
@@ -205,6 +275,21 @@ class ThinkingDecision:
 @dataclass(slots=True)
 class ThinkingClassification:
     enable_thinking: bool
+    confidence: float
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class ContextRouteDecision:
+    route: ContextRoute
+    source: str
+    confidence: float | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
+class ContextRouteClassification:
+    route: ContextRoute
     confidence: float
     reason: str | None = None
 
@@ -507,6 +592,52 @@ def _resolve_rule_search_decision(
     return None
 
 
+def _resolve_rule_context_route(
+    *,
+    user_message: str,
+) -> ContextRouteDecision | None:
+    stripped = user_message.strip()
+    if not stripped:
+        return ContextRouteDecision(
+            route="none",
+            source="rules",
+            confidence=1.0,
+            reason="empty user message does not require project context",
+        )
+
+    lowered = stripped.casefold()
+    normalized = re.sub(r"[\W_]+", "", lowered)
+    if normalized in _THINKING_SOCIAL_MESSAGES:
+        return ContextRouteDecision(
+            route="none",
+            source="rules",
+            confidence=1.0,
+            reason="social or acknowledgement turn does not require project context",
+        )
+    if any(hint in lowered for hint in _CONTEXT_ROUTE_HINTS_NONE):
+        return ContextRouteDecision(
+            route="none",
+            source="rules",
+            confidence=0.98,
+            reason="self-intro, praise, or chit-chat turn does not require project retrieval",
+        )
+    if _has_rag_context_signal(lowered):
+        return ContextRouteDecision(
+            route="full_rag",
+            source="rules",
+            confidence=0.95,
+            reason="user explicitly asked for uploaded files, docs, or project knowledge",
+        )
+    if _has_memory_context_signal(lowered):
+        return ContextRouteDecision(
+            route="memory_only",
+            source="rules",
+            confidence=0.93,
+            reason="user explicitly asked about prior facts or remembered conversation state",
+        )
+    return None
+
+
 def _pick_thinking_classifier_model(
     db: Session,
     *,
@@ -535,6 +666,33 @@ def _pick_thinking_classifier_model(
     return llm_model_id
 
 
+def _fallback_context_route(
+    *,
+    user_message: str,
+) -> ContextRouteDecision:
+    lowered = user_message.strip().casefold()
+    if _has_rag_context_signal(lowered):
+        return ContextRouteDecision(
+            route="full_rag",
+            source="fallback",
+            confidence=0.8,
+            reason="document or uploaded-file hints require the full project context budget",
+        )
+    if _has_memory_context_signal(lowered):
+        return ContextRouteDecision(
+            route="memory_only",
+            source="fallback",
+            confidence=0.78,
+            reason="memory-like hints require stored conversation context",
+        )
+    return ContextRouteDecision(
+        route="none",
+        source="fallback",
+        confidence=0.72,
+        reason="message can be answered directly without retrieval by default",
+    )
+
+
 def _pick_search_classifier_model(
     db: Session,
     *,
@@ -561,6 +719,32 @@ def _pick_search_classifier_model(
         if model_info is not None or normalized in {settings.dashscope_model, llm_model_id}:
             return normalized
     return llm_model_id
+
+
+def _has_rag_context_signal(lowered: str) -> bool:
+    if any(hint in lowered for hint in _CONTEXT_ROUTE_HINTS_RAG):
+        return True
+    doc_terms = (
+        "资料",
+        "文档",
+        "文件",
+        "知识库",
+        "上传",
+        "document",
+        "documents",
+        "file",
+        "files",
+        "knowledge base",
+        "uploaded",
+    )
+    verbs = ("根据", "结合", "参考", "基于", "based on", "according to", "using")
+    return any(verb in lowered for verb in verbs) and any(term in lowered for term in doc_terms)
+
+
+def _has_memory_context_signal(lowered: str) -> bool:
+    return any(hint in lowered for hint in _CONTEXT_ROUTE_HINTS_MEMORY) or any(
+        hint in lowered for hint in _CONTEXT_ROUTE_HINTS_PERSONAL
+    )
 
 
 def _extract_json_object(raw: str) -> dict[str, object] | None:
@@ -635,6 +819,28 @@ def _parse_thinking_classifier_result(raw: str) -> ThinkingClassification | None
 
     return ThinkingClassification(
         enable_thinking=enable_thinking,
+        confidence=confidence,
+        reason=str(payload.get("reason") or "").strip() or None,
+    )
+
+
+def _parse_context_classifier_result(raw: str) -> ContextRouteClassification | None:
+    payload = _extract_json_object(raw)
+    if not payload:
+        return None
+
+    route_value = str(payload.get("route") or "").strip().lower()
+    if route_value not in _CONTEXT_ROUTE_VALUES:
+        return None
+
+    confidence_value = payload.get("confidence", 0.0)
+    try:
+        confidence = max(0.0, min(1.0, float(confidence_value)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    return ContextRouteClassification(
+        route=route_value,
         confidence=confidence,
         reason=str(payload.get("reason") or "").strip() or None,
     )
@@ -750,6 +956,64 @@ async def _classify_thinking_need(
     return classification
 
 
+async def _classify_context_route(
+    db: Session,
+    *,
+    llm_model_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    enable_thinking: bool,
+) -> ContextRouteClassification | None:
+    classifier_model_id = _pick_thinking_classifier_model(db, llm_model_id=llm_model_id)
+    recent_excerpt = "\n".join(
+        f"{message.get('role', 'user')}: {message.get('content', '').strip()}"
+        for message in recent_messages[-4:]
+        if (message.get("content") or "").strip()
+    )
+    classifier_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You route how much project context the assistant should retrieve for the latest user turn. "
+                "Return JSON only with keys route, confidence, reason. "
+                "Valid route values: none, profile_only, memory_only, full_rag. "
+                "Use none for greetings, thanks, praise, small talk, or self-introduction requests. "
+                "Use profile_only for lightweight personalization that only needs stable profile, pinned memories, or assistant persona. "
+                "Use memory_only for prior user facts, goals, preferences, or earlier conversation recall. "
+                "Use full_rag when uploaded documents, files, project knowledge, or memory-linked files are likely needed. "
+                "Deep thinking is only a hint toward a larger context budget, not a forced switch."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Recent conversation:\n{recent_excerpt or '(none)'}\n\n"
+                f"Latest user turn:\n{user_message.strip()}\n\n"
+                f"Deep thinking currently enabled: {'yes' if enable_thinking else 'no'}\n\n"
+                "Choose the smallest sufficient context route."
+            ),
+        },
+    ]
+
+    try:
+        result = await chat_completion_detailed(
+            classifier_messages,
+            model=classifier_model_id,
+            temperature=0.0,
+            max_tokens=180,
+            enable_thinking=False,
+            enable_search=False,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Context route classifier failed")
+        return None
+
+    classification = _parse_context_classifier_result(result.content)
+    if classification is None:
+        logger.warning("Context route classifier returned unparsable content: %s", result.content)
+    return classification
+
+
 async def resolve_enable_thinking(
     db: Session,
     *,
@@ -802,6 +1066,42 @@ async def resolve_enable_thinking(
         source="fallback",
         reason="rules and classifier did not require deep thinking",
     )
+
+
+async def resolve_context_route(
+    db: Session,
+    *,
+    project_id: str,
+    user_message: str,
+    recent_messages: list[dict[str, str]],
+    enable_thinking: bool,
+    llm_model_id: str | None = None,
+) -> ContextRouteDecision:
+    rule_decision = _resolve_rule_context_route(user_message=user_message)
+    if rule_decision is not None:
+        return rule_decision
+
+    effective_model_id = llm_model_id or resolve_pipeline_model_id(
+        db,
+        project_id=project_id,
+        model_type="llm",
+    )
+    classification = await _classify_context_route(
+        db,
+        llm_model_id=effective_model_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        enable_thinking=enable_thinking,
+    )
+    if classification and classification.confidence >= settings.thinking_classifier_min_confidence:
+        return ContextRouteDecision(
+            route=classification.route,
+            source="classifier",
+            confidence=classification.confidence,
+            reason=classification.reason,
+        )
+
+    return _fallback_context_route(user_message=user_message)
 
 def _should_use_responses_auto_tools(
     *,
@@ -1009,12 +1309,22 @@ async def _assemble_prompt_context(
     conversation_id: str,
     user_message: str,
     recent_messages: list[dict[str, str]],
+    llm_model_id: str,
+    enable_thinking: bool,
 ) -> tuple[list[dict[str, str]], dict[str, object]]:
     project, _conversation = _load_active_conversation_context(
         db,
         workspace_id=workspace_id,
         project_id=project_id,
         conversation_id=conversation_id,
+    )
+    context_route = await resolve_context_route(
+        db,
+        project_id=project_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        enable_thinking=enable_thinking,
+        llm_model_id=llm_model_id,
     )
     context = await build_memory_context(
         db,
@@ -1024,13 +1334,23 @@ async def _assemble_prompt_context(
         user_message=user_message,
         recent_messages=recent_messages,
         personality=extract_personality(project.description) if project else "",
+        context_level=context_route.route,
         semantic_search_fn=search_similar,
         linked_file_loader_fn=load_linked_file_chunks_for_memories,
+    )
+    retrieval_trace = dict(context.retrieval_trace)
+    retrieval_trace.update(
+        {
+            "context_level": context_route.route,
+            "decision_source": context_route.source,
+            "decision_reason": context_route.reason,
+            "decision_confidence": context_route.confidence,
+        }
     )
     messages: list[dict[str, str]] = [{"role": "system", "content": context.system_prompt}]
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})
-    return messages, context.retrieval_trace
+    return messages, retrieval_trace
 
 
 async def _assemble_llm_context(
@@ -1041,6 +1361,8 @@ async def _assemble_llm_context(
     conversation_id: str,
     user_message: str,
     recent_messages: list[dict[str, str]],
+    llm_model_id: str,
+    enable_thinking: bool,
 ) -> list[dict[str, str]]:
     messages, _retrieval_trace = await _assemble_prompt_context(
         db,
@@ -1049,6 +1371,8 @@ async def _assemble_llm_context(
         conversation_id=conversation_id,
         user_message=user_message,
         recent_messages=recent_messages,
+        llm_model_id=llm_model_id,
+        enable_thinking=enable_thinking,
     )
     return messages
 
@@ -1077,14 +1401,6 @@ async def _build_and_call_llm(
     4. Assemble system prompt
     5. Call model API (text-only or multimodal if *image_bytes* provided)
     """
-    messages, retrieval_trace = await _assemble_prompt_context(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        conversation_id=conversation_id,
-        user_message=user_message,
-        recent_messages=recent_messages,
-    )
     thinking_decision = await resolve_enable_thinking(
         db,
         project_id=project_id,
@@ -1094,6 +1410,16 @@ async def _build_and_call_llm(
         llm_model_id=llm_model_id,
     )
     resolved_enable_thinking = thinking_decision.enable_thinking
+    messages, retrieval_trace = await _assemble_prompt_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_message,
+        recent_messages=recent_messages,
+        llm_model_id=llm_model_id,
+        enable_thinking=resolved_enable_thinking,
+    )
     llm_capabilities = _load_model_capabilities(db, model_id=llm_model_id)
     search_decision = await _resolve_search_options(
         db,
@@ -1249,6 +1575,8 @@ async def orchestrate_inference_stream(
         conversation_id=conversation_id,
         user_message=user_message,
         recent_messages=recent_messages,
+        llm_model_id=llm_model_id,
+        enable_thinking=resolved_enable_thinking,
     )
 
     yield {"event": "message_start", "data": {"role": "assistant"}}
@@ -1560,6 +1888,8 @@ async def orchestrate_voice_inference(
             conversation_id=conversation_id,
             user_message=user_text,
             recent_messages=recent_msgs,
+            llm_model_id=llm_model_id,
+            enable_thinking=resolved_enable_thinking,
         )
 
         omni_result = await omni_completion(

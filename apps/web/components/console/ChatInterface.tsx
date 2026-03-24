@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 
 import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
 import { apiStream } from "@/lib/api-stream";
+import { getApiHttpBaseUrl } from "@/lib/env";
+import type { PersistedRealtimeTurnPayload } from "@/hooks/useRealtimeVoice";
 import RealtimeVoicePanel from "./RealtimeVoicePanel";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
@@ -26,6 +28,7 @@ import {
   normalizeRetrievalTrace,
   normalizeSearchSources,
   toMessage,
+  mergeAssistantMetadataPatch,
   getApiErrorMessage,
 } from "./chat-types";
 
@@ -69,6 +72,15 @@ export function ChatInterface({
 
   const messageListRef = useRef<ChatMessageListHandle>(null);
   const messagesRef = useRef<Message[]>([]);
+  const pendingAssistantMetadataRef = useRef<Record<string, unknown>>({});
+  const pendingRealtimeTurnPersistenceRef = useRef<
+    Array<{
+      userRuntimeId: string | null;
+      assistantRuntimeId: string | null;
+      userText: string;
+      assistantText: string;
+    }>
+  >([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const runtimeMessageCounterRef = useRef(0);
   const liveTurnIdsRef = useRef<{
@@ -98,6 +110,29 @@ export function ChatInterface({
 
   useEffect(() => {
     messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    const pendingEntries = Object.entries(pendingAssistantMetadataRef.current);
+    if (!pendingEntries.length || !messages.length) {
+      return;
+    }
+
+    let changed = false;
+    const nextMessages = messages.map((message) => {
+      const pendingMetadata = pendingAssistantMetadataRef.current[message.id];
+      if (!pendingMetadata) {
+        return message;
+      }
+
+      changed = true;
+      delete pendingAssistantMetadataRef.current[message.id];
+      return mergeAssistantMetadataPatch(message, pendingMetadata);
+    });
+
+    if (changed) {
+      setMessages(nextMessages);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -233,6 +268,62 @@ export function ChatInterface({
     };
   }, [conversationId, onConversationLoaded]);
 
+  useEffect(() => {
+    if (!conversationId) {
+      return;
+    }
+
+    let eventSource: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      const apiBase = getApiHttpBaseUrl();
+      eventSource = new EventSource(
+        `${apiBase}/api/v1/chat/conversations/${conversationId}/events`,
+        { withCredentials: true },
+      );
+
+      eventSource.addEventListener("assistant_message_metadata", (event) => {
+        try {
+          const payload = JSON.parse(event.data) as {
+            id?: string;
+            metadata_json?: unknown;
+          };
+          if (!payload.id) {
+            return;
+          }
+          pendingAssistantMetadataRef.current[payload.id] = payload.metadata_json ?? {};
+          setMessages((prev) =>
+            prev.map((message) => {
+              if (message.id !== payload.id) {
+                return message;
+              }
+              delete pendingAssistantMetadataRef.current[payload.id];
+              return mergeAssistantMetadataPatch(message, payload.metadata_json);
+            }),
+          );
+        } catch {
+          // Ignore malformed event payloads.
+        }
+      });
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+        eventSource = null;
+        retryTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      eventSource?.close();
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
+    };
+  }, [conversationId]);
+
   const handleSend = useCallback(
     async (
       content: string,
@@ -354,6 +445,48 @@ export function ChatInterface({
       const tempAssistantId = `stream-a-${Date.now()}`;
       let streamStarted = false;
       let finalizedAssistantId: string | null = null;
+      const updateStreamingAssistant = (
+        updater: (current: Message | null) => Message,
+      ) => {
+        setMessages((prev) => {
+          const index = prev.findIndex((message) => message.id === tempAssistantId);
+          const current = index >= 0 ? prev[index] : null;
+          const nextMessage = updater(current);
+          if (index === -1) {
+            return [...prev, nextMessage];
+          }
+          const next = prev.slice();
+          next[index] = nextMessage;
+          return next;
+        });
+      };
+      const finalizeStreamingAssistant = (
+        final: Omit<Message, "role"> & { role?: "assistant" },
+      ) => {
+        setMessages((prev) => {
+          const index = prev.findIndex((message) => message.id === tempAssistantId);
+          const current = index >= 0 ? prev[index] : null;
+          const nextMessage: Message = {
+            id: final.id,
+            role: "assistant",
+            content: final.content,
+            reasoningContent: final.reasoningContent ?? null,
+            sources: final.sources,
+            retrievalTrace: final.retrievalTrace ?? null,
+            audioBase64: final.audioBase64 ?? current?.audioBase64 ?? null,
+            memories_extracted: final.memories_extracted,
+            extracted_facts: final.extracted_facts,
+            animateOnMount: final.animateOnMount ?? current?.animateOnMount ?? false,
+            isStreaming: final.isStreaming,
+          };
+          if (index === -1) {
+            return [...prev, nextMessage];
+          }
+          const next = prev.slice();
+          next[index] = nextMessage;
+          return next;
+        });
+      };
 
       try {
         const abortController = new AbortController();
@@ -377,25 +510,50 @@ export function ChatInterface({
         )) {
           if (event.event === "token") {
             const delta = (event.data.content as string) ?? "";
-            messageListRef.current?.updateMessage(
-              tempAssistantId,
-              (prev) => prev + delta,
-            );
+            updateStreamingAssistant((current) => ({
+              id: tempAssistantId,
+              role: "assistant",
+              content: (current?.content ?? "") + delta,
+              reasoningContent: current?.reasoningContent ?? null,
+              sources: current?.sources,
+              retrievalTrace: current?.retrievalTrace ?? null,
+              audioBase64: current?.audioBase64 ?? null,
+              memories_extracted: current?.memories_extracted,
+              extracted_facts: current?.extracted_facts,
+              animateOnMount: current?.animateOnMount ?? false,
+              isStreaming: true,
+            }));
           } else if (event.event === "reasoning") {
             const delta = (event.data.content as string) ?? "";
-            messageListRef.current?.updateReasoning(
-              tempAssistantId,
-              (prev) => prev + delta,
-            );
+            updateStreamingAssistant((current) => ({
+              id: tempAssistantId,
+              role: "assistant",
+              content: current?.content ?? "",
+              reasoningContent: (current?.reasoningContent ?? "") + delta,
+              sources: current?.sources,
+              retrievalTrace: current?.retrievalTrace ?? null,
+              audioBase64: current?.audioBase64 ?? null,
+              memories_extracted: current?.memories_extracted,
+              extracted_facts: current?.extracted_facts,
+              animateOnMount: current?.animateOnMount ?? false,
+              isStreaming: true,
+            }));
           } else if (event.event === "message_done") {
             const finalId = (event.data.id as string) || tempAssistantId;
+            const finalContent = typeof event.data.content === "string" ? event.data.content : "";
+            const finalReasoning =
+              typeof event.data.reasoning_content === "string"
+                ? event.data.reasoning_content
+                : null;
             const memoriesExtracted = event.data.memories_extracted as string | undefined;
             const sources = normalizeSearchSources(event.data.sources);
             const retrievalTrace = normalizeRetrievalTrace(event.data.retrieval_trace);
             finalizedAssistantId = finalId;
-            messageListRef.current?.finalizeMessage(tempAssistantId, {
+            finalizeStreamingAssistant({
               id: finalId,
               isStreaming: false,
+              content: finalContent,
+              reasoningContent: finalReasoning,
               memories_extracted: memoriesExtracted,
               sources,
               retrievalTrace,
@@ -405,22 +563,23 @@ export function ChatInterface({
               (event.data.detail as string) ||
               (event.data.message as string) ||
               t("errors.streamError");
-            messageListRef.current?.updateMessage(
-              tempAssistantId,
-              () => errorMsg,
-            );
-            messageListRef.current?.finalizeMessage(tempAssistantId, {
+            finalizeStreamingAssistant({
               id: tempAssistantId,
               isStreaming: false,
+              content: errorMsg,
+              reasoningContent: null,
             });
           }
         }
 
         if (!finalizedAssistantId) {
           finalizedAssistantId = tempAssistantId;
-          messageListRef.current?.finalizeMessage(tempAssistantId, {
+          finalizeStreamingAssistant({
             id: tempAssistantId,
             isStreaming: false,
+            content: messagesRef.current.find((message) => message.id === tempAssistantId)?.content ?? "",
+            reasoningContent:
+              messagesRef.current.find((message) => message.id === tempAssistantId)?.reasoningContent ?? null,
           });
         }
 
@@ -440,9 +599,12 @@ export function ChatInterface({
 
         if (error instanceof DOMException && error.name === "AbortError") {
           // User clicked stop — finalize whatever we have so far
-          messageListRef.current?.finalizeMessage(tempAssistantId, {
+          finalizeStreamingAssistant({
             id: tempAssistantId,
             isStreaming: false,
+            content: messagesRef.current.find((message) => message.id === tempAssistantId)?.content ?? "",
+            reasoningContent:
+              messagesRef.current.find((message) => message.id === tempAssistantId)?.reasoningContent ?? null,
           });
         } else if (streamUnavailable) {
           setMessages((prev) => prev.filter((message) => message.id !== tempAssistantId));
@@ -479,13 +641,11 @@ export function ChatInterface({
           }
         } else if (streamStarted) {
           // Stream failed after starting — show error in the existing placeholder
-          messageListRef.current?.updateMessage(
-            tempAssistantId,
-            () => t("errors.streamError"),
-          );
-          messageListRef.current?.finalizeMessage(tempAssistantId, {
+          finalizeStreamingAssistant({
             id: tempAssistantId,
             isStreaming: false,
+            content: t("errors.streamError"),
+            reasoningContent: null,
           });
         } else {
           // Stream never started — fall back to non-streaming apiPost
@@ -663,9 +823,100 @@ export function ChatInterface({
 
         return next;
       });
+      if (normalizedUserText || normalizedAssistantText) {
+        pendingRealtimeTurnPersistenceRef.current.push({
+          userRuntimeId: liveTurnIdsRef.current.userId,
+          assistantRuntimeId: liveTurnIdsRef.current.assistantId,
+          userText: normalizedUserText,
+          assistantText: normalizedAssistantText,
+        });
+      }
       liveTurnIdsRef.current = { userId: null, assistantId: null };
     },
     [conversationId, onConversationActivity],
+  );
+
+  const handleRealtimeTurnPersisted = useCallback(
+    ({ userMessage, assistantMessage }: PersistedRealtimeTurnPayload) => {
+      const normalizeText = (value?: string | null) => (typeof value === "string" ? value.trim() : "");
+      const persistedUserText = normalizeText(userMessage?.content);
+      const persistedAssistantText = normalizeText(assistantMessage?.content);
+
+      const queuedTurns = pendingRealtimeTurnPersistenceRef.current;
+      let queuedTurn:
+        | {
+            userRuntimeId: string | null;
+            assistantRuntimeId: string | null;
+            userText: string;
+            assistantText: string;
+          }
+        | undefined;
+      const queuedIndex = queuedTurns.findIndex(
+        (entry) =>
+          (!persistedUserText || entry.userText === persistedUserText) &&
+          (!persistedAssistantText || entry.assistantText === persistedAssistantText),
+      );
+      if (queuedIndex >= 0) {
+        queuedTurn = queuedTurns.splice(queuedIndex, 1)[0];
+      } else if (queuedTurns.length > 0) {
+        queuedTurn = queuedTurns.shift();
+      }
+
+      setMessages((prev) => {
+        const next = prev.slice();
+
+        const applyPersistedMessage = (
+          rawMessage: ApiMessage | undefined,
+          runtimeId: string | null | undefined,
+        ) => {
+          if (!rawMessage) {
+            return;
+          }
+
+          let persistedMessage: Message = {
+            ...toMessage(rawMessage),
+            animateOnMount: false,
+            isStreaming: false,
+          };
+          const pendingMetadata = pendingAssistantMetadataRef.current[persistedMessage.id];
+          if (pendingMetadata) {
+            delete pendingAssistantMetadataRef.current[persistedMessage.id];
+            persistedMessage = mergeAssistantMetadataPatch(persistedMessage, pendingMetadata);
+          }
+
+          const existingPersistentIndex = next.findIndex((message) => message.id === persistedMessage.id);
+          if (existingPersistentIndex >= 0) {
+            next[existingPersistentIndex] = {
+              ...next[existingPersistentIndex],
+              ...persistedMessage,
+              animateOnMount: false,
+              isStreaming: false,
+            };
+            return;
+          }
+
+          if (runtimeId) {
+            const runtimeIndex = next.findIndex((message) => message.id === runtimeId);
+            if (runtimeIndex >= 0) {
+              next[runtimeIndex] = {
+                ...next[runtimeIndex],
+                ...persistedMessage,
+                animateOnMount: false,
+                isStreaming: false,
+              };
+              return;
+            }
+          }
+
+          next.push(persistedMessage);
+        };
+
+        applyPersistedMessage(userMessage as ApiMessage | undefined, queuedTurn?.userRuntimeId);
+        applyPersistedMessage(assistantMessage as ApiMessage | undefined, queuedTurn?.assistantRuntimeId);
+        return next;
+      });
+    },
+    [],
   );
 
   const chatMode =
@@ -675,6 +926,7 @@ export function ChatInterface({
 
   useEffect(() => {
     liveTurnIdsRef.current = { userId: null, assistantId: null };
+    pendingRealtimeTurnPersistenceRef.current = [];
   }, [conversationId]);
 
   useEffect(() => {
@@ -751,12 +1003,6 @@ export function ChatInterface({
   const webSearchAvailable = modelSupportsCapability(catalogItems, llmModelId, "web_search");
   const isStandardMode = chatMode === "standard";
   const noConversation = !conversationId;
-  const currentModeLabel =
-    chatMode === "omni_realtime"
-      ? t("mode.omni")
-      : chatMode === "synthetic_realtime"
-        ? t("mode.synthetic")
-        : t("mode.standard");
   const workspaceHint = noConversation
     ? t("emptyHint")
     : messages.length === 0 && !loadingMessages
@@ -857,6 +1103,7 @@ export function ChatInterface({
           projectId={projectId}
           allowVideoInput={syntheticVideoAvailable}
           onTurnComplete={handleRealtimeTurnComplete}
+          onTurnPersisted={handleRealtimeTurnPersisted}
           onTranscriptUpdate={handleLiveTranscriptUpdate}
           onError={setVoiceNotice}
           onStateChange={setVoiceSessionState}

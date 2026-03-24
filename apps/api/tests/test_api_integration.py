@@ -587,6 +587,71 @@ def test_realtime_websocket_initial_prompt_includes_recent_history(monkeypatch) 
     assert "第一条历史回复" in prompt_sink[0]
 
 
+def test_realtime_post_turn_tasks_persists_metadata_and_notifies_client(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(realtime_router.extract_memories, "delay", lambda *args, **kwargs: None)
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "realtime-turn-persist@example.com", "Realtime Persist")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Realtime Persist Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Realtime Persist Conversation",
+    )
+
+    class _DummyWebSocket:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.payloads.append(payload)
+
+    ws = _DummyWebSocket()
+    session = realtime_router.RealtimeSession(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+        conversation_id=conversation_id,
+        user_id=user_info["user"]["id"],
+    )
+    session.turn_count = 1
+
+    retrieval_trace = {
+        "strategy": "layered_memory_v2",
+        "memories": [{"id": "mem-1", "source": "semantic", "score": 0.93}],
+        "knowledge_chunks": [],
+        "linked_file_chunks": [],
+    }
+
+    asyncio.run(
+        realtime_router._post_turn_tasks(
+            ws,
+            session,
+            "你好",
+            "你好，我在。",
+            assistant_metadata_json={"retrieval_trace": retrieval_trace},
+        )
+    )
+
+    assert ws.payloads
+    assert ws.payloads[0]["type"] == "turn.persisted"
+    assistant_payload = ws.payloads[0]["assistant_message"]
+    assert isinstance(assistant_payload, dict)
+    assert assistant_payload["metadata_json"]["retrieval_trace"]["strategy"] == "layered_memory_v2"
+
+    with SessionLocal() as db:
+        messages = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        assert [message.role for message in messages] == ["user", "assistant"]
+        assert messages[1].metadata_json["retrieval_trace"]["strategy"] == "layered_memory_v2"
+
+
 def test_realtime_websocket_prefers_project_realtime_model_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     model_sink: list[str] = []
@@ -2927,6 +2992,57 @@ def test_stream_message_emits_and_persists_search_sources(monkeypatch) -> None:
     assert messages.json()[1]["content"] == "整理如下[ref_1]"
 
 
+@pytest.mark.asyncio
+async def test_responses_completion_stream_emits_final_message_items_without_duplication(monkeypatch) -> None:
+    class FakeStreamResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self):
+            lines = [
+                "event: response.output_item.done",
+                'data: {"item":{"type":"message","content":[{"type":"text","text":"来自最终消息项的回复"}]}}',
+                "",
+                "event: response.output_item.done",
+                'data: {"item":{"type":"reasoning","summary":[{"text":"最终思考摘要"}]}}',
+                "",
+                "event: response.completed",
+                (
+                    'data: {"status":"completed","output":['
+                    '{"type":"message","content":[{"type":"text","text":"来自最终消息项的回复"}]},'
+                    '{"type":"reasoning","summary":[{"text":"最终思考摘要"}]}'
+                    ']}'
+                ),
+                "",
+            ]
+            for line in lines:
+                yield line
+
+    class FakeClient:
+        def stream(self, *args, **kwargs):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(dashscope_responses_service, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(dashscope_responses_service, "dashscope_headers", lambda: {})
+
+    chunks = []
+    async for chunk in dashscope_responses_service.responses_completion_stream(
+        [{"role": "user", "content": "你好"}],
+        model="qwen-test",
+    ):
+        chunks.append(chunk)
+
+    assert [chunk.content for chunk in chunks if chunk.content] == ["来自最终消息项的回复"]
+    assert [chunk.reasoning_content for chunk in chunks if chunk.reasoning_content] == ["最终思考摘要"]
+    assert [chunk.finish_reason for chunk in chunks if chunk.finish_reason] == ["completed"]
+
+
 def test_web_search_classifier_handles_external_fact_queries(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -4360,6 +4476,164 @@ def test_memory_stream_endpoint_is_rate_limited(monkeypatch) -> None:
     assert blocked.json()["error"]["code"] == "rate_limited"
 
 
+def test_extract_live_message_metadata_filters_valid_fields() -> None:
+    message = Message(
+        conversation_id="conv-test",
+        role="assistant",
+        content="先回答，再补记忆。",
+        metadata_json={
+            "extracted_facts": [
+                {
+                    "fact": "用户对拓扑学有持续兴趣",
+                    "category": "学习.兴趣",
+                    "importance": 0.93,
+                    "status": "permanent",
+                    "triage_action": "create",
+                    "triage_reason": "长期稳定偏好",
+                    "target_memory_id": "mem-123",
+                },
+                {
+                    "fact": "   ",
+                    "category": "无效",
+                    "importance": 0.1,
+                },
+            ],
+            "memories_extracted": "记录了用户的长期兴趣。",
+            "ignored": {"nested": True},
+        },
+    )
+
+    payload = chat_router._extract_live_message_metadata(message)
+
+    assert payload == {
+        "extracted_facts": [
+            {
+                "fact": "用户对拓扑学有持续兴趣",
+                "category": "学习.兴趣",
+                "importance": 0.93,
+                "status": "permanent",
+                "triage_action": "create",
+                "triage_reason": "长期稳定偏好",
+                "target_memory_id": "mem-123",
+            }
+        ],
+        "memories_extracted": "记录了用户的长期兴趣。",
+    }
+
+
+def test_extract_memories_persists_triage_results_for_frontend(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-triage@example.com", "Memory Triage")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Triage Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Triage Conversation",
+    )
+
+    with SessionLocal() as db:
+        existing_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户在帝国理工大学学习物理本科。",
+            category="教育.身份",
+            type="permanent",
+            metadata_json={},
+        )
+        db.add(existing_memory)
+        db.add(
+            Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content="这条消息稍后会被回写记忆元数据。",
+                metadata_json={},
+            )
+        )
+        db.commit()
+        existing_memory_id = existing_memory.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        return json.dumps(
+            [
+                {
+                    "fact": "用户是帝国理工大学学习物理本科的中国留学生",
+                    "category": "教育.身份",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        return None, [0.11, 0.22, 0.33]
+
+    async def fake_find_related(*args, **kwargs):
+        return [
+            {
+                "memory_id": existing_memory_id,
+                "category": "教育.身份",
+                "content": "用户在帝国理工大学学习物理本科。",
+            }
+        ]
+
+    async def fake_triage(*args, **kwargs):
+        return {
+            "action": "merge",
+            "target_memory_id": existing_memory_id,
+            "merged_content": "用户是帝国理工大学学习物理本科的中国留学生。",
+            "reason": "新事实是对同一身份信息的更完整表述",
+        }
+
+    async def fake_embed_and_store(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "triage_memory", fake_triage)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "你能记下我是帝国理工大学学习物理本科的中国留学生吗？",
+        "已记下，我后续会按这个背景来回答。",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = (
+            db.query(Message)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.role == "assistant",
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        assert assistant_message is not None
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "用户是帝国理工大学学习物理本科的中国留学生"
+        assert extracted_facts[0]["importance"] == 0.95
+        assert extracted_facts[0]["status"] == "merged"
+        assert extracted_facts[0]["triage_action"] == "merge"
+        assert extracted_facts[0]["triage_reason"] == "新事实是对同一身份信息的更完整表述"
+        assert extracted_facts[0]["target_memory_id"] == existing_memory_id
+        assert metadata["memories_extracted"] == "合并已有记忆 1 条"
+
+        updated_memory = db.get(Memory, existing_memory_id)
+        assert updated_memory is not None
+        assert updated_memory.content == "用户是帝国理工大学学习物理本科的中国留学生。"
+
+
 def test_cleanup_pending_upload_session_skips_completed_items_when_task_replays(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "upload-replay@example.com", "Upload Replay")
@@ -4802,6 +5076,176 @@ def test_orchestrator_filters_private_memory_embeddings_from_prompt(monkeypatch)
     assert "私有事实-不要进入别人的prompt" not in captured["system_prompt"]
 
 
+def test_orchestrator_skips_retrieval_for_self_intro_requests(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "context-none@example.com", "Context None")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Context None Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Context None Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    search_calls = {"count": 0}
+    captured: dict[str, str] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        search_calls["count"] += 1
+        return []
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        captured["system_prompt"] = input_items[0]["content"]
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="介绍一下你自己",
+                recent_messages=[],
+            )
+        )
+
+    assert result["content"] == "ok"
+    assert search_calls["count"] == 0
+    assert result["retrieval_trace"]["context_level"] == "none"
+    assert result["retrieval_trace"]["decision_source"] == "rules"
+    assert isinstance(result["retrieval_trace"]["decision_confidence"], float)
+    assert result["retrieval_trace"]["knowledge_chunks"] == []
+    assert result["retrieval_trace"]["linked_file_chunks"] == []
+    assert "相关知识参考" not in captured["system_prompt"]
+    assert "与当前相关记忆直接关联的资料摘录" not in captured["system_prompt"]
+
+
+def test_orchestrator_memory_only_context_excludes_knowledge_and_linked_files(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "context-memory-only@example.com", "Context Memory Only")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Context Memory Only Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Context Memory Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户上次说想要分步骤复盘。",
+            "category": "偏好",
+        },
+        headers=csrf_headers(client),
+    )
+    assert memory.status_code == 200
+
+    linked_loader_calls = {"count": 0}
+    captured: dict[str, str] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return [
+            {
+                "id": "embedding-memory-1",
+                "chunk_text": "用户上次说想要分步骤复盘。",
+                "memory_id": memory.json()["id"],
+                "data_item_id": None,
+                "score": 0.96,
+            },
+            {
+                "id": "embedding-knowledge-1",
+                "chunk_text": "这段知识库内容不应该出现在 memory_only 中。",
+                "memory_id": None,
+                "data_item_id": "data-item-knowledge-1",
+                "score": 0.91,
+            },
+        ]
+
+    async def fake_load_linked_file_chunks_for_memories(*args, **kwargs) -> list[dict]:
+        linked_loader_calls["count"] += 1
+        return [
+            {
+                "id": "chunk-1",
+                "chunk_text": "这段关联文件也不应该出现在 memory_only 中。",
+                "data_item_id": "data-item-linked-1",
+                "filename": "linked.pdf",
+                "score": 0.88,
+            }
+        ]
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        captured["system_prompt"] = input_items[0]["content"]
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "load_linked_file_chunks_for_memories",
+        fake_load_linked_file_chunks_for_memories,
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="你记得我上次说过什么吗？",
+                recent_messages=[],
+            )
+        )
+
+    assert result["content"] == "ok"
+    assert result["retrieval_trace"]["context_level"] == "memory_only"
+    assert result["retrieval_trace"]["decision_source"] == "rules"
+    assert result["retrieval_trace"]["knowledge_chunks"] == []
+    assert result["retrieval_trace"]["linked_file_chunks"] == []
+    assert linked_loader_calls["count"] == 0
+    assert "用户上次说想要分步骤复盘" in captured["system_prompt"]
+    assert "这段知识库内容不应该出现在 memory_only 中" not in captured["system_prompt"]
+    assert "这段关联文件也不应该出现在 memory_only 中" not in captured["system_prompt"]
+
+
 def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> None:
     client = TestClient(main_module.app)
     owner_info = register_user(client, "linked-rag@example.com", "Linked Rag")
@@ -4887,6 +5331,8 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
         )
 
     assert result["content"] == "ok"
+    assert result["retrieval_trace"]["context_level"] == "full_rag"
+    assert result["retrieval_trace"]["decision_source"] == "rules"
     assert "与当前相关记忆直接关联的资料摘录" in captured["system_prompt"]
     assert "心理学手册.pdf" in captured["system_prompt"]
     assert "认知行为疗法适用于焦虑干预" in captured["system_prompt"]
@@ -4994,9 +5440,61 @@ def test_orchestrator_layered_memory_context_prefers_static_and_relevant_memorie
     assert "上周随手看了一部电影" not in str(captured["system_prompt"])
 
 
+def test_context_route_classifier_can_keep_light_context_when_thinking_is_enabled(monkeypatch) -> None:
+    async def fake_chat_completion_detailed(
+        messages,
+        *,
+        model=None,
+        temperature=0.0,
+        max_tokens=180,
+        enable_thinking=False,
+        enable_search=False,
+    ):
+        del messages, model, temperature, max_tokens, enable_thinking, enable_search
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "route": "profile_only",
+                    "confidence": 0.92,
+                    "reason": "question only needs the stable profile layer",
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    monkeypatch.setattr(
+        orchestrator_service,
+        "chat_completion_detailed",
+        fake_chat_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        decision = asyncio.run(
+            orchestrator_service.resolve_context_route(
+                db,
+                project_id="project-test",
+                user_message="请认真分析一下我的学习方式是否适合结构化训练",
+                recent_messages=[],
+                enable_thinking=True,
+                llm_model_id="qwen-plus",
+            )
+        )
+
+    assert decision.route == "profile_only"
+    assert decision.source == "classifier"
+    assert decision.confidence == pytest.approx(0.92)
+
+
 def test_chat_message_persists_retrieval_trace_and_touches_memory_usage(monkeypatch) -> None:
     client = TestClient(main_module.app)
-    owner_info = register_user(client, "retrieval-trace@example.com", "Trace User")
+    monkeypatch.setattr(auth_router.settings, "verification_rate_limit_max", 999)
+    monkeypatch.setattr(auth_router.settings, "auth_rate_limit_ip_max", 999)
+    monkeypatch.setattr(auth_router.settings, "auth_rate_limit_email_ip_max", 999)
+    owner_info = register_user(
+        client,
+        f"retrieval-trace-{os.urandom(4).hex()}@example.com",
+        "Trace User",
+    )
     workspace_id = owner_info["workspace"]["id"]
     project = create_project(client, "Trace Project")
     monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")

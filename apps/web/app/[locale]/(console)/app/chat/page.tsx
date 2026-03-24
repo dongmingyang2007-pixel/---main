@@ -560,6 +560,7 @@ function ChatPageContent() {
             {/* Project selector + New button */}
             <div className="chat-sidebar-header-row">
               <select
+                className="inline-topbar-project-select"
                 value={selectedProjectId}
                 onChange={handleProjectChange}
                 disabled={loadingProjects || projects.length === 0}
@@ -575,7 +576,7 @@ function ChatPageContent() {
               </select>
               <button
                 type="button"
-                className="chat-sidebar-new-btn"
+                className="chat-sidebar-new-btn chat-sidebar-new"
                 onClick={handleConversationCreate}
                 disabled={!selectedProjectId || isCreatingConversation || loadingProjects}
                 title={t("newConversation")}

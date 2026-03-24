@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ from app.services.embedding import search_similar
 
 SemanticSearchFn = Callable[..., Awaitable[list[dict[str, Any]]]]
 LinkedFileLoaderFn = Callable[..., Awaitable[list[dict[str, Any]]]]
+ContextLevel = Literal["none", "profile_only", "memory_only", "full_rag"]
 
 STATIC_MEMORY_LIMIT = 6
 RELEVANT_MEMORY_LIMIT = 10
@@ -381,6 +382,7 @@ async def build_memory_context(
     user_message: str,
     recent_messages: list[dict[str, str]],
     personality: str = "",
+    context_level: ContextLevel = "full_rag",
     include_recent_history: bool = False,
     semantic_search_fn: SemanticSearchFn = search_similar,
     linked_file_loader_fn: LinkedFileLoaderFn = load_linked_file_chunks_for_memories,
@@ -392,136 +394,143 @@ async def build_memory_context(
         conversation_id=conversation_id,
     )
 
-    permanent_memories, temporary_memories = _load_visible_memories(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        conversation_id=conversation_id,
-        conversation_created_by=conversation.created_by,
-    )
-    visible_memories_by_id = {
-        memory.id: memory for memory in [*permanent_memories, *temporary_memories]
-    }
-
-    query_tokens = _normalize_query_tokens(user_message)
     semantic_results: list[dict[str, Any]] = []
     knowledge_chunks: list[dict[str, Any]] = []
-    semantic_memory_candidates: list[MemoryCandidate] = []
+    linked_file_chunks: list[dict[str, Any]] = []
+    static_selected: list[MemoryCandidate] = []
+    relevant_selected: list[MemoryCandidate] = []
+    graph_selected: list[MemoryCandidate] = []
+    temporary_selected: list[MemoryCandidate] = []
 
-    if user_message.strip():
-        try:
-            semantic_results = await semantic_search_fn(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                query=user_message,
-                limit=SEMANTIC_SEARCH_LIMIT,
-            )
-        except Exception:
-            semantic_results = []
-
-    for result in semantic_results:
-        memory_id = result.get("memory_id")
-        if not memory_id:
-            continue
-        memory = visible_memories_by_id.get(memory_id)
-        if not memory:
-            continue
-        semantic_score = float(result.get("score") or 0.0)
-        semantic_memory_candidates.append(
-            MemoryCandidate(
-                memory=memory,
-                source="semantic",
-                semantic_score=semantic_score,
-                score=_candidate_score(memory, source="semantic", semantic_score=semantic_score),
-            )
-        )
-
-    if semantic_results:
-        knowledge_chunks = filter_knowledge_chunks(
+    if context_level != "none":
+        permanent_memories, temporary_memories = _load_visible_memories(
             db,
             workspace_id=workspace_id,
             project_id=project_id,
-            results=[result for result in semantic_results if result.get("memory_id") is None],
-        )[:KNOWLEDGE_CHUNK_LIMIT]
-
-    lexical_candidates = [
-        MemoryCandidate(
-            memory=memory,
-            source="lexical",
-            score=_candidate_score(memory, source="lexical", semantic_score=0.55),
-            semantic_score=0.55,
+            conversation_id=conversation_id,
+            conversation_created_by=conversation.created_by,
         )
-        for memory in [*permanent_memories, *temporary_memories]
-        if _memory_matches_query(memory, query_tokens)
-    ]
+        visible_memories_by_id = {
+            memory.id: memory for memory in [*permanent_memories, *temporary_memories]
+        }
+        query_tokens = _normalize_query_tokens(user_message)
+        static_candidates = [
+            MemoryCandidate(
+                memory=memory,
+                source="static",
+                score=_candidate_score(memory, source="static"),
+            )
+            for memory in permanent_memories
+            if is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS
+        ]
+        static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
 
-    static_candidates = [
-        MemoryCandidate(
-            memory=memory,
-            source="static",
-            score=_candidate_score(memory, source="static"),
-        )
-        for memory in permanent_memories
-        if is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS
-    ]
+        if context_level in {"memory_only", "full_rag"}:
+            semantic_memory_candidates: list[MemoryCandidate] = []
+            if user_message.strip():
+                try:
+                    semantic_results = await semantic_search_fn(
+                        db,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        query=user_message,
+                        limit=SEMANTIC_SEARCH_LIMIT,
+                    )
+                except Exception:
+                    semantic_results = []
 
-    static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
+            for result in semantic_results:
+                memory_id = result.get("memory_id")
+                if not memory_id:
+                    continue
+                memory = visible_memories_by_id.get(memory_id)
+                if not memory:
+                    continue
+                semantic_score = float(result.get("score") or 0.0)
+                semantic_memory_candidates.append(
+                    MemoryCandidate(
+                        memory=memory,
+                        source="semantic",
+                        semantic_score=semantic_score,
+                        score=_candidate_score(memory, source="semantic", semantic_score=semantic_score),
+                    )
+                )
 
-    permanent_relevant_candidates = [
-        candidate
-        for candidate in [*semantic_memory_candidates, *lexical_candidates]
-        if candidate.memory.type == "permanent"
-    ]
-    relevant_selected = _select_best_candidates(permanent_relevant_candidates, limit=RELEVANT_MEMORY_LIMIT)
+            lexical_candidates = [
+                MemoryCandidate(
+                    memory=memory,
+                    source="lexical",
+                    score=_candidate_score(memory, source="lexical", semantic_score=0.55),
+                    semantic_score=0.55,
+                )
+                for memory in [*permanent_memories, *temporary_memories]
+                if _memory_matches_query(memory, query_tokens)
+            ]
 
-    graph_selected = _build_graph_neighbors(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-        seed_candidates=relevant_selected,
-        visible_memories_by_id=visible_memories_by_id,
-    )
+            permanent_relevant_candidates = [
+                candidate
+                for candidate in [*semantic_memory_candidates, *lexical_candidates]
+                if candidate.memory.type == "permanent"
+            ]
+            relevant_selected = _select_best_candidates(
+                permanent_relevant_candidates,
+                limit=RELEVANT_MEMORY_LIMIT,
+            )
 
-    temporary_relevant_candidates = [
-        candidate
-        for candidate in [*semantic_memory_candidates, *lexical_candidates]
-        if candidate.memory.type == "temporary"
-    ]
-    temporary_relevant_candidates.extend(
-        MemoryCandidate(
-            memory=memory,
-            source="recent_temporary",
-            score=_candidate_score(memory, source="recent_temporary"),
-        )
-        for memory in sorted(
-            temporary_memories,
-            key=lambda item: _coerce_utc(item.updated_at) or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=True,
-        )[:TEMPORARY_MEMORY_LIMIT]
-    )
-    temporary_selected = _select_best_candidates(
-        temporary_relevant_candidates,
-        limit=TEMPORARY_MEMORY_LIMIT,
-    )
-
-    selected_memory_ids = {
-        candidate.id
-        for candidate in [*static_selected, *relevant_selected, *graph_selected, *temporary_selected]
-    }
-    linked_file_chunks: list[dict[str, Any]] = []
-    if user_message.strip() and selected_memory_ids:
-        try:
-            linked_file_chunks = await linked_file_loader_fn(
+            graph_selected = _build_graph_neighbors(
                 db,
                 workspace_id=workspace_id,
                 project_id=project_id,
-                memory_ids=list(selected_memory_ids),
-                query=user_message,
-                limit=LINKED_FILE_CHUNK_LIMIT,
+                seed_candidates=relevant_selected,
+                visible_memories_by_id=visible_memories_by_id,
             )
-        except Exception:
-            linked_file_chunks = []
+
+            temporary_relevant_candidates = [
+                candidate
+                for candidate in [*semantic_memory_candidates, *lexical_candidates]
+                if candidate.memory.type == "temporary"
+            ]
+            temporary_relevant_candidates.extend(
+                MemoryCandidate(
+                    memory=memory,
+                    source="recent_temporary",
+                    score=_candidate_score(memory, source="recent_temporary"),
+                )
+                for memory in sorted(
+                    temporary_memories,
+                    key=lambda item: _coerce_utc(item.updated_at) or datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True,
+                )[:TEMPORARY_MEMORY_LIMIT]
+            )
+            temporary_selected = _select_best_candidates(
+                temporary_relevant_candidates,
+                limit=TEMPORARY_MEMORY_LIMIT,
+            )
+
+            if context_level == "full_rag" and semantic_results:
+                knowledge_chunks = filter_knowledge_chunks(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    results=[result for result in semantic_results if result.get("memory_id") is None],
+                )[:KNOWLEDGE_CHUNK_LIMIT]
+
+            selected_memory_ids = {
+                candidate.id
+                for candidate in [*static_selected, *relevant_selected, *graph_selected, *temporary_selected]
+            }
+            if context_level == "full_rag" and user_message.strip() and selected_memory_ids:
+                try:
+                    linked_file_chunks = await linked_file_loader_fn(
+                        db,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        memory_ids=list(selected_memory_ids),
+                        query=user_message,
+                        limit=LINKED_FILE_CHUNK_LIMIT,
+                    )
+                except Exception:
+                    linked_file_chunks = []
 
     prompt = _build_system_prompt(
         personality=personality,
@@ -535,6 +544,7 @@ async def build_memory_context(
 
     retrieval_trace = {
         "strategy": "layered_memory_v2",
+        "context_level": context_level,
         "memory_counts": {
             "static": len(static_selected),
             "relevant": len(relevant_selected),

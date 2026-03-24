@@ -60,52 +60,68 @@ export async function* apiStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentEvent = "message";
+  let currentDataLines: string[] = [];
+
+  const flushCurrentEvent = (): StreamEvent | null => {
+    if (!currentDataLines.length) {
+      return null;
+    }
+    const rawData = currentDataLines.join("\n");
+    const nextEvent = currentEvent;
+    currentEvent = "message";
+    currentDataLines = [];
+    try {
+      return { event: nextEvent, data: JSON.parse(rawData) };
+    } catch {
+      return { event: nextEvent, data: { raw: rawData } };
+    }
+  };
+
+  const processLine = (rawLine: string): StreamEvent | null => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line.startsWith("event:")) {
+      currentEvent = line.slice("event:".length).trim();
+      return null;
+    }
+    if (line.startsWith("data:")) {
+      currentDataLines.push(line.slice("data:".length).trimStart());
+      return null;
+    }
+    if (line === "") {
+      return flushCurrentEvent();
+    }
+    return null;
+  };
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    let currentEvent = "message";
-    let currentData = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        currentData = line.slice(6);
-      } else if (line === "") {
-        if (currentData) {
-          try {
-            yield { event: currentEvent, data: JSON.parse(currentData) };
-          } catch {
-            yield { event: currentEvent, data: { raw: currentData } };
-          }
-          currentEvent = "message";
-          currentData = "";
-        }
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const nextEventChunk = processLine(buffer.slice(0, newlineIndex));
+      if (nextEventChunk) {
+        yield nextEventChunk;
       }
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf("\n");
+    }
+
+    if (done) {
+      break;
     }
   }
 
-  // Flush any remaining bytes in the buffer after the stream ends
-  if (buffer.trim()) {
-    const lines = buffer.split("\n");
-    let currentEvent = "message";
-    let currentData = "";
-    for (const line of lines) {
-      if (line.startsWith("event: ")) currentEvent = line.slice(7).trim();
-      else if (line.startsWith("data: ")) currentData = line.slice(6);
+  if (buffer.length) {
+    const finalBufferedEvent = processLine(buffer);
+    if (finalBufferedEvent) {
+      yield finalBufferedEvent;
     }
-    if (currentData) {
-      try {
-        yield { event: currentEvent, data: JSON.parse(currentData) };
-      } catch {
-        yield { event: currentEvent, data: { raw: currentData } };
-      }
-    }
+  }
+
+  const trailingEvent = flushCurrentEvent();
+  if (trailingEvent) {
+    yield trailingEvent;
   }
 }

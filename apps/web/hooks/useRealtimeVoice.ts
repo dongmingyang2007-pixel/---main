@@ -9,6 +9,21 @@ import {
 
 export type { RealtimeState, TranscriptEntry };
 
+export interface PersistedRealtimeMessage {
+  id: string;
+  conversation_id?: string;
+  role: "user" | "assistant";
+  content: string;
+  reasoning_content?: string | null;
+  metadata_json?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface PersistedRealtimeTurnPayload {
+  userMessage?: PersistedRealtimeMessage;
+  assistantMessage?: PersistedRealtimeMessage;
+}
+
 interface UseRealtimeVoiceOptions {
   conversationId: string;
   projectId: string;
@@ -23,6 +38,7 @@ interface UseRealtimeVoiceOptions {
     final: boolean;
     action?: "upsert" | "discard";
   }) => void;
+  onTurnPersisted?: (payload: PersistedRealtimeTurnPayload) => void;
 }
 
 interface UseRealtimeVoiceReturn {
@@ -43,6 +59,7 @@ export function useRealtimeVoice({
   onError,
   onTurnComplete,
   onTranscriptUpdate,
+  onTurnPersisted,
 }: UseRealtimeVoiceOptions): UseRealtimeVoiceReturn {
   const base: RealtimeVoiceBaseReturn = useRealtimeVoiceBase({
     conversationId,
@@ -58,6 +75,21 @@ export function useRealtimeVoice({
     onError,
     onTurnComplete,
     onTranscriptUpdate,
+    onCustomMessage: (data) => {
+      if (data.type !== "turn.persisted") {
+        return;
+      }
+      onTurnPersisted?.({
+        userMessage:
+          data.user_message && typeof data.user_message === "object"
+            ? (data.user_message as PersistedRealtimeMessage)
+            : undefined,
+        assistantMessage:
+          data.assistant_message && typeof data.assistant_message === "object"
+            ? (data.assistant_message as PersistedRealtimeMessage)
+            : undefined,
+      });
+    },
   });
 
   return {

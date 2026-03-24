@@ -4,11 +4,11 @@ import { installWorkbenchApiMock } from "./helpers/mockWorkbenchApi";
 test.use({ locale: "zh-CN" });
 
 async function switchToOmniRealtime(page: Page) {
-  await page.getByRole("button", { name: /Omni 实时/ }).click();
+  await page.locator(".chat-workspace-controls .chat-mode-dropdown").first().selectOption("omni_realtime");
 }
 
 async function switchToSyntheticRealtime(page: Page) {
-  await page.getByRole("button", { name: /合成实时/ }).click();
+  await page.locator(".chat-workspace-controls .chat-mode-dropdown").first().selectOption("synthetic_realtime");
 }
 
 async function forceSelectRealtimeProject(page: Page, projectId: string) {

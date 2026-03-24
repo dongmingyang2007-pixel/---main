@@ -292,7 +292,23 @@ class ComposedRealtimeSession:
             self.touch_activity()
 
             if not assistant_text or epoch != self._generation_epoch:
-                return {"user_text": user_text, "assistant_text": assistant_text}
+                return {
+                    "user_text": user_text,
+                    "assistant_text": assistant_text,
+                    "reasoning_content": result.get("reasoning_content"),
+                    "assistant_metadata_json": {
+                        **(
+                            {"sources": sources}
+                            if isinstance((sources := result.get("sources")), list) and sources
+                            else {}
+                        ),
+                        **(
+                            {"retrieval_trace": trace}
+                            if isinstance((trace := result.get("retrieval_trace")), dict) and trace
+                            else {}
+                        ),
+                    },
+                }
 
             audio_degraded = False
             audio_meta_sent = False
@@ -337,7 +353,23 @@ class ComposedRealtimeSession:
                         "message": "语音输出暂时不可用，已切换为文字回复",
                     })
                 self.touch_activity()
-                return {"user_text": user_text, "assistant_text": assistant_text}
+                return {
+                    "user_text": user_text,
+                    "assistant_text": assistant_text,
+                    "reasoning_content": result.get("reasoning_content"),
+                    "assistant_metadata_json": {
+                        **(
+                            {"sources": sources}
+                            if isinstance((sources := result.get("sources")), list) and sources
+                            else {}
+                        ),
+                        **(
+                            {"retrieval_trace": trace}
+                            if isinstance((trace := result.get("retrieval_trace")), dict) and trace
+                            else {}
+                        ),
+                    },
+                }
             return None
         finally:
             if self._turn_task is asyncio.current_task():

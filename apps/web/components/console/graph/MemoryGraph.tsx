@@ -13,6 +13,7 @@ import {
   type MemoryNode,
   type MemoryEdge,
   getMemoryKind,
+  getMemoryRetrievalCount,
   isAssistantRootMemoryNode,
   isFileMemoryNode,
   isPinnedMemoryNode,
@@ -40,6 +41,8 @@ interface SimNode extends MemoryNode {
   y: number;
   fx: number | null;
   fy: number | null;
+  vx?: number;
+  vy?: number;
 }
 
 interface SimLink extends d3.SimulationLinkDatum<SimNode> {
@@ -73,6 +76,11 @@ const MEMORY_NODE_RADIUS = 20;
 const FILE_NODE_W = 16;
 const FILE_NODE_H = 20;
 const ASSISTANT_CENTER_ID = "__assistant_center__";
+const FILE_ATTACH_DISTANCE = 42;
+const FILE_ATTACH_SPREAD = 24;
+const FILE_LINK_DISTANCE = 58;
+const PARENT_LINK_DISTANCE = 112;
+const CENTER_LINK_DISTANCE = 164;
 const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
@@ -121,7 +129,14 @@ function getLabel(node: MemoryNode): string {
     : node.content;
 }
 
-function getMemoryNodeColor(node: MemoryNode): string {
+function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string {
+  const retrievalCount = getMemoryRetrievalCount(node);
+  if (retrievalCount > 0 && maxRetrievalCount > 0) {
+    const normalized = Math.log(retrievalCount + 1) / Math.log(maxRetrievalCount + 1);
+    return d3.interpolateRgbBasis(["#d9c2af", "#d99167", "#c95a3f", "#a32020"])(
+      0.18 + normalized * 0.82,
+    );
+  }
   if (isSummaryMemoryNode(node)) {
     return COLORS.summary;
   }
@@ -190,6 +205,131 @@ function inferDroppedCategory(
   });
 
   return [...scores.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || null;
+}
+
+function getStableNodeSortKey(node: Pick<MemoryNode, "id" | "created_at" | "category" | "content">): string {
+  return `${node.created_at}|${node.category}|${node.content}|${node.id}`;
+}
+
+function getFallbackAngle(seed: string): number {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) % 4096;
+  }
+  return (hash / 4096) * Math.PI * 2 - Math.PI;
+}
+
+function getBranchDirection(
+  parentNode: Pick<SimNode, "id" | "x" | "y" | "parent_memory_id">,
+  nodeById: Map<string, SimNode>,
+  centerNodeId: string,
+  seed: string,
+): { x: number; y: number } {
+  const anchorNode = parentNode.parent_memory_id
+    ? nodeById.get(parentNode.parent_memory_id) ?? nodeById.get(centerNodeId)
+    : nodeById.get(centerNodeId);
+  const dx = parentNode.x - (anchorNode?.x ?? 0);
+  const dy = parentNode.y - (anchorNode?.y ?? 0);
+  const length = Math.hypot(dx, dy);
+
+  if (length > 1) {
+    return {
+      x: dx / length,
+      y: dy / length,
+    };
+  }
+
+  const angle = getFallbackAngle(seed);
+  return {
+    x: Math.cos(angle),
+    y: Math.sin(angle),
+  };
+}
+
+function getAttachedFileTarget(
+  fileNode: Pick<MemoryNode, "id" | "parent_memory_id">,
+  siblingIndex: number,
+  siblingCount: number,
+  nodeById: Map<string, SimNode>,
+  centerNodeId: string,
+): { x: number; y: number } | null {
+  const parentId = fileNode.parent_memory_id;
+  if (!parentId) {
+    return null;
+  }
+
+  const parentNode = nodeById.get(parentId);
+  if (!parentNode) {
+    return null;
+  }
+
+  const branchDirection = getBranchDirection(parentNode, nodeById, centerNodeId, fileNode.id);
+  const tangent = { x: -branchDirection.y, y: branchDirection.x };
+  const tangentOffset =
+    siblingCount <= 1 ? 0 : (siblingIndex - (siblingCount - 1) / 2) * FILE_ATTACH_SPREAD;
+  const radialDistance = nodeRadius(parentNode, parentNode.id === centerNodeId) + FILE_ATTACH_DISTANCE;
+
+  return {
+    x: parentNode.x + branchDirection.x * radialDistance + tangent.x * tangentOffset,
+    y: parentNode.y + branchDirection.y * radialDistance + tangent.y * tangentOffset,
+  };
+}
+
+function createFileAttachmentForce(centerNodeId: string): d3.Force<SimNode, SimLink> {
+  let nodeById = new Map<string, SimNode>();
+  let fileGroups: Array<{ parentId: string; files: SimNode[] }> = [];
+
+  const rebuildCache = (nodes: SimNode[]) => {
+    nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const groupedFiles = new Map<string, SimNode[]>();
+
+    [...nodes]
+      .filter((node) => isFileMemoryNode(node) && Boolean(node.parent_memory_id))
+      .sort((left, right) => getStableNodeSortKey(left).localeCompare(getStableNodeSortKey(right)))
+      .forEach((node) => {
+        const parentId = node.parent_memory_id;
+        if (!parentId) {
+          return;
+        }
+        const siblings = groupedFiles.get(parentId) ?? [];
+        siblings.push(node);
+        groupedFiles.set(parentId, siblings);
+      });
+
+    fileGroups = [...groupedFiles.entries()].map(([parentId, files]) => ({ parentId, files }));
+  };
+
+  const force = ((alpha: number) => {
+    fileGroups.forEach(({ files }) => {
+      files.forEach((fileNode, index) => {
+        const target = getAttachedFileTarget(
+          fileNode,
+          index,
+          files.length,
+          nodeById,
+          centerNodeId,
+        );
+        if (!target) {
+          return;
+        }
+
+        fileNode.x += (target.x - fileNode.x) * 0.42 * alpha;
+        fileNode.y += (target.y - fileNode.y) * 0.42 * alpha;
+        fileNode.vx = (fileNode.vx ?? 0) * 0.52 + (target.x - fileNode.x) * 0.08;
+        fileNode.vy = (fileNode.vy ?? 0) * 0.52 + (target.y - fileNode.y) * 0.08;
+      });
+    });
+  }) as d3.Force<SimNode, SimLink>;
+
+  force.initialize = (nodes) => {
+    rebuildCache(nodes as SimNode[]);
+  };
+
+  return force;
+}
+
+function buildEdgeKey(sourceId: string, targetId: string): string {
+  return sourceId < targetId ? `${sourceId}::${targetId}` : `${targetId}::${sourceId}`;
 }
 
 /* ── Component ─────────────────────────────────── */
@@ -376,16 +516,67 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           fy: 0,
         };
 
-    const memoryNodes: SimNode[] = nodes.map((node) => {
-      const isRoot = isAssistantRootMemoryNode(node);
-      return {
-        ...node,
-        x: isRoot ? 0 : (node.position_x ?? (Math.random() - 0.5) * 400),
-        y: isRoot ? 0 : (node.position_y ?? (Math.random() - 0.5) * 400),
-        fx: isRoot ? 0 : null,
-        fy: isRoot ? 0 : null,
-      };
+    const nonFileNodes: SimNode[] = nodes
+      .filter((node) => !isFileMemoryNode(node))
+      .map((node) => {
+        const isRoot = isAssistantRootMemoryNode(node);
+        return {
+          ...node,
+          x: isRoot ? 0 : (node.position_x ?? (Math.random() - 0.5) * 400),
+          y: isRoot ? 0 : (node.position_y ?? (Math.random() - 0.5) * 400),
+          fx: isRoot ? 0 : null,
+          fy: isRoot ? 0 : null,
+        };
+      });
+
+    const seededNodeById = new Map<string, SimNode>(
+      (assistantNode ? [assistantNode, ...nonFileNodes] : nonFileNodes).map((node) => [node.id, node]),
+    );
+
+    const fileSiblingOrder = new Map<string, { index: number; count: number }>();
+    const fileNodesByParent = new Map<string, MemoryNode[]>();
+    nodes
+      .filter((node) => isFileMemoryNode(node) && Boolean(node.parent_memory_id))
+      .sort((left, right) => getStableNodeSortKey(left).localeCompare(getStableNodeSortKey(right)))
+      .forEach((node) => {
+        const parentId = node.parent_memory_id;
+        if (!parentId) {
+          return;
+        }
+        const siblings = fileNodesByParent.get(parentId) ?? [];
+        siblings.push(node);
+        fileNodesByParent.set(parentId, siblings);
+      });
+
+    fileNodesByParent.forEach((siblings) => {
+      siblings.forEach((node, index) => {
+        fileSiblingOrder.set(node.id, { index, count: siblings.length });
+      });
     });
+
+    const fileNodes: SimNode[] = nodes
+      .filter((node) => isFileMemoryNode(node))
+      .map((node) => {
+        const siblingPlacement = fileSiblingOrder.get(node.id);
+        const attachedTarget = siblingPlacement
+          ? getAttachedFileTarget(
+              node,
+              siblingPlacement.index,
+              siblingPlacement.count,
+              seededNodeById,
+              cId,
+            )
+          : null;
+        return {
+          ...node,
+          x: node.position_x ?? attachedTarget?.x ?? (Math.random() - 0.5) * 400,
+          y: node.position_y ?? attachedTarget?.y ?? (Math.random() - 0.5) * 400,
+          fx: null,
+          fy: null,
+        };
+      });
+
+    const memoryNodes: SimNode[] = [...nonFileNodes, ...fileNodes];
 
     const sn: SimNode[] = assistantNode ? [assistantNode, ...memoryNodes] : memoryNodes;
 
@@ -402,11 +593,57 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         strength: e.strength,
       }));
 
+    const peerEdgeKeys = new Set(
+      sl
+        .filter((link) => link.edge_type !== "file" && link.edge_type !== "center")
+        .map((link) => buildEdgeKey(String(link.source), String(link.target))),
+    );
+    const peerConnectedNodeIds = new Set<string>();
+
     nodes
       .filter(
         (node) =>
           !isFileMemoryNode(node) &&
           !isAssistantRootMemoryNode(node) &&
+          Boolean(node.parent_memory_id) &&
+          node.parent_memory_id !== cId &&
+          nodeIdSet.has(node.parent_memory_id || ""),
+      )
+      .forEach((node) => {
+        const parentId = node.parent_memory_id;
+        if (!parentId) {
+          return;
+        }
+        const edgeKey = buildEdgeKey(parentId, node.id);
+        peerConnectedNodeIds.add(parentId);
+        peerConnectedNodeIds.add(node.id);
+        if (peerEdgeKeys.has(edgeKey)) {
+          return;
+        }
+        sl.unshift({
+          source: parentId,
+          target: node.id,
+          id: `parent:${parentId}:${node.id}`,
+          edge_type: "parent",
+          strength: 0.46,
+        });
+        peerEdgeKeys.add(edgeKey);
+      });
+
+    sl.forEach((link) => {
+      if (link.edge_type === "file" || link.edge_type === "center") {
+        return;
+      }
+      peerConnectedNodeIds.add(String(link.source));
+      peerConnectedNodeIds.add(String(link.target));
+    });
+
+    nodes
+      .filter(
+        (node) =>
+          !isFileMemoryNode(node) &&
+          !isAssistantRootMemoryNode(node) &&
+          !peerConnectedNodeIds.has(node.id) &&
           (node.parent_memory_id === cId || (rootNode === null && !node.parent_memory_id)),
       )
       .forEach((node) => {
@@ -481,6 +718,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   }, [centerNodeId, searchQuery, simNodes]);
 
   const searchMatchIds = semanticMatchIds ?? localSearchMatchIds;
+  const maxRetrievalCount = useMemo(
+    () =>
+      Math.max(
+        0,
+        ...simNodes
+          .filter((node) => isOrdinaryMemoryNode(node))
+          .map((node) => getMemoryRetrievalCount(node)),
+      ),
+    [simNodes],
+  );
 
   /* ── Canvas draw ────────────────────────────── */
 
@@ -517,14 +764,22 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
       const isFileEdge = link.edge_type === "file";
       const isCenterEdge = link.edge_type === "center";
+      const isParentEdge = link.edge_type === "parent";
       const isSummaryEdge = link.edge_type === "summary";
       const isPermanent =
         !isFileEdge &&
         !isCenterEdge &&
+        !isParentEdge &&
         !isSummaryEdge &&
         ((src.type === "permanent" && tgt.type === "permanent") ||
           link.edge_type === "manual");
-      const lineWidth = isFileEdge ? 1 : 0.5 + link.strength * 1.5;
+      const lineWidth = isFileEdge
+        ? 1
+        : isCenterEdge
+          ? 0.65
+          : isParentEdge
+            ? 1.05
+            : 0.7 + link.strength * 1.8;
 
       ctx.beginPath();
       ctx.moveTo(src.x, src.y);
@@ -533,18 +788,21 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (isFileEdge) {
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
+      } else if (isParentEdge) {
+        ctx.setLineDash([]);
+        ctx.strokeStyle = "rgba(200, 115, 74, 0.26)";
       } else if (isSummaryEdge) {
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(182, 138, 47, 0.45)";
       } else if (isCenterEdge) {
         ctx.setLineDash([3, 6]);
-        ctx.strokeStyle = "rgba(138, 122, 106, 0.25)";
+        ctx.strokeStyle = "rgba(138, 122, 106, 0.14)";
       } else if (isPermanent) {
         ctx.setLineDash([]);
-        ctx.strokeStyle = `rgba(200, 115, 74, 0.4)`;
+        ctx.strokeStyle = "rgba(200, 115, 74, 0.46)";
       } else {
         ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = `rgba(74, 138, 200, 0.4)`;
+        ctx.strokeStyle = "rgba(74, 138, 200, 0.42)";
       }
       ctx.lineWidth = lineWidth;
 
@@ -586,7 +844,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.save();
         ctx.shadowColor = isCenter
           ? COLORS.centerGradStart
-          : getMemoryNodeColor(node);
+          : getMemoryNodeColor(node, maxRetrievalCount);
         ctx.shadowBlur = 18;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
@@ -647,7 +905,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       } else {
         /* memory node circle */
         const radius = nodeRadius(node, false);
-        const color = getMemoryNodeColor(node);
+        const color = getMemoryNodeColor(node, maxRetrievalCount);
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -701,7 +959,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     });
 
     ctx.restore();
-  }, [centerNodeId, centerNodeLabel, centerNodeShortLabel, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
+  }, [centerNodeId, centerNodeLabel, centerNodeShortLabel, maxRetrievalCount, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
 
   /* ── Simulation setup ───────────────────────── */
 
@@ -717,11 +975,45 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         d3
           .forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
-          .distance(100)
-          .strength((l) => l.strength * 0.3)
+          .distance((link) => {
+            if (link.edge_type === "file") {
+              return FILE_LINK_DISTANCE;
+            }
+            if (link.edge_type === "parent") {
+              return PARENT_LINK_DISTANCE;
+            }
+            if (link.edge_type === "center") {
+              return CENTER_LINK_DISTANCE;
+            }
+            return 100;
+          })
+          .strength((link) => {
+            if (link.edge_type === "file") {
+              return 0.9;
+            }
+            if (link.edge_type === "parent") {
+              return 0.48;
+            }
+            if (link.edge_type === "center") {
+              return Math.max(0.05, link.strength * 0.12);
+            }
+            return Math.max(0.18, link.strength * 0.3);
+          })
       )
-      .force("charge", d3.forceManyBody().strength(-200))
+      .force(
+        "charge",
+        d3.forceManyBody<SimNode>().strength((node) => {
+          if (node.id === centerNodeId) {
+            return -260;
+          }
+          if (isFileMemoryNode(node)) {
+            return -12;
+          }
+          return -200;
+        }),
+      )
       .force("collide", d3.forceCollide<SimNode>((d) => nodeRadius(d, d.id === centerNodeId) + 8))
+      .force("fileAttachment", createFileAttachmentForce(centerNodeId))
       .alphaDecay(0.02)
       .on("tick", () => {
         cancelAnimationFrame(animFrameRef.current);

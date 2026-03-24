@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from datetime import datetime, timezone
 import json
@@ -138,6 +139,47 @@ def _ensure_model_api_configured() -> None:
     )
 
 
+def _extract_live_message_metadata(message: Message) -> dict[str, object] | None:
+    metadata = message.metadata_json if isinstance(message.metadata_json, dict) else {}
+    payload: dict[str, object] = {}
+
+    raw_facts = metadata.get("extracted_facts")
+    if isinstance(raw_facts, list):
+        facts = []
+        for item in raw_facts:
+            if not isinstance(item, dict):
+                continue
+            fact_text = str(item.get("fact", "")).strip()
+            if not fact_text:
+                continue
+            fact_payload = {
+                "fact": fact_text,
+                "category": str(item.get("category", "")).strip(),
+                "importance": item.get("importance", 0),
+            }
+            status_value = str(item.get("status", "")).strip()
+            if status_value:
+                fact_payload["status"] = status_value
+            triage_action_value = str(item.get("triage_action", "")).strip()
+            if triage_action_value:
+                fact_payload["triage_action"] = triage_action_value
+            triage_reason_value = str(item.get("triage_reason", "")).strip()
+            if triage_reason_value:
+                fact_payload["triage_reason"] = triage_reason_value
+            target_memory_id_value = str(item.get("target_memory_id", "")).strip()
+            if target_memory_id_value:
+                fact_payload["target_memory_id"] = target_memory_id_value
+            facts.append(fact_payload)
+        if facts:
+            payload["extracted_facts"] = facts
+
+    raw_memories_extracted = metadata.get("memories_extracted")
+    if isinstance(raw_memories_extracted, str) and raw_memories_extracted.strip():
+        payload["memories_extracted"] = raw_memories_extracted.strip()
+
+    return payload or None
+
+
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
     project_id: str = Query(...),
@@ -224,6 +266,77 @@ def list_messages(
         .all()
     )
     return [MessageOut.model_validate(m, from_attributes=True) for m in messages]
+
+
+@router.get("/conversations/{conversation_id}/events")
+async def stream_conversation_events(
+    conversation_id: str,
+    request: Request,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+) -> StreamingResponse:
+    enforce_rate_limit(
+        request,
+        scope="chat-sse",
+        identifier=current_user.id,
+        limit=settings.sse_rate_limit_max,
+        window_seconds=settings.sse_rate_limit_window_seconds,
+    )
+    _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
+
+    async def _event_generator():
+        emitted_signatures: dict[str, str] = {}
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            assistant_messages = (
+                db.query(Message)
+                .filter(
+                    Message.conversation_id == conversation_id,
+                    Message.role == "assistant",
+                )
+                .order_by(Message.created_at.asc())
+                .all()
+            )
+
+            live_message_ids: set[str] = set()
+            for message in assistant_messages:
+                live_metadata = _extract_live_message_metadata(message)
+                if not live_metadata:
+                    continue
+
+                live_message_ids.add(message.id)
+                signature = json.dumps(live_metadata, ensure_ascii=False, sort_keys=True)
+                if emitted_signatures.get(message.id) == signature:
+                    continue
+
+                emitted_signatures[message.id] = signature
+                yield (
+                    "event: assistant_message_metadata\n"
+                    f"data: {json.dumps({'id': message.id, 'metadata_json': live_metadata}, ensure_ascii=False)}\n\n"
+                )
+
+            for message_id in list(emitted_signatures):
+                if message_id not in live_message_ids:
+                    emitted_signatures.pop(message_id, None)
+
+            yield "event: ping\ndata: {}\n\n"
+            db.expire_all()
+            await asyncio.sleep(2)
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=MessageOut)

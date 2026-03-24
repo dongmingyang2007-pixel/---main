@@ -60,6 +60,13 @@ wait_for_service_health() {
   return 1
 }
 
+show_service_logs() {
+  local service="$1"
+  echo
+  echo "Recent logs for $service:"
+  compose_cmd logs --tail=80 "$service" || true
+}
+
 cleanup_playwright_outputs() {
   local dir
   for dir in "${PLAYWRIGHT_OUTPUT_DIRS[@]}"; do
@@ -82,17 +89,22 @@ echo "Cleaning local Playwright artifacts..."
 cleanup_playwright_outputs
 
 echo "Starting full local stack via docker compose..."
-compose_cmd up --build -d --remove-orphans
+compose_cmd up --build -d --remove-orphans postgres redis minio minio-init api worker web
 
 wait_for_http "API" "http://localhost:8000/health"
 wait_for_http "Web" "http://localhost:3000"
 wait_for_service_health "api"
 wait_for_service_health "web"
+if ! wait_for_service_health "worker"; then
+  show_service_logs "worker"
+  exit 1
+fi
 
 echo
 echo "QIHANG local stack is ready:"
 echo "  Web:   http://localhost:3000"
 echo "  API:   http://localhost:8000/health"
 echo "  MinIO: http://localhost:9001"
+echo "  Worker: celery queues ready"
 echo
 compose_cmd ps

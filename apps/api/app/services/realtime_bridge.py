@@ -19,21 +19,12 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import websockets
 
 from app.core.config import settings
-from app.services.context_loader import (
-    build_system_prompt,
-    extract_personality,
-    filter_knowledge_chunks,
-    load_conversation_context,
-    load_permanent_memories,
-    load_recent_messages,
-    search_rag_knowledge,
-)
 from app.services.dashscope_client import UpstreamServiceError
-from app.tasks.worker_tasks import extract_memories
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +71,7 @@ class RealtimeSession:
     _last_activity: float = field(default_factory=time.time)
     _session_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pending_session_update: asyncio.Future[None] | None = None
+    _active_turn_retrieval_trace: dict[str, Any] | None = None
 
     @property
     def is_ai_speaking(self) -> bool:
@@ -180,7 +172,10 @@ class RealtimeSession:
                     "type": "server_vad",
                     "threshold": 0.0,
                     "silence_duration_ms": 400,
-                    "create_response": True,
+                    # We refresh layered context after ASR finalization and then
+                    # explicitly trigger the next response, so upstream should
+                    # not auto-start generation with stale instructions.
+                    "create_response": False,
                     "interrupt_response": True,
                 },
             },
@@ -249,6 +244,13 @@ class RealtimeSession:
             "type": "input_audio_buffer.append",
             "audio": audio_b64,
         }))
+
+    async def request_response(self) -> None:
+        """Explicitly ask the realtime model to answer the latest committed turn."""
+        if not self._upstream_ws:
+            raise UpstreamServiceError("Upstream not connected")
+        self.touch()
+        await self._upstream_ws.send(json.dumps({"type": "response.create"}))
 
     async def handle_upstream_event(self, event: dict) -> list[dict | bytes]:
         """Process a DashScope event and return messages to send to client."""

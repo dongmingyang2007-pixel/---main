@@ -194,6 +194,43 @@ function formatRetrievalMemoryKind(
   return labels[memoryKind] || memoryKind;
 }
 
+function formatMemoryResultLabel(
+  status: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  const labels: Record<string, string> = {
+    permanent: t("memory.resultPermanent"),
+    temporary: t("memory.resultTemporary"),
+    appended: t("memory.resultAppended"),
+    merged: t("memory.resultMerged"),
+    replaced: t("memory.resultReplaced"),
+    duplicate: t("memory.resultDuplicate"),
+    discarded: t("memory.resultDiscarded"),
+    ignored: t("memory.resultIgnored"),
+  };
+  if (!status) {
+    return t("memory.resultUnknown");
+  }
+  return labels[status] || status;
+}
+
+function formatMemoryTriageActionLabel(
+  action: string | null | undefined,
+  t: (key: string) => string,
+): string | null {
+  const labels: Record<string, string> = {
+    create: t("memory.actionCreate"),
+    append: t("memory.actionAppend"),
+    merge: t("memory.actionMerge"),
+    replace: t("memory.actionReplace"),
+    discard: t("memory.actionDiscard"),
+  };
+  if (!action) {
+    return null;
+  }
+  return labels[action] || action;
+}
+
 function CollapsibleRetrievalTrace({
   message,
   t,
@@ -208,16 +245,25 @@ function CollapsibleRetrievalTrace({
     return null;
   }
 
+  const contextLevel = trace.context_level ?? null;
+  if (contextLevel === "none" || contextLevel === "profile_only") {
+    return null;
+  }
+
   const memories = trace.memories ?? [];
   const knowledgeChunks = trace.knowledge_chunks ?? [];
   const linkedFileChunks = trace.linked_file_chunks ?? [];
+  const hasRetrievedItems =
+    memories.length > 0 || knowledgeChunks.length > 0 || linkedFileChunks.length > 0;
+  const shouldForceVisible =
+    contextLevel === "memory_only" || contextLevel === "full_rag";
   const countBadges = [
     { label: t("retrievalBadgeMemory"), value: memories.length },
     { label: t("retrievalBadgeKnowledge"), value: knowledgeChunks.length },
     { label: t("retrievalBadgeLinked"), value: linkedFileChunks.length },
   ].filter((item) => item.value > 0);
 
-  if (!countBadges.length) {
+  if (!shouldForceVisible && !countBadges.length) {
     return null;
   }
 
@@ -379,6 +425,10 @@ function CollapsibleRetrievalTrace({
                 ))}
               </div>
             </div>
+          ) : null}
+
+          {!hasRetrievedItems ? (
+            <div className="chat-context-trace-empty">{t("retrievalEmpty")}</div>
           ) : null}
         </div>
       ) : null}
@@ -1035,7 +1085,6 @@ export const ChatMessageList = forwardRef<
       {messages.map((msg, index) => (
         (() => {
           const assistantSources = msg.role === "assistant" ? msg.sources ?? [] : [];
-          const citationSnippets = buildCitationSnippetMap(msg.content);
           const showAvatar = msg.role === "assistant" && (index === 0 || messages[index - 1]?.role !== "assistant");
           return (
         <div
@@ -1103,21 +1152,49 @@ export const ChatMessageList = forwardRef<
                     </div>
                     <span className="chat-memory-card-label">{t("memory.remembered")}</span>
                   </div>
+                  {msg.memories_extracted ? (
+                    <div className="chat-memory-card-body">{msg.memories_extracted}</div>
+                  ) : null}
                   <div className="chat-memory-card-facts">
                     {msg.extracted_facts.map((fact, idx) => (
                       <div key={idx} className="chat-memory-fact">
                         <div className="chat-memory-fact-header">
                           <span className="chat-memory-fact-category">{fact.category || "general"}</span>
-                          <span
-                            className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                            title={`Importance: ${(fact.importance * 100).toFixed(0)}%`}
-                          >
-                            {fact.importance >= 0.9 ? "permanent" : fact.importance >= 0.7 ? "temporary" : "ignored"}
-                            {" "}
-                            {(fact.importance * 100).toFixed(0)}%
-                          </span>
+                          <div className="chat-memory-fact-metrics">
+                            <span
+                              className={`chat-memory-fact-result ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
+                            >
+                              {formatMemoryResultLabel(fact.status, t)}
+                            </span>
+                            <span
+                              className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
+                              title={t("memory.importanceTitle", {
+                                score: (fact.importance * 100).toFixed(0),
+                              })}
+                            >
+                              {t("memory.importanceValue", {
+                                score: (fact.importance * 100).toFixed(0),
+                              })}
+                            </span>
+                          </div>
                         </div>
                         <div className="chat-memory-fact-text">{fact.fact}</div>
+                        {fact.triage_action || fact.triage_reason ? (
+                          <div className="chat-memory-fact-meta">
+                            {fact.triage_action ? (
+                              <span className="chat-memory-fact-decision">
+                                {t("memory.decisionPrefix")}
+                                {formatMemoryTriageActionLabel(fact.triage_action, t)}
+                              </span>
+                            ) : null}
+                            {fact.triage_reason ? (
+                              <span className="chat-memory-fact-reason">
+                                {t("memory.reasonPrefix")}
+                                {fact.triage_reason}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>

@@ -457,6 +457,24 @@ def test_initial_session_update_surfaces_upstream_error():
         asyncio.run(session.send_initial_session_update("你是助手"))
 
 
+def test_realtime_session_update_payload_requires_explicit_response_creation():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    payload = session._build_session_update_payload("你是助手")
+
+    assert payload["session"]["turn_detection"]["create_response"] is False
+
+
+def test_request_response_sends_response_create_message():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+
+    asyncio.run(session.request_response())
+
+    sent = [json.loads(message) for message in session._upstream_ws.sent_messages]
+    assert sent == [{"type": "response.create"}]
+
+
 def test_transcribe_audio_realtime_encodes_each_raw_chunk_independently(monkeypatch):
     monkeypatch.setattr("app.services.asr_client.settings.dashscope_api_key", "test-key")
     ws = _DummyRealtimeAsrSocket([

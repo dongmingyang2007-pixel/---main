@@ -1255,6 +1255,16 @@ export async function installWorkbenchApiMock(
       return;
     }
 
+    const conversationEventsMatch = pathname.match(/^\/api\/v1\/chat\/conversations\/([^/]+)\/events$/);
+    if (conversationEventsMatch && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: "",
+      });
+      return;
+    }
+
     if (pathname === "/api/v1/datasets" && method === "GET") {
       const projectId = searchParams.get("project_id") || "";
       await fulfillJson(

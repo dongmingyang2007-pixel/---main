@@ -6,6 +6,7 @@ import {
   type RealtimeState,
   type TranscriptEntry,
 } from "./useRealtimeVoiceBase";
+import type { PersistedRealtimeMessage, PersistedRealtimeTurnPayload } from "./useRealtimeVoice";
 
 export type SyntheticRealtimeState = RealtimeState;
 
@@ -30,6 +31,7 @@ interface UseSyntheticRealtimeVoiceOptions {
     final: boolean;
     action?: "upsert" | "discard";
   }) => void;
+  onTurnPersisted?: (payload: PersistedRealtimeTurnPayload) => void;
 }
 
 interface UseSyntheticRealtimeVoiceReturn {
@@ -62,6 +64,7 @@ export function useSyntheticRealtimeVoice({
   onError,
   onTurnComplete,
   onTranscriptUpdate,
+  onTurnPersisted,
 }: UseSyntheticRealtimeVoiceOptions): UseSyntheticRealtimeVoiceReturn {
   const [pendingMedia, setPendingMedia] = useState<SyntheticPendingMedia | null>(null);
   const pendingMediaRef = useRef<SyntheticPendingMedia | null>(null);
@@ -99,6 +102,17 @@ export function useSyntheticRealtimeVoice({
       } else if (data.type === "media.cleared") {
         setPendingMedia(null);
         pendingMediaRef.current = null;
+      } else if (data.type === "turn.persisted") {
+        onTurnPersisted?.({
+          userMessage:
+            data.user_message && typeof data.user_message === "object"
+              ? (data.user_message as PersistedRealtimeMessage)
+              : undefined,
+          assistantMessage:
+            data.assistant_message && typeof data.assistant_message === "object"
+              ? (data.assistant_message as PersistedRealtimeMessage)
+              : undefined,
+        });
       }
     },
   });

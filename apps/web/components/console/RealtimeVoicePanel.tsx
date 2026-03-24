@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useRealtimeVoice } from "@/hooks/useRealtimeVoice";
+import { useRealtimeVoice, type PersistedRealtimeTurnPayload } from "@/hooks/useRealtimeVoice";
 import { useSyntheticRealtimeVoice } from "@/hooks/useSyntheticRealtimeVoice";
 import type { ChatMode } from "./chat-types";
 
@@ -12,6 +12,7 @@ interface RealtimeVoicePanelProps {
   projectId: string;
   allowVideoInput?: boolean;
   onTurnComplete: (payload: { userText: string; assistantText: string }) => void;
+  onTurnPersisted: (payload: PersistedRealtimeTurnPayload) => void;
   onTranscriptUpdate: (payload: {
     role: "user" | "assistant";
     text: string;
@@ -57,6 +58,7 @@ export default function RealtimeVoicePanel({
   projectId,
   allowVideoInput = false,
   onTurnComplete,
+  onTurnPersisted,
   onTranscriptUpdate,
   onError,
   onStateChange,
@@ -85,6 +87,7 @@ export default function RealtimeVoicePanel({
     conversationId,
     projectId,
     onTurnComplete,
+    onTurnPersisted,
     onTranscriptUpdate,
     onError: handleRealtimeError,
   });
@@ -93,6 +96,7 @@ export default function RealtimeVoicePanel({
     conversationId,
     projectId,
     onTurnComplete,
+    onTurnPersisted,
     onTranscriptUpdate,
     onError: handleRealtimeError,
   });
@@ -146,6 +150,12 @@ export default function RealtimeVoicePanel({
   const waveformLevels = volumeToLevels(isListening ? userVolume : aiVolume, 8);
 
   const entryLabel = isSynthetic ? t("syntheticEntry") : t("realtimeEntry");
+  const pillStatusText =
+    state === "connecting" || state === "reconnecting"
+      ? t("realtimePreparing")
+      : isSpeaking
+        ? t("realtimeSpeaking")
+        : t("realtimeListening");
 
   const handleHangup = useCallback(() => {
     setExpanded(false);
@@ -156,8 +166,13 @@ export default function RealtimeVoicePanel({
   if (state === "idle" || state === "error") {
     return (
       <div className="rt-float">
-        <button className="rt-capsule" onClick={connect} style={{ cursor: "pointer" }}>
-          <span className="rt-capsule-label">
+        <button
+          type="button"
+          className="rt-capsule rt-entry"
+          onClick={connect}
+          style={{ cursor: "pointer" }}
+        >
+          <span className="rt-capsule-label rt-entry-label">
             {state === "error" ? t("realtimeRetry") : entryLabel}
           </span>
         </button>
@@ -169,14 +184,16 @@ export default function RealtimeVoicePanel({
   if (!expanded) {
     return (
       <div className="rt-float">
-        <div className="rt-capsule">
+        <div className="rt-capsule rt-pill">
           <span className={`rt-status-dot is-${statusClass}`} />
           <span className="rt-capsule-label">
             {t("realtimeTitle") || "AI \u52A9\u624B"}
           </span>
+          <span className="rt-pill-status">{pillStatusText}</span>
           <span className="rt-capsule-timer">{formatTime(timer)}</span>
           <WaveformBars levels={waveformLevels} barCount={3} />
           <button
+            type="button"
             className="rt-capsule-expand"
             onClick={() => setExpanded(true)}
           >

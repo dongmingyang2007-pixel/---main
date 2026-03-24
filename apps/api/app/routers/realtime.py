@@ -19,7 +19,9 @@ from app.core.deps import (
 from app.core.errors import ApiError
 from app.db.session import SessionLocal
 from app.models import Conversation, Membership, Message, ModelCatalog, Project, User
+from app.schemas.conversation import MessageOut
 from app.services.context_loader import (
+    extract_personality,
     load_recent_messages,
 )
 from app.services.composed_realtime import ComposedRealtimeSession, decode_pending_media
@@ -45,6 +47,10 @@ COMPOSED_TRAILING_AUDIO_GRACE_SECONDS = 0.75
 MODEL_API_UNCONFIGURED_MESSAGE = (
     "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
 )
+
+
+def _serialize_message_payload(message: Message) -> dict[str, object]:
+    return MessageOut.model_validate(message, from_attributes=True).model_dump(mode="json")
 
 
 async def _authenticate_websocket(ws: WebSocket) -> tuple[User, dict[str, object]]:
@@ -153,33 +159,91 @@ async def _ensure_model_api_configured(ws: WebSocket) -> bool:
     return False
 
 
-async def _load_initial_context(
+async def _build_realtime_context(
     db: Session,
     session: RealtimeSession,
+    *,
+    user_message: str,
+    include_recent_history: bool,
 ) -> str:
-    """Load initial layered prompt context for realtime sessions."""
+    """Build layered prompt context for a realtime session."""
     recent_messages = load_recent_messages(
         db,
         conversation_id=session.conversation_id,
         limit=max(settings.realtime_context_history_turns * 2, 0),
+    )
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == session.project_id,
+            Project.workspace_id == session.workspace_id,
+            Project.deleted_at.is_(None),
+        )
+        .first()
     )
     context = await build_memory_context(
         db,
         workspace_id=session.workspace_id,
         project_id=session.project_id,
         conversation_id=session.conversation_id,
-        user_message="",
+        user_message=user_message,
         recent_messages=recent_messages,
-        include_recent_history=True,
+        include_recent_history=include_recent_history,
+        personality=extract_personality(project.description) if project else "",
     )
-    session._retrieval_trace = context.retrieval_trace
+    session._active_turn_retrieval_trace = context.retrieval_trace
     return context.system_prompt
 
 
+async def _load_initial_context(
+    db: Session,
+    session: RealtimeSession,
+) -> str:
+    """Load initial layered prompt context for realtime sessions."""
+    return await _build_realtime_context(
+        db,
+        session,
+        user_message="",
+        include_recent_history=True,
+    )
+
+
+async def _refresh_realtime_context_and_request_response(
+    session: RealtimeSession,
+    *,
+    user_text: str,
+) -> None:
+    """Refresh the native realtime prompt with the latest turn context, then respond."""
+    system_prompt: str | None = None
+    try:
+        db: Session = SessionLocal()
+        try:
+            system_prompt = await _build_realtime_context(
+                db,
+                session,
+                user_message=user_text,
+                include_recent_history=True,
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Failed to build realtime turn context; falling back to current instructions")
+
+    try:
+        if system_prompt:
+            await session.send_session_update(system_prompt)
+        await session.request_response()
+    except Exception:
+        logger.exception("Failed to update realtime session before response")
+
+
 async def _post_turn_tasks(
+    ws: WebSocket,
     session: RealtimeSession,
     user_text: str,
     ai_text: str,
+    *,
+    assistant_metadata_json: dict[str, object] | None = None,
 ) -> None:
     """Save messages to DB and run async tasks after a conversation turn."""
     if not user_text or not ai_text:
@@ -187,34 +251,56 @@ async def _post_turn_tasks(
 
     # Persist messages to database
     db_save: Session = SessionLocal()
+    assistant_payload: dict[str, object] | None = None
+    user_payload: dict[str, object] | None = None
     try:
         now = datetime.now(timezone.utc)
-        db_save.add(Message(
+        user_message = Message(
             conversation_id=session.conversation_id,
             role="user",
             content=user_text,
             created_at=now,
-        ))
-        db_save.add(Message(
+        )
+        assistant_metadata_json = dict(assistant_metadata_json or {})
+        assistant_message = Message(
             conversation_id=session.conversation_id,
             role="assistant",
             content=ai_text,
             created_at=now,
-        ))
+            metadata_json=assistant_metadata_json,
+        )
+        db_save.add(user_message)
+        db_save.add(assistant_message)
         db_save.query(Conversation).filter(
             Conversation.id == session.conversation_id
         ).update({"updated_at": now})
         touch_memories_from_trace(
             db_save,
-            retrieval_trace=getattr(session, "_retrieval_trace", None),
+            retrieval_trace=assistant_metadata_json.get("retrieval_trace"),
             used_at=now,
         )
         db_save.commit()
+        db_save.refresh(user_message)
+        db_save.refresh(assistant_message)
+        user_payload = _serialize_message_payload(user_message)
+        assistant_payload = _serialize_message_payload(assistant_message)
     except Exception:
         db_save.rollback()
         logger.exception("Failed to save voice turn messages")
     finally:
         db_save.close()
+
+    if user_payload and assistant_payload:
+        try:
+            await ws.send_json(
+                {
+                    "type": "turn.persisted",
+                    "user_message": user_payload,
+                    "assistant_message": assistant_payload,
+                }
+            )
+        except Exception:
+            logger.debug("Failed to send realtime persistence notice", exc_info=True)
 
     # Dispatch memory extraction (Celery, fire-and-forget)
     extract_memories.delay(
@@ -231,22 +317,13 @@ async def _post_turn_tasks(
         try:
             db: Session = SessionLocal()
             try:
-                recent_messages = load_recent_messages(
+                system_prompt = await _build_realtime_context(
                     db,
-                    conversation_id=session.conversation_id,
-                    limit=max(settings.realtime_context_history_turns * 2, 0),
-                )
-                context = await build_memory_context(
-                    db,
-                    workspace_id=session.workspace_id,
-                    project_id=session.project_id,
-                    conversation_id=session.conversation_id,
+                    session,
                     user_message=user_text,
-                    recent_messages=recent_messages,
                     include_recent_history=True,
                 )
-                session._retrieval_trace = context.retrieval_trace
-                await session.send_session_update(context.system_prompt)
+                await session.send_session_update(system_prompt)
             finally:
                 db.close()
         except Exception:
@@ -271,42 +348,68 @@ def _load_llm_capabilities(db: Session, project_id: str) -> tuple[str, set[str]]
 
 
 async def _persist_composed_turn(
+    ws: WebSocket,
     session: ComposedRealtimeSession,
     user_text: str,
     ai_text: str,
+    *,
+    assistant_reasoning_content: str | None = None,
+    assistant_metadata_json: dict[str, object] | None = None,
 ) -> None:
     if not user_text or not ai_text:
         return
 
     db: Session = SessionLocal()
+    user_payload: dict[str, object] | None = None
+    assistant_payload: dict[str, object] | None = None
     try:
         now = datetime.now(timezone.utc)
-        db.add(Message(
+        user_message = Message(
             conversation_id=session.conversation_id,
             role="user",
             content=user_text,
             created_at=now,
-        ))
-        db.add(Message(
+        )
+        assistant_message = Message(
             conversation_id=session.conversation_id,
             role="assistant",
             content=ai_text,
+            reasoning_content=assistant_reasoning_content,
+            metadata_json=assistant_metadata_json or {},
             created_at=now,
-        ))
+        )
+        db.add(user_message)
+        db.add(assistant_message)
         db.query(Conversation).filter(
             Conversation.id == session.conversation_id
         ).update({"updated_at": now})
         touch_memories_from_trace(
             db,
-            retrieval_trace=getattr(session, "_retrieval_trace", None),
+            retrieval_trace=(assistant_metadata_json or {}).get("retrieval_trace"),
             used_at=now,
         )
         db.commit()
+        db.refresh(user_message)
+        db.refresh(assistant_message)
+        user_payload = _serialize_message_payload(user_message)
+        assistant_payload = _serialize_message_payload(assistant_message)
     except Exception:
         db.rollback()
         logger.exception("Failed to save composed realtime turn")
     finally:
         db.close()
+
+    if user_payload and assistant_payload:
+        try:
+            await ws.send_json(
+                {
+                    "type": "turn.persisted",
+                    "user_message": user_payload,
+                    "assistant_message": assistant_payload,
+                }
+            )
+        except Exception:
+            logger.debug("Failed to send composed realtime persistence notice", exc_info=True)
 
     extract_memories.delay(
         session.workspace_id,
@@ -360,9 +463,31 @@ async def _upstream_listener(
                 else:
                     await ws.send_json(item)
 
+            if event.get("type") == "conversation.item.input_audio_transcription.completed":
+                transcript = str(event.get("transcript") or "").strip()
+                if transcript:
+                    asyncio.create_task(
+                        _refresh_realtime_context_and_request_response(
+                            session,
+                            user_text=transcript,
+                        )
+                    )
+
             if event.get("type") == "response.done":
                 user_text, ai_text = session.get_turn_texts()
-                asyncio.create_task(_post_turn_tasks(session, user_text, ai_text))
+                assistant_metadata_json = {}
+                retrieval_trace = getattr(session, "_active_turn_retrieval_trace", None)
+                if isinstance(retrieval_trace, dict) and retrieval_trace:
+                    assistant_metadata_json["retrieval_trace"] = retrieval_trace
+                asyncio.create_task(
+                    _post_turn_tasks(
+                        ws,
+                        session,
+                        user_text,
+                        ai_text,
+                        assistant_metadata_json=assistant_metadata_json,
+                    )
+                )
         if session.state not in (session.state.CLOSING, session.state.CLOSED):
             return {
                 "code": "upstream_disconnected",
@@ -901,9 +1026,12 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                 if turn_result:
                     asyncio.create_task(
                         _persist_composed_turn(
+                            ws,
                             session,
                             turn_result.get("user_text", "").strip(),
                             turn_result.get("assistant_text", "").strip(),
+                            assistant_reasoning_content=turn_result.get("reasoning_content"),
+                            assistant_metadata_json=turn_result.get("assistant_metadata_json"),
                         )
                     )
                 turn_task = None

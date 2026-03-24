@@ -470,6 +470,33 @@ async def triage_memory(
     return decision
 
 
+def _build_memory_extraction_summary(processed_facts: list[dict[str, object]]) -> str | None:
+    counts: dict[str, int] = {}
+    for fact in processed_facts:
+        status = str(fact.get("status") or "").strip()
+        if not status:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+
+    if not counts:
+        return None
+
+    ordered_labels = [
+        ("permanent", "新增永久记忆"),
+        ("temporary", "新增临时记忆"),
+        ("appended", "挂接到已有记忆"),
+        ("merged", "合并已有记忆"),
+        ("replaced", "替换已有记忆"),
+        ("duplicate", "重复跳过"),
+        ("discarded", "被 triage 丢弃"),
+        ("ignored", "重要度不足被忽略"),
+    ]
+    parts = [f"{label} {counts[key]} 条" for key, label in ordered_labels if counts.get(key)]
+    if not parts:
+        return None
+    return "；".join(parts)
+
+
 @celery_app.task(name="app.tasks.worker_tasks.extract_memories")
 def extract_memories(
     workspace_id: str,
@@ -555,7 +582,7 @@ AI：{ai_response}
             if not facts:
                 return
 
-            # Save extracted facts to the AI message's metadata for frontend display
+            ai_msg = None
             try:
                 ai_msg = (
                     db.query(Message)
@@ -566,24 +593,27 @@ AI：{ai_response}
                     .order_by(Message.created_at.desc())
                     .first()
                 )
-                if ai_msg:
-                    existing_meta = ai_msg.metadata_json or {}
-                    existing_meta["extracted_facts"] = [
-                        {"fact": f.get("fact", ""), "category": f.get("category", ""), "importance": f.get("importance", 0)}
-                        for f in facts
-                    ]
-                    ai_msg.metadata_json = existing_meta
-                    db.flush()
             except Exception:  # noqa: BLE001
-                pass  # Non-fatal: display data only
+                ai_msg = None
+
+            processed_facts: list[dict[str, object]] = []
 
             for fact in facts:
                 importance = fact.get("importance", 0)
-                if importance < 0.7:
+                fact_text = str(fact.get("fact", "")).strip()
+                category = str(fact.get("category", "")).strip()
+                if not fact_text:
                     continue
 
-                fact_text = fact.get("fact", "")
-                if not fact_text.strip():
+                fact_display: dict[str, object] = {
+                    "fact": fact_text,
+                    "category": category,
+                    "importance": importance,
+                }
+
+                if importance < 0.7:
+                    fact_display["status"] = "ignored"
+                    processed_facts.append(fact_display)
                     continue
 
                 # Deduplication: skip if a highly similar memory already exists
@@ -596,12 +626,18 @@ AI：{ai_response}
                         threshold=settings.memory_triage_similarity_high,
                     )
                     if duplicate:
+                        fact_display["status"] = "duplicate"
+                        fact_display["target_memory_id"] = duplicate.id
+                        processed_facts.append(fact_display)
                         continue
                 except Exception:  # noqa: BLE001
                     query_vector = None  # Dedup check failure is non-fatal
 
                 # ── Memory Triage: check for related (but not duplicate) memories ──
                 parent_memory_id = None
+                triage_action = "create"
+                triage_reason = None
+                triage_target_memory_id = None
                 if query_vector:
                     try:
                         candidates = await find_related_memories(
@@ -625,12 +661,22 @@ AI：{ai_response}
                         action = decision.get("action", "create")
                         target_id = decision.get("target_memory_id")
                         merged = decision.get("merged_content")
+                        triage_reason = decision.get("reason")
 
                         # Validate target_id comes from candidate list
                         if target_id and target_id not in candidate_ids:
                             action = "create"
+                            target_id = None
+
+                        triage_action = action
+                        triage_target_memory_id = target_id
 
                         if action == "discard":
+                            fact_display["status"] = "discarded"
+                            fact_display["triage_action"] = "discard"
+                            if isinstance(triage_reason, str) and triage_reason.strip():
+                                fact_display["triage_reason"] = triage_reason.strip()
+                            processed_facts.append(fact_display)
                             continue
 
                         if action == "append" and target_id:
@@ -640,6 +686,9 @@ AI：{ai_response}
                             ).first()
                             if target:
                                 parent_memory_id = target_id
+                            else:
+                                triage_action = "create"
+                                triage_target_memory_id = None
                             # else: fallthrough to create
 
                         elif action in ("merge", "replace") and target_id and merged:
@@ -670,8 +719,15 @@ AI：{ai_response}
                                     )
                                 except Exception:  # noqa: BLE001
                                     pass
+                                fact_display["status"] = "merged" if action == "merge" else "replaced"
+                                fact_display["triage_action"] = action
+                                fact_display["target_memory_id"] = target_id
+                                if isinstance(triage_reason, str) and triage_reason.strip():
+                                    fact_display["triage_reason"] = triage_reason.strip()
+                                processed_facts.append(fact_display)
                                 continue  # Don't create a new memory
-                            # else: fallthrough to create
+                            triage_action = "create"
+                            triage_target_memory_id = None
 
                 memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
                 metadata = {"importance": importance, "source": "auto_extraction"}
@@ -720,6 +776,31 @@ AI：{ai_response}
                     )
                 except Exception:  # noqa: BLE001
                     pass  # Embedding failure is non-fatal
+
+                fact_display["status"] = "appended" if parent_memory_id and triage_action == "append" else memory_type
+                fact_display["triage_action"] = triage_action
+                fact_display["target_memory_id"] = triage_target_memory_id or memory.id
+                if isinstance(triage_reason, str) and triage_reason.strip():
+                    fact_display["triage_reason"] = triage_reason.strip()
+                processed_facts.append(fact_display)
+
+            if ai_msg:
+                try:
+                    existing_meta = ai_msg.metadata_json or {}
+                    if processed_facts:
+                        existing_meta["extracted_facts"] = processed_facts
+                        summary = _build_memory_extraction_summary(processed_facts)
+                        if summary:
+                            existing_meta["memories_extracted"] = summary
+                        else:
+                            existing_meta.pop("memories_extracted", None)
+                    else:
+                        existing_meta.pop("extracted_facts", None)
+                        existing_meta.pop("memories_extracted", None)
+                    ai_msg.metadata_json = existing_meta
+                    db.flush()
+                except Exception:  # noqa: BLE001
+                    pass  # Non-fatal: display data only
 
         # Run all async work in a single event loop
         asyncio.run(_extract_and_store_facts())

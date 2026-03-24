@@ -364,6 +364,23 @@ async def responses_completion_stream(
 
             event_name: str | None = None
             data_lines: list[str] = []
+            emitted_content = ""
+            emitted_reasoning = ""
+            seen_tool_call_ids: set[str] = set()
+
+            def _emit_missing_text(
+                *,
+                current: str,
+                candidate: str,
+            ) -> str:
+                if not candidate:
+                    return ""
+                if not current:
+                    return candidate
+                if candidate.startswith(current):
+                    return candidate[len(current):]
+                return ""
+
             async for line in response.aiter_lines():
                 if line == "":
                     parsed_event, payload_data = _parse_sse_event(event_name, data_lines)
@@ -375,11 +392,13 @@ async def responses_completion_stream(
                     if parsed_event == "response.output_text.delta":
                         delta = _coerce_nonempty_text(payload_data.get("delta")) or ""
                         if delta:
+                            emitted_content += delta
                             yield ResponsesStreamChunk(content=delta)
                         continue
                     if parsed_event == "response.reasoning_summary_text.delta":
                         delta = _coerce_nonempty_text(payload_data.get("delta")) or ""
                         if delta:
+                            emitted_reasoning += delta
                             yield ResponsesStreamChunk(reasoning_content=delta)
                         continue
                     if parsed_event == "response.output_item.done":
@@ -389,14 +408,56 @@ async def responses_completion_stream(
                         item_type = str(item.get("type") or "").lower()
                         if item_type == "function_call":
                             tool_call = _parse_response_tool_call(item)
-                            if tool_call:
+                            if tool_call and tool_call.id not in seen_tool_call_ids:
+                                seen_tool_call_ids.add(tool_call.id)
                                 yield ResponsesStreamChunk(tool_calls=[tool_call])
                         elif item_type == "web_search_call":
                             sources = _extract_response_search_sources(item)
                             if sources:
                                 yield ResponsesStreamChunk(search_sources=sources)
+                        elif item_type == "message":
+                            delta = _emit_missing_text(
+                                current=emitted_content,
+                                candidate=_extract_message_text(item.get("content")),
+                            )
+                            if delta:
+                                emitted_content += delta
+                                yield ResponsesStreamChunk(content=delta)
+                        elif item_type == "reasoning":
+                            delta = _emit_missing_text(
+                                current=emitted_reasoning,
+                                candidate=_extract_reasoning_text(item),
+                            )
+                            if delta:
+                                emitted_reasoning += delta
+                                yield ResponsesStreamChunk(reasoning_content=delta)
                         continue
                     if parsed_event == "response.completed":
+                        result = _parse_responses_result(payload_data)
+                        content_delta = _emit_missing_text(
+                            current=emitted_content,
+                            candidate=result.content,
+                        )
+                        if content_delta:
+                            emitted_content += content_delta
+                            yield ResponsesStreamChunk(content=content_delta)
+                        reasoning_delta = _emit_missing_text(
+                            current=emitted_reasoning,
+                            candidate=result.reasoning_content or "",
+                        )
+                        if reasoning_delta:
+                            emitted_reasoning += reasoning_delta
+                            yield ResponsesStreamChunk(reasoning_content=reasoning_delta)
+                        unseen_tool_calls = [
+                            tool_call
+                            for tool_call in result.tool_calls
+                            if tool_call.id not in seen_tool_call_ids
+                        ]
+                        if unseen_tool_calls:
+                            seen_tool_call_ids.update(tool_call.id for tool_call in unseen_tool_calls)
+                            yield ResponsesStreamChunk(tool_calls=unseen_tool_calls)
+                        if result.search_sources:
+                            yield ResponsesStreamChunk(search_sources=result.search_sources)
                         yield ResponsesStreamChunk(finish_reason="completed")
                         continue
                     if parsed_event == "response.failed":
@@ -411,6 +472,31 @@ async def responses_completion_stream(
 
             parsed_event, payload_data = _parse_sse_event(event_name, data_lines)
             if parsed_event == "response.completed" and payload_data is not None:
+                result = _parse_responses_result(payload_data)
+                content_delta = _emit_missing_text(
+                    current=emitted_content,
+                    candidate=result.content,
+                )
+                if content_delta:
+                    emitted_content += content_delta
+                    yield ResponsesStreamChunk(content=content_delta)
+                reasoning_delta = _emit_missing_text(
+                    current=emitted_reasoning,
+                    candidate=result.reasoning_content or "",
+                )
+                if reasoning_delta:
+                    emitted_reasoning += reasoning_delta
+                    yield ResponsesStreamChunk(reasoning_content=reasoning_delta)
+                unseen_tool_calls = [
+                    tool_call
+                    for tool_call in result.tool_calls
+                    if tool_call.id not in seen_tool_call_ids
+                ]
+                if unseen_tool_calls:
+                    seen_tool_call_ids.update(tool_call.id for tool_call in unseen_tool_calls)
+                    yield ResponsesStreamChunk(tool_calls=unseen_tool_calls)
+                if result.search_sources:
+                    yield ResponsesStreamChunk(search_sources=result.search_sources)
                 yield ResponsesStreamChunk(finish_reason="completed")
     except (InferenceTimeoutError, UpstreamServiceError):
         raise

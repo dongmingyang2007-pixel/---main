@@ -14,6 +14,10 @@ export interface ExtractedFact {
   fact: string;
   category: string;
   importance: number;
+  status?: string | null;
+  triage_action?: string | null;
+  triage_reason?: string | null;
+  target_memory_id?: string | null;
 }
 
 export interface RetrievalTraceMemory {
@@ -37,8 +41,18 @@ export interface RetrievalTraceChunk {
   chunk_text: string;
 }
 
+export type RetrievalContextLevel =
+  | "none"
+  | "profile_only"
+  | "memory_only"
+  | "full_rag";
+
 export interface RetrievalTrace {
   strategy?: string | null;
+  context_level?: RetrievalContextLevel | null;
+  decision_source?: string | null;
+  decision_reason?: string | null;
+  decision_confidence?: number | null;
   memory_counts?: {
     static?: number;
     relevant?: number;
@@ -75,6 +89,39 @@ export interface ApiMessage {
     [key: string]: unknown;
   };
   created_at?: string;
+}
+
+function normalizeExtractedFacts(value: unknown): ExtractedFact[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const facts = value
+    .filter((f: unknown): f is Record<string, unknown> => typeof f === "object" && f !== null)
+    .map((f) => ({
+      fact: String(f.fact ?? ""),
+      category: String(f.category ?? ""),
+      importance: typeof f.importance === "number" ? f.importance : 0,
+      status:
+        typeof f.status === "string" && f.status.trim()
+          ? f.status.trim()
+          : null,
+      triage_action:
+        typeof f.triage_action === "string" && f.triage_action.trim()
+          ? f.triage_action.trim()
+          : null,
+      triage_reason:
+        typeof f.triage_reason === "string" && f.triage_reason.trim()
+          ? f.triage_reason.trim()
+          : null,
+      target_memory_id:
+        typeof f.target_memory_id === "string" && f.target_memory_id.trim()
+          ? f.target_memory_id.trim()
+          : null,
+    }))
+    .filter((fact) => fact.fact.trim().length > 0);
+
+  return facts.length ? facts : undefined;
 }
 
 export interface DictationResponse {
@@ -188,6 +235,21 @@ export function createAudioPlayer(base64Audio: string) {
     audio: new Audio(url),
     url,
   };
+}
+
+function normalizeContextLevel(value: unknown): RetrievalContextLevel | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  if (
+    value === "none" ||
+    value === "profile_only" ||
+    value === "memory_only" ||
+    value === "full_rag"
+  ) {
+    return value;
+  }
+  return null;
 }
 
 export function getPipelineModelId(
@@ -327,6 +389,7 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
     return null;
   }
   const candidate = value as Record<string, unknown>;
+  const contextLevel = normalizeContextLevel(candidate.context_level);
   const memories = Array.isArray(candidate.memories)
     ? candidate.memories
         .map((item) => normalizeTraceMemory(item))
@@ -364,13 +427,23 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
         }
       : undefined;
 
-  if (!memories.length && !knowledgeChunks.length && !linkedFileChunks.length) {
+  if (!memories.length && !knowledgeChunks.length && !linkedFileChunks.length && !contextLevel) {
     return null;
   }
 
   return {
     strategy:
       typeof candidate.strategy === "string" ? candidate.strategy : null,
+    context_level: contextLevel,
+    decision_source:
+      typeof candidate.decision_source === "string" ? candidate.decision_source : null,
+    decision_reason:
+      typeof candidate.decision_reason === "string" ? candidate.decision_reason : null,
+    decision_confidence:
+      typeof candidate.decision_confidence === "number" &&
+      Number.isFinite(candidate.decision_confidence)
+        ? candidate.decision_confidence
+        : null,
     memory_counts: memoryCounts,
     memories,
     knowledge_chunks: knowledgeChunks,
@@ -380,16 +453,10 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
 
 export function toMessage(message: ApiMessage): Message {
   const meta = message.metadata_json;
-  const rawFacts = meta?.extracted_facts;
-  const extractedFacts: ExtractedFact[] | undefined =
-    Array.isArray(rawFacts)
-      ? rawFacts
-          .filter((f: unknown): f is Record<string, unknown> => typeof f === "object" && f !== null)
-          .map((f) => ({
-            fact: String(f.fact ?? ""),
-            category: String(f.category ?? ""),
-            importance: typeof f.importance === "number" ? f.importance : 0,
-          }))
+  const extractedFacts = normalizeExtractedFacts(meta?.extracted_facts);
+  const memoriesExtracted =
+    typeof meta?.memories_extracted === "string" && meta.memories_extracted.trim()
+      ? meta.memories_extracted
       : undefined;
 
   return {
@@ -399,9 +466,36 @@ export function toMessage(message: ApiMessage): Message {
     reasoningContent: message.reasoning_content,
     sources: normalizeSearchSources(meta?.sources),
     retrievalTrace: normalizeRetrievalTrace(meta?.retrieval_trace),
+    memories_extracted: memoriesExtracted,
     extracted_facts: extractedFacts,
     animateOnMount: false,
     isStreaming: false,
+  };
+}
+
+export function mergeAssistantMetadataPatch(
+  message: Message,
+  metadata: unknown,
+): Message {
+  if (!metadata || typeof metadata !== "object") {
+    return message;
+  }
+
+  const candidate = metadata as Record<string, unknown>;
+  const extractedFacts = normalizeExtractedFacts(candidate.extracted_facts);
+  const sources = normalizeSearchSources(candidate.sources);
+  const retrievalTrace = normalizeRetrievalTrace(candidate.retrieval_trace);
+  const memoriesExtracted =
+    typeof candidate.memories_extracted === "string" && candidate.memories_extracted.trim()
+      ? candidate.memories_extracted
+      : undefined;
+
+  return {
+    ...message,
+    sources: sources.length ? sources : message.sources,
+    retrievalTrace: retrievalTrace ?? message.retrievalTrace,
+    extracted_facts: extractedFacts ?? message.extracted_facts,
+    memories_extracted: memoriesExtracted ?? message.memories_extracted,
   };
 }
 

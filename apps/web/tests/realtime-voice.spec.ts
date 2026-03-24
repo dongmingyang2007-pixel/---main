@@ -160,7 +160,7 @@ test.describe("Realtime Voice", () => {
     expect(response?.headers()["permissions-policy"] || "").toContain("microphone=(self)");
 
     await page.locator(".chat-sidebar-new").click();
-    await page.getByRole("button", { name: /Omni 实时/ }).click();
+    await page.locator(".chat-workspace-controls .chat-mode-dropdown").first().selectOption("omni_realtime");
     await expect(page.locator(".rt-entry")).toBeVisible();
 
     await page.locator(".rt-entry").click();
