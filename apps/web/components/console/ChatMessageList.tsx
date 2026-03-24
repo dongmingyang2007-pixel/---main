@@ -881,7 +881,7 @@ export const ChatMessageList = forwardRef<
           className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
         >
           {showAvatar && (
-            <div className="chat-avatar-ai" style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg, #C7734A, #E8925A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff", fontWeight: 700, flexShrink: 0 }} aria-hidden="true">
+            <div className="chat-avatar-ai" style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff", fontWeight: 700, flexShrink: 0 }} aria-hidden="true">
               铭
             </div>
           )}
