@@ -1000,7 +1000,7 @@ export default function AssistantDetailPage() {
 
   return (
     <PageTransition>
-      <div className="console-page-shell" style={{ padding: "28px 32px", maxWidth: 1120 }}>
+      <div className="console-page-shell" style={{ padding: "24px 24px" }}>
         {/* Compact header bar */}
         <GlassCard className="assistant-detail-hero-compact">
           <div className="assistant-detail-compact-header">
