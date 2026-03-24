@@ -484,6 +484,28 @@ function ChatPageContent() {
 
   return (
     <PageTransition>
+      {/* Drawer backdrop — mobile only, outside grid */}
+      <div
+        className={`chat-sidebar-drawer-backdrop${drawerOpen ? " is-open" : ""}`}
+        onClick={() => setDrawerOpen(false)}
+      />
+
+      {/* Context menu — outside grid, position:fixed */}
+      {contextMenu && (
+        <div
+          className="chat-sidebar-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            type="button"
+            className="chat-sidebar-context-item is-danger"
+            onClick={() => handleDeleteConversation(contextMenu.conversationId)}
+          >
+            {t("deleteConversation")}
+          </button>
+        </div>
+      )}
+
       <div
         className="chat-page"
         style={{
@@ -491,14 +513,9 @@ function ChatPageContent() {
           display: "grid",
           gridTemplateColumns: "260px minmax(0, 1fr)",
           gap: 16,
+          overflow: "hidden",
         }}
       >
-        {/* Drawer backdrop — mobile only */}
-        <div
-          className={`chat-sidebar-drawer-backdrop${drawerOpen ? " is-open" : ""}`}
-          onClick={() => setDrawerOpen(false)}
-        />
-
         <aside
           className={`chat-sidebar${drawerOpen ? " is-open" : ""}`}
           style={{
@@ -627,27 +644,12 @@ function ChatPageContent() {
           </div>
         </aside>
 
-        {/* Context menu */}
-        {contextMenu && (
-          <div
-            className="chat-sidebar-context-menu"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-          >
-            <button
-              type="button"
-              className="chat-sidebar-context-item is-danger"
-              onClick={() => handleDeleteConversation(contextMenu.conversationId)}
-            >
-              {t("deleteConversation")}
-            </button>
-          </div>
-        )}
-
         <div
           className="chat-main"
           style={{
             minWidth: 0,
             minHeight: 0,
+            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
           }}
