@@ -9292,7 +9292,9 @@ button {
 .chat-sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 6px;
+  overflow-x: hidden;
+  padding: 2px;
+  min-width: 0;
 }
 
 .chat-sidebar-empty {
@@ -12765,8 +12767,13 @@ button {
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; color: #fff; font-weight: 700;
 }
+.chat-sidebar-item-row1,
 .chat-sidebar-item-row2 {
-  display: flex; align-items: center; gap: 6px; padding-left: 28px;
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden;
+}
+.chat-sidebar-item-row2 {
+  padding-left: 28px;
 }
 .chat-sidebar-item-preview {
   flex: 1; min-width: 0; font-size: 12px;
