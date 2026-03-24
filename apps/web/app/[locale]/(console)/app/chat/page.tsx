@@ -510,8 +510,7 @@ function ChatPageContent() {
         className="chat-page"
         style={{
           height: "calc(100vh - 48px - 28px)",
-          display: "grid",
-          gridTemplateColumns: "260px minmax(0, 1fr)",
+          display: "flex",
           gap: 16,
           overflow: "hidden",
         }}
@@ -519,10 +518,11 @@ function ChatPageContent() {
         <aside
           className={`chat-sidebar${drawerOpen ? " is-open" : ""}`}
           style={{
+            width: 260,
+            flexShrink: 0,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
-            minWidth: 0,
             overflow: "hidden",
             padding: 16,
             borderRadius: 20,
@@ -647,6 +647,7 @@ function ChatPageContent() {
         <div
           className="chat-main"
           style={{
+            flex: 1,
             minWidth: 0,
             minHeight: 0,
             overflow: "hidden",
