@@ -9266,14 +9266,8 @@ button {
 }
 
 .chat-sidebar {
-  width: 240px;
-  min-width: 200px;
-  max-width: 300px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-  background: var(--bg-surface);
-  border-radius: var(--radius-card) 0 0 var(--radius-card);
   overflow: hidden;
 }
 
@@ -11589,14 +11583,7 @@ button {
   box-shadow: 0 20px 42px rgba(42, 32, 24, 0.05);
 }
 
-.chat-sidebar {
-  width: 320px;
-  min-width: 280px;
-  max-width: 360px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 95%, white), var(--bg-surface));
-  border-radius: 0;
-}
+/* chat-sidebar size controlled by inline styles in chat/page.tsx */
 
 .chat-sidebar-header {
   display: flex;
@@ -12219,7 +12206,7 @@ button {
 
   /* Chat */
   .chat-page-layout { flex-direction: column; height: auto; min-height: 0; }
-  .chat-sidebar { width: 100%; min-width: 0; max-width: none; border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
+  /* chat-sidebar responsive handled by drawer in chat/page.tsx */
   .chat-workspace-header { flex-direction: column; align-items: flex-start; }
   .chat-workspace-controls { width: 100%; align-items: flex-start; }
   .chat-workspace-badges,
