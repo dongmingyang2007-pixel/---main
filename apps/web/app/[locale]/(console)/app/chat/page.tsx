@@ -610,7 +610,11 @@ function ChatPageContent() {
                     </div>
                     <div className="chat-sidebar-item-row2">
                       <span className="chat-sidebar-item-preview">
-                        {conversationSummaries[conversation.id] || t("noPreview")}
+                        {(() => {
+                          const preview = conversationSummaries[conversation.id] || "";
+                          const title = renderConversationTitle(conversation);
+                          return preview && preview !== title ? preview : t("noPreview");
+                        })()}
                       </span>
                       <span className="chat-sidebar-item-time">
                         {formatRelativeTime(conversation.updated_at, t)}

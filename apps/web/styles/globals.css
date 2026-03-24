@@ -9304,23 +9304,29 @@ button {
 }
 
 .chat-sidebar-item {
+  position: relative;
   display: grid;
   gap: 4px;
   padding: 10px 12px 10px 15px;
   border-radius: 12px;
   cursor: pointer;
-  transition: background 120ms ease;
+  transition: background 150ms ease;
   border: none;
   background: transparent;
   text-align: left;
+  width: 100%;
 }
 
 .chat-sidebar-item:hover {
-  background: var(--bg-base);
+  background: rgba(15, 23, 42, 0.03);
 }
 
 .chat-sidebar-item.is-active {
-  background: var(--accent-soft, rgba(200, 115, 74, 0.1));
+  background: rgba(99, 102, 241, 0.08);
+}
+.chat-sidebar-item.is-active::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px;
+  width: 3px; border-radius: 2px; background: #6366f1;
 }
 
 .chat-sidebar-item-info {
@@ -9329,18 +9335,19 @@ button {
 }
 
 .chat-sidebar-item-title {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-primary);
+  flex: 1; min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--console-text-primary, var(--text-primary));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chat-sidebar-item-time {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  margin-top: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--console-text-muted, var(--text-muted));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -11628,22 +11635,7 @@ button {
   padding: 10px;
 }
 
-.chat-sidebar-item {
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: 16px;
-}
-
-.chat-sidebar-item:hover {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 8%, var(--border));
-}
-
-.chat-sidebar-item.is-active {
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--bg-card) 92%, white));
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
-}
+/* sidebar item overrides consolidated into base definition above */
 
 .chat-sidebar-footer {
   padding: 12px 18px 18px;
