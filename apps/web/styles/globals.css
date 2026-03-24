@@ -9676,15 +9676,26 @@ button {
 /* ── Voice Chat ──────────────────────────────── */
 
 .chat-input-bar-voice {
+  position: relative;
   display: flex;
-  gap: 8px;
+  gap: 0;
   padding: 0;
   border-top: none;
   background: transparent;
   align-items: flex-end;
   flex-wrap: nowrap;
 }
-.chat-input-bar-voice > *:last-child {
+.chat-input-bar-voice .chat-mic-btn {
+  margin: 0 0 20px 8px;
+  flex-shrink: 0;
+}
+.chat-input-bar-voice .chat-voice-indicator {
+  position: absolute; bottom: 100%; left: 8px;
+  font-size: 11px; white-space: nowrap;
+  padding: 4px 8px; border-radius: 6px;
+  background: rgba(99, 102, 241, 0.1); color: var(--accent);
+}
+.chat-input-bar-voice .chat-input-bar {
   flex: 1;
   min-width: 0;
 }
