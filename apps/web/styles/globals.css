@@ -9304,14 +9304,15 @@ button {
 }
 
 .chat-sidebar-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm, 6px);
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px 10px 15px;
+  border-radius: 12px;
   cursor: pointer;
   transition: background 120ms ease;
-  gap: 6px;
+  border: none;
+  background: transparent;
+  text-align: left;
 }
 
 .chat-sidebar-item:hover {
