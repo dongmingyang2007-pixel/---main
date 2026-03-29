@@ -93,7 +93,7 @@ class RealtimeSession:
         self._audio_response_text = ""
         self._response_text_channel = None
 
-    def _reconcile_response_text(self, *, channel: str, candidate: str) -> str:
+    def _reconcile_response_text(self, *, channel: str, candidate: str) -> tuple[str, bool]:
         """Merge one response-text channel into the visible assistant transcript.
 
         DashScope omni may stream both ``response.text.delta`` and
@@ -102,42 +102,34 @@ class RealtimeSession:
         visible transcript, so the UI does not render duplicated assistant text.
         """
         if not candidate:
-            return ""
+            return "", False
 
         current = self._current_response_text
-        preferred = self._response_text_channel
-
-        if preferred is None:
+        if not current:
             self._response_text_channel = channel
             self._current_response_text = candidate
-            return candidate
+            return candidate, False
 
-        if channel == "text":
-            if candidate == current:
-                self._response_text_channel = "text"
-                return ""
-            if candidate.startswith(current):
-                self._response_text_channel = "text"
-                delta = candidate[len(current):]
-                self._current_response_text = candidate
-                return delta
-            return ""
-
-        if preferred == "audio":
-            if candidate == current or current.startswith(candidate):
-                return ""
-            if candidate.startswith(current):
-                delta = candidate[len(current):]
-                self._current_response_text = candidate
-                return delta
-            return ""
+        if candidate == current or current.startswith(candidate):
+            return "", False
 
         if candidate.startswith(current):
+            self._response_text_channel = channel
             delta = candidate[len(current):]
-            if delta:
-                self._current_response_text = candidate
-            return delta
-        return ""
+            self._current_response_text = candidate
+            return delta, False
+
+        common_prefix_len = 0
+        for left, right in zip(current, candidate, strict=False):
+            if left != right:
+                break
+            common_prefix_len += 1
+
+        self._response_text_channel = channel
+        self._current_response_text = candidate
+        if common_prefix_len == 0:
+            return candidate, True
+        return candidate, True
 
     @property
     def idle_seconds(self) -> float:
@@ -297,35 +289,44 @@ class RealtimeSession:
         elif event_type == "response.text.delta":
             delta = event.get("delta", "")
             self._text_response_text += delta
-            visible_delta = self._reconcile_response_text(
+            visible_delta, replace = self._reconcile_response_text(
                 channel="text",
                 candidate=self._text_response_text,
             )
             if visible_delta:
-                outgoing.append({"type": "response.text", "text": visible_delta})
+                payload = {"type": "response.text", "text": visible_delta}
+                if replace:
+                    payload["replace"] = True
+                outgoing.append(payload)
             self.touch()
 
         elif event_type == "response.audio_transcript.delta":
             delta = event.get("delta", "")
             self._audio_response_text += delta
-            visible_delta = self._reconcile_response_text(
+            visible_delta, replace = self._reconcile_response_text(
                 channel="audio",
                 candidate=self._audio_response_text,
             )
             if visible_delta:
-                outgoing.append({"type": "response.text", "text": visible_delta})
+                payload = {"type": "response.text", "text": visible_delta}
+                if replace:
+                    payload["replace"] = True
+                outgoing.append(payload)
             self.touch()
 
         elif event_type == "response.audio_transcript.done":
             transcript = event.get("transcript", "")
             if transcript:
                 self._audio_response_text = transcript
-                visible_delta = self._reconcile_response_text(
+                visible_delta, replace = self._reconcile_response_text(
                     channel="audio",
                     candidate=self._audio_response_text,
                 )
                 if visible_delta:
-                    outgoing.append({"type": "response.text", "text": visible_delta})
+                    payload = {"type": "response.text", "text": visible_delta}
+                    if replace:
+                        payload["replace"] = True
+                    outgoing.append(payload)
             self.touch()
 
         elif event_type == "response.done":

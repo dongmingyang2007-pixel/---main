@@ -33,8 +33,19 @@ from app.schemas.memory import (
     MemoryUpdate,
 )
 from app.services.embedding import embed_and_store, search_similar
+from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.memory_context import search_project_memories_for_tool
-from app.services.memory_metadata import normalize_memory_metadata
+from app.services.memory_graph_events import bump_project_memory_graph_revision
+from app.services.memory_metadata import (
+    add_related_edge_exclusion,
+    has_manual_parent_binding,
+    is_category_path_memory,
+    is_structural_only_memory,
+    normalize_memory_metadata,
+    remove_related_edge_exclusion,
+    set_manual_parent_binding,
+)
+from app.services.memory_related_edges import RELATED_EDGE_TYPE, ensure_project_related_edges
 from app.services.memory_file_context import sync_data_item_links_for_memory
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 from app.services.memory_visibility import (
@@ -113,6 +124,42 @@ def _verify_parent_memory(
     if parent.project_id != project_id:
         raise ApiError("not_found", "Parent memory not found", status_code=404)
     return parent
+
+
+def _strip_parent_binding_fields(metadata: dict[str, object] | None) -> dict[str, object]:
+    payload = dict(metadata or {})
+    payload.pop("parent_binding", None)
+    payload.pop("manual_parent_id", None)
+    return payload
+
+
+def _assert_valid_parent_assignment(
+    db: Session,
+    *,
+    memory_id: str,
+    candidate_parent_id: str,
+    workspace_id: str,
+) -> None:
+    current_id = candidate_parent_id
+    visited: set[str] = set()
+    while current_id:
+        if current_id == memory_id:
+            raise ApiError(
+                "bad_request",
+                "A memory cannot be reparented beneath one of its descendants",
+                status_code=400,
+            )
+        if current_id in visited:
+            raise ApiError("bad_request", "Memory hierarchy contains a cycle", status_code=400)
+        visited.add(current_id)
+        parent = (
+            db.query(Memory.parent_memory_id)
+            .filter(Memory.id == current_id, Memory.workspace_id == workspace_id)
+            .first()
+        )
+        if parent is None:
+            return
+        current_id = parent[0] or ""
 
 
 def _get_memory_or_404(db: Session, *, memory_id: str, workspace_id: str) -> Memory:
@@ -226,7 +273,12 @@ def _delete_memory_embeddings(db: Session, memory_id: str) -> None:
 
 
 def _sync_memory_embedding(memory: Memory, db: Session) -> None:
-    if is_assistant_root_memory(memory) or not settings.dashscope_api_key or not memory.content.strip():
+    if (
+        is_assistant_root_memory(memory)
+        or is_structural_only_memory(memory)
+        or not settings.dashscope_api_key
+        or not memory.content.strip()
+    ):
         return
     try:
         _delete_memory_embeddings(db, memory.id)
@@ -258,10 +310,33 @@ def _trigger_memory_compaction(workspace_id: str, project_id: str) -> None:
         pass
 
 
+def _sync_project_category_tree(db: Session, *, workspace_id: str, project_id: str) -> bool:
+    summary = ensure_project_category_tree(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    return any(summary.as_dict().values())
+
+
+def _sync_project_related_edges(db: Session, *, workspace_id: str, project_id: str) -> bool:
+    summary = ensure_project_related_edges(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    return any(summary.as_dict().values())
+
+
+def _bump_graph_revision(*, workspace_id: str, project_id: str) -> None:
+    bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
+
+
 @router.get("", response_model=MemoryGraphOut)
 def get_memory_graph(
     project_id: str = Query(...),
     conversation_id: str | None = Query(default=None),
+    include_temporary: bool = Query(default=False),
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
     workspace_role: str = Depends(get_current_workspace_role),
@@ -278,8 +353,11 @@ def get_memory_graph(
             workspace_role=workspace_role,
         )
     _, changed = ensure_project_assistant_root(db, project)
-    if changed:
+    tree_changed = _sync_project_category_tree(db, workspace_id=workspace_id, project_id=project_id)
+    related_changed = _sync_project_related_edges(db, workspace_id=workspace_id, project_id=project_id)
+    if changed or tree_changed or related_changed:
         db.commit()
+        _bump_graph_revision(workspace_id=workspace_id, project_id=project_id)
 
     # All permanent nodes for this project
     permanent = (
@@ -308,6 +386,26 @@ def get_memory_graph(
                 Memory.source_conversation_id == conversation_id,
             )
             .all()
+        )
+    elif include_temporary:
+        temporary = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project_id,
+                Memory.workspace_id == workspace_id,
+                Memory.type == "temporary",
+            )
+            .all()
+        )
+
+    if temporary:
+        temporary = _filter_accessible_memories(
+            db,
+            temporary,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            current_user_id=current_user.id,
+            workspace_role=workspace_role,
         )
 
     all_memories = permanent + temporary
@@ -400,6 +498,7 @@ def create_memory(
     _: None = Depends(require_csrf_protection),
 ) -> MemoryOut:
     project = get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
+    parent_field_present = "parent_memory_id" in payload.model_fields_set
     if payload.type not in {"permanent", "temporary"}:
         raise ApiError("bad_request", "Invalid memory type", status_code=400)
     if payload.type == "temporary" and not payload.source_conversation_id:
@@ -418,17 +517,25 @@ def create_memory(
             workspace_role=workspace_role,
         )
     root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=True)
-    if payload.parent_memory_id:
+    requested_parent_id = payload.parent_memory_id
+    if requested_parent_id:
         _verify_parent_memory(
             db,
-            parent_memory_id=payload.parent_memory_id,
+            parent_memory_id=requested_parent_id,
             project_id=payload.project_id,
             workspace_id=workspace_id,
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
-    else:
-        payload.parent_memory_id = root_memory.id
+    resolved_parent_id = requested_parent_id or root_memory.id
+    metadata_input = _strip_parent_binding_fields(payload.metadata_json)
+    if parent_field_present:
+        metadata_input = set_manual_parent_binding(
+            metadata_input,
+            parent_memory_id=(
+                None if resolved_parent_id == root_memory.id else resolved_parent_id
+            ),
+        )
 
     memory = Memory(
         workspace_id=workspace_id,
@@ -437,22 +544,27 @@ def create_memory(
         category=payload.category,
         type=payload.type,
         source_conversation_id=payload.source_conversation_id,
-        parent_memory_id=payload.parent_memory_id,
+        parent_memory_id=resolved_parent_id,
         position_x=payload.position_x,
         position_y=payload.position_y,
         metadata_json=normalize_memory_metadata(
             content=payload.content,
             category=payload.category,
             memory_type=payload.type,
-            metadata=payload.metadata_json,
+            metadata=metadata_input,
         ),
     )
     db.add(memory)
-    if root_changed:
-        db.flush()
+    db.flush()
+    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=payload.project_id)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=payload.project_id)
     db.refresh(memory)
     _sync_memory_embedding(memory, db)
+    if memory.type == "permanent":
+        if _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id):
+            db.commit()
+            _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     if memory.type == "permanent":
         _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
@@ -560,6 +672,8 @@ def list_available_memory_files(
     )
     if is_assistant_root_memory(memory):
         raise ApiError("bad_request", "Assistant root memory cannot attach files", status_code=400)
+    if is_category_path_memory(memory):
+        raise ApiError("bad_request", "Category path nodes cannot attach files", status_code=400)
 
     attached_item_ids = {
         item_id
@@ -614,6 +728,8 @@ def attach_memory_file(
     )
     if is_assistant_root_memory(memory):
         raise ApiError("bad_request", "Assistant root memory cannot attach files", status_code=400)
+    if is_category_path_memory(memory):
+        raise ApiError("bad_request", "Category path nodes cannot attach files", status_code=400)
     data_item = get_data_item_in_workspace(db, data_item_id=payload.data_item_id, workspace_id=workspace_id)
     if not data_item or not _is_completed_data_item(data_item):
         raise ApiError("not_found", "Data item not found", status_code=404)
@@ -650,6 +766,7 @@ def attach_memory_file(
     memory_file = MemoryFile(memory_id=memory.id, data_item_id=data_item.id)
     db.add(memory_file)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     db.refresh(memory_file)
     return MemoryFileOut(
         id=memory_file.id,
@@ -691,6 +808,7 @@ def delete_memory_file(
 
     db.delete(memory_file[0])
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -714,52 +832,70 @@ def update_memory(
     )
     if is_assistant_root_memory(memory):
         raise ApiError("bad_request", "Assistant root memory is system managed", status_code=400)
+    if is_category_path_memory(memory):
+        raise ApiError("bad_request", "Category path nodes are system managed", status_code=400)
+
+    parent_field_present = "parent_memory_id" in payload.model_fields_set
+    project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
+    root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
 
     if payload.content is not None:
         memory.content = payload.content
     if payload.category is not None:
         memory.category = payload.category
-    if payload.parent_memory_id is not None:
-        if payload.parent_memory_id == memory.id:
-            raise ApiError("bad_request", "A memory cannot parent itself", status_code=400)
-        _verify_parent_memory(
-            db,
-            parent_memory_id=payload.parent_memory_id,
-            project_id=memory.project_id,
-            workspace_id=workspace_id,
-            current_user_id=current_user.id,
-            workspace_role=workspace_role,
-        )
-        memory.parent_memory_id = payload.parent_memory_id
+    metadata = dict(memory.metadata_json or {})
+    if payload.metadata_json is not None:
+        metadata.update(_strip_parent_binding_fields(payload.metadata_json))
+    if parent_field_present:
+        requested_parent_id = payload.parent_memory_id
+        if requested_parent_id:
+            if requested_parent_id == memory.id:
+                raise ApiError("bad_request", "A memory cannot parent itself", status_code=400)
+            parent_memory = _verify_parent_memory(
+                db,
+                parent_memory_id=requested_parent_id,
+                project_id=memory.project_id,
+                workspace_id=workspace_id,
+                current_user_id=current_user.id,
+                workspace_role=workspace_role,
+            )
+            _assert_valid_parent_assignment(
+                db,
+                memory_id=memory.id,
+                candidate_parent_id=parent_memory.id,
+                workspace_id=workspace_id,
+            )
+            memory.parent_memory_id = parent_memory.id
+            metadata = set_manual_parent_binding(metadata, parent_memory_id=parent_memory.id)
+        else:
+            memory.parent_memory_id = root_memory.id
+            metadata = set_manual_parent_binding(metadata, parent_memory_id=None)
     if payload.position_x is not None:
         memory.position_x = payload.position_x
     if payload.position_y is not None:
         memory.position_y = payload.position_y
-    if payload.metadata_json is not None:
-        metadata = dict(payload.metadata_json)
-        if is_private_memory(memory):
-            metadata = build_private_memory_metadata(
-                metadata,
-                owner_user_id=(memory.metadata_json or {}).get("owner_user_id"),
-            )
-        memory.metadata_json = normalize_memory_metadata(
-            content=memory.content,
-            category=memory.category,
-            memory_type=memory.type,
-            metadata=metadata,
+    if is_private_memory(memory):
+        metadata = build_private_memory_metadata(
+            metadata,
+            owner_user_id=(memory.metadata_json or {}).get("owner_user_id"),
         )
-    else:
-        memory.metadata_json = normalize_memory_metadata(
-            content=memory.content,
-            category=memory.category,
-            memory_type=memory.type,
-            metadata=dict(memory.metadata_json or {}),
-        )
+    memory.metadata_json = normalize_memory_metadata(
+        content=memory.content,
+        category=memory.category,
+        memory_type=memory.type,
+        metadata=metadata,
+    )
     memory.updated_at = datetime.now(timezone.utc)
 
+    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     db.refresh(memory)
     _sync_memory_embedding(memory, db)
+    if memory.type == "permanent":
+        if _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id):
+            db.commit()
+            _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     if memory.type == "permanent":
         _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
@@ -784,6 +920,8 @@ def delete_memory(
     )
     if is_assistant_root_memory(memory):
         raise ApiError("bad_request", "Assistant root memory cannot be deleted", status_code=400)
+    if is_category_path_memory(memory):
+        raise ApiError("bad_request", "Category path nodes are system managed", status_code=400)
 
     project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
     root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
@@ -799,11 +937,29 @@ def delete_memory(
     )
     for child in children:
         child.parent_memory_id = replacement_parent_id
+        if has_manual_parent_binding(child):
+            child.metadata_json = normalize_memory_metadata(
+                content=child.content,
+                category=child.category,
+                memory_type=child.type,
+                metadata=set_manual_parent_binding(
+                    dict(child.metadata_json or {}),
+                    parent_memory_id=(
+                        None
+                        if not replacement_parent_id or replacement_parent_id == root_memory.id
+                        else replacement_parent_id
+                    ),
+                ),
+            )
         child.updated_at = datetime.now(timezone.utc)
 
     _delete_memory_embeddings(db, memory.id)
     db.delete(memory)
+    db.flush()
+    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
+    _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     _trigger_memory_compaction(workspace_id, memory.project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -856,8 +1012,14 @@ def promote_memory(
         root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
         memory.parent_memory_id = root_memory.id
     memory.updated_at = datetime.now(timezone.utc)
+    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     db.refresh(memory)
+    _sync_memory_embedding(memory, db)
+    if _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id):
+        db.commit()
+        _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
 
@@ -874,6 +1036,7 @@ async def search_memory(
     root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=False)
     if root_changed:
         db.commit()
+        _bump_graph_revision(workspace_id=workspace_id, project_id=payload.project_id)
 
     try:
         project_conversation = (
@@ -922,6 +1085,7 @@ async def search_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+        memories = [memory for memory in memories if not is_structural_only_memory(memory)]
         return [
             MemorySearchResult(
                 memory=MemoryOut.model_validate(memory, from_attributes=True),
@@ -957,6 +1121,8 @@ async def search_memory(
             continue
         memory = memories_by_id.get(memory_id)
         if not memory:
+            continue
+        if is_structural_only_memory(memory):
             continue
         if memory.id == root_memory.id:
             continue
@@ -1014,12 +1180,45 @@ def create_edge(
     existing = (
         db.query(MemoryEdge)
         .filter(
-            MemoryEdge.source_memory_id == payload.source_memory_id,
-            MemoryEdge.target_memory_id == payload.target_memory_id,
+            (
+                (MemoryEdge.source_memory_id == payload.source_memory_id)
+                & (MemoryEdge.target_memory_id == payload.target_memory_id)
+            )
+            | (
+                (MemoryEdge.source_memory_id == payload.target_memory_id)
+                & (MemoryEdge.target_memory_id == payload.source_memory_id)
+            )
         )
         .first()
     )
     if existing:
+        if existing.edge_type == "manual":
+            return MemoryEdgeOut.model_validate(existing, from_attributes=True)
+        if existing.edge_type == RELATED_EDGE_TYPE:
+            existing.edge_type = "manual"
+            existing.strength = payload.strength
+            source.metadata_json = normalize_memory_metadata(
+                content=source.content,
+                category=source.category,
+                memory_type=source.type,
+                metadata=remove_related_edge_exclusion(
+                    dict(source.metadata_json or {}),
+                    memory_id=target.id,
+                ),
+            )
+            target.metadata_json = normalize_memory_metadata(
+                content=target.content,
+                category=target.category,
+                memory_type=target.type,
+                metadata=remove_related_edge_exclusion(
+                    dict(target.metadata_json or {}),
+                    memory_id=source.id,
+                ),
+            )
+            db.commit()
+            _bump_graph_revision(workspace_id=workspace_id, project_id=source.project_id)
+            db.refresh(existing)
+            return MemoryEdgeOut.model_validate(existing, from_attributes=True)
         raise ApiError("conflict", "Edge already exists between these memories", status_code=409)
 
     edge = MemoryEdge(
@@ -1028,8 +1227,27 @@ def create_edge(
         edge_type="manual",
         strength=payload.strength,
     )
+    source.metadata_json = normalize_memory_metadata(
+        content=source.content,
+        category=source.category,
+        memory_type=source.type,
+        metadata=remove_related_edge_exclusion(
+            dict(source.metadata_json or {}),
+            memory_id=target.id,
+        ),
+    )
+    target.metadata_json = normalize_memory_metadata(
+        content=target.content,
+        category=target.category,
+        memory_type=target.type,
+        metadata=remove_related_edge_exclusion(
+            dict(target.metadata_json or {}),
+            memory_id=source.id,
+        ),
+    )
     db.add(edge)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=source.project_id)
     db.refresh(edge)
     return MemoryEdgeOut.model_validate(edge, from_attributes=True)
 
@@ -1049,14 +1267,17 @@ def delete_edge(
     if not edge:
         raise ApiError("not_found", "Edge not found", status_code=404)
 
-    _get_accessible_memory_or_404(
+    if edge.edge_type not in {"manual", RELATED_EDGE_TYPE}:
+        raise ApiError("bad_request", "Only lateral relations can be removed here", status_code=400)
+
+    source = _get_accessible_memory_or_404(
         db,
         memory_id=edge.source_memory_id,
         workspace_id=workspace_id,
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
-    _get_accessible_memory_or_404(
+    target = _get_accessible_memory_or_404(
         db,
         memory_id=edge.target_memory_id,
         workspace_id=workspace_id,
@@ -1064,6 +1285,25 @@ def delete_edge(
         workspace_role=workspace_role,
     )
 
+    source.metadata_json = normalize_memory_metadata(
+        content=source.content,
+        category=source.category,
+        memory_type=source.type,
+        metadata=add_related_edge_exclusion(
+            dict(source.metadata_json or {}),
+            memory_id=target.id,
+        ),
+    )
+    target.metadata_json = normalize_memory_metadata(
+        content=target.content,
+        category=target.category,
+        memory_type=target.type,
+        metadata=add_related_edge_exclusion(
+            dict(target.metadata_json or {}),
+            memory_id=source.id,
+        ),
+    )
     db.delete(edge)
     db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=source.project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

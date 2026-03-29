@@ -154,11 +154,18 @@ export default function DashboardPage() {
     const map: Record<string, string> = {};
     projects.forEach((project) => {
       const items = pipelineMap[project.id] || [];
-      const llmSlot = items.find((i) => i.model_type === "llm");
-      if (llmSlot) {
-        map[project.id] = catalogModelNames.get(llmSlot.model_id) || llmSlot.model_id;
-      } else if (items.length > 0) {
-        map[project.id] = catalogModelNames.get(items[0].model_id) || items[0].model_id;
+      const preferredSlotType =
+        project.default_chat_mode === "omni_realtime"
+          ? "realtime"
+          : project.default_chat_mode === "synthetic_realtime"
+            ? "llm"
+            : "llm";
+      const preferredSlot = items.find((item) => item.model_type === preferredSlotType);
+      const llmSlot = items.find((item) => item.model_type === "llm");
+      const fallbackSlot = items[0];
+      const slot = preferredSlot || llmSlot || fallbackSlot;
+      if (slot) {
+        map[project.id] = catalogModelNames.get(slot.model_id) || slot.model_id;
       }
     });
     return map;
@@ -241,7 +248,8 @@ export default function DashboardPage() {
               return (
                 <div
                   key={project.id}
-                  className="home-assistant-card"
+                  className="home-assistant-card dashboard-project-card"
+                  data-testid={`dashboard-project-card-${project.id}`}
                   onClick={() => router.push(`/app/assistants/${project.id}`)}
                   style={{ cursor: "pointer" }}
                 >

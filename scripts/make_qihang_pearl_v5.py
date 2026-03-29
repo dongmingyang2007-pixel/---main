@@ -29,7 +29,7 @@ from make_qihang_pearl_v4 import (
 AXIS_LABELS = ("X", "Y", "Z")
 PHASE_NAMES = {
     1: "baseline_six_view_diagnostics",
-    2: "remove_front_right_sidewall",
+    2: "open_front_window_and_rebuild_sidewalls",
 }
 
 
@@ -70,10 +70,52 @@ HEURISTIC_Y_RANGE_MM = (-0.6, 9.35)
 HEURISTIC_ABS_Z_RANGE_MM = (13.0, 16.25)
 HEURISTIC_NORMAL_Z_ABS_MIN = 0.7
 HEURISTIC_NORMAL_Y_ABS_MAX = 0.3
-FRONT_RIGHT_WALL_X_RANGE_MM = (31.8, 43.8)
-FRONT_RIGHT_WALL_Y_RANGE_MM = (-0.5, 9.45)
-FRONT_RIGHT_WALL_Z_RANGE_MM = (-0.7, 15.65)
-EXPECTED_FRONT_RIGHT_WALL_TRIANGLE_COUNT = 84
+FRONT_BLOCKER_SEED_X_RANGE_MM = (-29.0, -1.8)
+FRONT_BLOCKER_SEED_Y_RANGE_MM = (-0.6, 9.5)
+FRONT_BLOCKER_SEED_Z_RANGE_MM = (-17.1, -15.0)
+FRONT_BLOCKER_ALLOWED_X_RANGE_MM = (-30.0, -1.0)
+FRONT_BLOCKER_ALLOWED_Y_RANGE_MM = (-1.0, 10.0)
+FRONT_BLOCKER_ALLOWED_Z_RANGE_MM = (-17.5, -14.5)
+FRONT_BLOCKER_NORMAL_Y_ABS_MAX = 0.2
+FRONT_BLOCKER_NORMAL_Z_ABS_MIN = 0.95
+EXPECTED_FRONT_BLOCKER_TRIANGLE_COUNT = 86
+
+REMAINING_FRONT_FACE_CENTER_X_RANGE_MM = (-1.6, -1.0)
+REMAINING_FRONT_FACE_CENTER_Y_RANGE_MM = (-1.0, 10.0)
+REMAINING_FRONT_FACE_CENTER_Z_RANGE_MM = (-16.7, -15.5)
+REMAINING_FRONT_FACE_NORMAL_Z_ABS_MIN = 0.9
+REMAINING_FRONT_FACE_ASPECT_MIN = 4.0
+EXPECTED_REMAINING_FRONT_FACE_TRIANGLE_COUNT = 2
+
+REMAINING_SIDEWALL_CENTER_X_RANGE_MM = (-2.5, 0.5)
+REMAINING_SIDEWALL_CENTER_Y_RANGE_MM = (-1.0, 10.0)
+REMAINING_SIDEWALL_CENTER_Z_RANGE_MM = (-16.6, -15.3)
+REMAINING_SIDEWALL_NORMAL_X_MIN = 0.8
+REMAINING_SIDEWALL_AREA_MM2_MIN = 1.0
+EXPECTED_REMAINING_SIDEWALL_TRIANGLE_COUNT = 2
+EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT = 36
+FRONT_WINDOW_OUTER_STRIP_SLICE = (2, 18)
+FRONT_WINDOW_INNER_STRIP_SLICE = (19, 34)
+FRONT_WINDOW_LEFT_CAP_LOOP_INDICES = (35, 0, 1, 2, 33, 34)
+FRONT_WINDOW_LEFT_CAP_TRIANGLE_INDICES = (
+    (0, 1, 5),
+    (1, 2, 5),
+    (2, 4, 5),
+    (2, 3, 4),
+)
+FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES = (17, 18, 19)
+GUIDED_FRONT_FILL_SAMPLE_COUNT = 24
+GUIDED_FRONT_FILL_RAMP_X_TOLERANCE_MM = 0.8
+GUIDED_FRONT_FILL_RAMP_Y_RANGE_MM = (-2.0, 10.0)
+GUIDED_FRONT_FILL_FRONT_BAND_MM = 0.6
+GUIDED_FRONT_FILL_MIN_RISE_MM = 0.6
+GUIDED_FRONT_FILL_FALLBACK_Z_MM = -15.0
+FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM = (-27.1, -22.45)
+FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM = (-0.2, 3.0)
+FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM = (-16.05, -14.75)
+FRONT_FILL_ARTIFACT_AREA_MM2_MIN = 1.8
+EXPECTED_FRONT_FILL_ARTIFACT_TRIANGLE_COUNT = 12
+EXPECTED_FRONT_FILL_ARTIFACT_HOLE_VERTEX_COUNT = 10
 
 
 def default_output_path(phase: int) -> Path:
@@ -196,12 +238,46 @@ def triangle_normal(triangle: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.n
     return normal / length
 
 
+def triangle_area_mm2(triangle: tuple[np.ndarray, np.ndarray, np.ndarray]) -> float:
+    point_a, point_b, point_c = triangle
+    cross = np.cross(point_b - point_a, point_c - point_a)
+    return float(np.linalg.norm(cross) * 0.5 * 1_000_000.0)
+
+
 def project_point(point: np.ndarray, dims: tuple[int, int]) -> tuple[float, float]:
     return (float(point[dims[0]] * 1000.0), float(point[dims[1]] * 1000.0))
 
 
 def vector_to_mm_list(values: np.ndarray) -> list[float]:
     return [round(float(value) * 1000.0, 4) for value in values]
+
+
+def build_triangle_vertex_adjacency(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> list[set[int]]:
+    triangle_vertex_ids: list[tuple[int, int, int]] = []
+    vertex_key_to_id: dict[tuple[float, float, float], int] = {}
+
+    for triangle in shell_triangles:
+        vertex_ids: list[int] = []
+        for point in triangle:
+            key = tuple(round(float(value), 9) for value in point)
+            if key not in vertex_key_to_id:
+                vertex_key_to_id[key] = len(vertex_key_to_id)
+            vertex_ids.append(vertex_key_to_id[key])
+        triangle_vertex_ids.append(tuple(vertex_ids))
+
+    vertex_to_triangles: dict[int, list[int]] = defaultdict(list)
+    for triangle_index, vertex_ids in enumerate(triangle_vertex_ids):
+        for vertex_id in vertex_ids:
+            vertex_to_triangles[vertex_id].append(triangle_index)
+
+    adjacency: list[set[int]] = [set() for _ in shell_triangles]
+    for touching_triangles in vertex_to_triangles.values():
+        touching_set = set(touching_triangles)
+        for triangle_index in touching_set:
+            adjacency[triangle_index].update(touching_set - {triangle_index})
+    return adjacency
 
 
 def triangle_matches_side_candidate(
@@ -380,6 +456,572 @@ def build_part_geometries(gltf: dict, bin_chunk: bytearray) -> dict[str, dict[st
         }
 
     return part_geometries
+
+
+def build_named_node_product_matrices(gltf: dict) -> dict[str, np.ndarray]:
+    node_lookup = {node.get("name"): index for index, node in enumerate(gltf["nodes"]) if node.get("name")}
+    parent_lookup = build_parent_lookup(gltf)
+
+    @lru_cache(maxsize=None)
+    def get_world_matrix(node_index: int) -> np.ndarray:
+        node = gltf["nodes"][node_index]
+        local_matrix = get_local_matrix(node)
+        parent_index = parent_lookup.get(node_index)
+        if parent_index is None:
+            return local_matrix
+        return get_world_matrix(parent_index) @ local_matrix
+
+    product_root_index = node_lookup["QIHANG_Product"]
+    product_inverse = np.linalg.inv(get_world_matrix(product_root_index))
+    return {
+        name: product_inverse @ get_world_matrix(index)
+        for name, index in node_lookup.items()
+    }
+
+
+def read_shell_primitive_rows(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> tuple[dict, list[list[float]], list[list[float]]]:
+    named_node_indices = {
+        node.get("name"): index for index, node in enumerate(gltf["nodes"]) if node.get("name")
+    }
+    shell_node_index = named_node_indices["Case_Base_Shell"]
+    primitive = gltf["meshes"][gltf["nodes"][shell_node_index]["mesh"]]["primitives"][0]
+    if "indices" in primitive:
+        raise ValueError("Expected non-indexed Case_Base_Shell primitive in V4/V5 shell processing.")
+
+    positions = read_accessor_rows(gltf, bin_chunk, primitive["attributes"]["POSITION"])
+    normals = read_accessor_rows(gltf, bin_chunk, primitive["attributes"]["NORMAL"])
+    if len(positions) != len(normals) or len(positions) % 3 != 0:
+        raise ValueError("Case_Base_Shell primitive is not a triangle soup with matching normals.")
+    return primitive, positions, normals
+
+
+def build_boundary_edges(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+    edge_count: dict[tuple[tuple[float, float, float], tuple[float, float, float]], int] = defaultdict(int)
+    for triangle in shell_triangles:
+        triangle_points = [tuple(round(float(value), 9) for value in point) for point in triangle]
+        for start, end in ((0, 1), (1, 2), (2, 0)):
+            edge = tuple(sorted((triangle_points[start], triangle_points[end])))
+            edge_count[edge] += 1
+    return [edge for edge, count in edge_count.items() if count == 1]
+
+
+def ordered_boundary_loop(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> list[np.ndarray]:
+    boundary_edges = build_boundary_edges(shell_triangles)
+    if not boundary_edges:
+        return []
+
+    adjacency: dict[tuple[float, float, float], list[tuple[float, float, float]]] = defaultdict(list)
+    for point_a, point_b in boundary_edges:
+        adjacency[point_a].append(point_b)
+        adjacency[point_b].append(point_a)
+
+    invalid_vertices = [vertex for vertex, neighbors in adjacency.items() if len(neighbors) != 2]
+    if invalid_vertices:
+        raise ValueError(f"Boundary loop is not a simple 2-neighbor cycle: {len(invalid_vertices)} invalid vertices.")
+
+    start = min(adjacency, key=lambda point: (point[0], point[1], point[2]))
+    ordered_points = [np.array(start, dtype=float)]
+    previous: tuple[float, float, float] | None = None
+    current = start
+
+    while True:
+        neighbors = adjacency[current]
+        next_point = neighbors[0] if neighbors[0] != previous else neighbors[1]
+        if next_point == start:
+            break
+        ordered_points.append(np.array(next_point, dtype=float))
+        previous, current = current, next_point
+        if len(ordered_points) > len(adjacency):
+            raise ValueError("Boundary traversal exceeded expected vertex count.")
+
+    if len(ordered_points) != len(adjacency):
+        raise ValueError("Boundary traversal did not cover the full boundary loop.")
+    return ordered_points
+
+
+def orient_triangle_away_from_center(
+    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    reference_center: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    points = np.stack(triangle, axis=0)
+    raw_normal = np.cross(points[1] - points[0], points[2] - points[0])
+    if float(np.dot(raw_normal, points.mean(axis=0) - reference_center)) < 0.0:
+        return (triangle[0], triangle[2], triangle[1])
+    return triangle
+
+
+def bridge_opening_loop(loop_points: list[np.ndarray]) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    if not loop_points:
+        return []
+    if len(loop_points) % 2 != 0:
+        raise ValueError(f"Expected even boundary loop length, got {len(loop_points)}.")
+    half_count = len(loop_points) // 2
+    if half_count < 2:
+        raise ValueError("Boundary loop too small to bridge.")
+
+    ring_a = loop_points[:half_count]
+    ring_b = list(reversed(loop_points[half_count:]))
+    reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
+    bridge_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for index in range(half_count - 2):
+        point_a0 = ring_a[index]
+        point_a1 = ring_a[index + 1]
+        point_b0 = ring_b[index]
+        point_b1 = ring_b[index + 1]
+        bridge_triangles.append(
+            orient_triangle_away_from_center((point_a0, point_a1, point_b1), reference_center)
+        )
+        bridge_triangles.append(
+            orient_triangle_away_from_center((point_a0, point_b1, point_b0), reference_center)
+        )
+
+    # The final quad on the right-side lip becomes a visible spike if we reuse the old diagonal.
+    final_a0 = ring_a[half_count - 2]
+    final_a1 = ring_a[half_count - 1]
+    final_b0 = ring_b[half_count - 1]
+    final_b1 = ring_b[half_count - 2]
+    bridge_triangles.append(
+        orient_triangle_away_from_center((final_a0, final_a1, final_b1), reference_center)
+    )
+    bridge_triangles.append(
+        orient_triangle_away_from_center((final_a1, final_b0, final_b1), reference_center)
+    )
+    return bridge_triangles
+
+
+def polyline_parameters(polyline: list[np.ndarray]) -> list[float]:
+    distances = [0.0]
+    for index in range(1, len(polyline)):
+        step = float(np.linalg.norm(polyline[index] - polyline[index - 1]))
+        distances.append(distances[-1] + step)
+    total_length = max(distances[-1], 1e-12)
+    return [distance / total_length for distance in distances]
+
+
+def resample_open_polyline(polyline: list[np.ndarray], sample_count: int) -> list[np.ndarray]:
+    if sample_count < 2:
+        raise ValueError(f"Expected at least 2 resample points, got {sample_count}.")
+    parameters = polyline_parameters(polyline)
+    target_parameters = np.linspace(0.0, 1.0, sample_count)
+    result: list[np.ndarray] = []
+    segment_index = 0
+
+    for target in target_parameters:
+        while segment_index < len(parameters) - 2 and parameters[segment_index + 1] < target:
+            segment_index += 1
+        start_param = parameters[segment_index]
+        end_param = parameters[segment_index + 1]
+        if end_param - start_param <= 1e-12:
+            result.append(polyline[segment_index].copy())
+            continue
+        blend = (target - start_param) / (end_param - start_param)
+        result.append((polyline[segment_index] * (1.0 - blend)) + (polyline[segment_index + 1] * blend))
+    return result
+
+
+def build_unique_points(triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]]) -> np.ndarray:
+    unique_points = {
+        tuple(round(float(value), 6) for value in point): point
+        for triangle in triangles
+        for point in triangle
+    }
+    return np.array(list(unique_points.values()), dtype=float)
+
+
+def select_guided_fill_ramp_point(
+    ramp_points: np.ndarray,
+    *,
+    x_mm: float,
+    bottom_y_mm: float,
+) -> np.ndarray:
+    x_delta_mm = np.abs((ramp_points[:, 0] * 1000.0) - x_mm)
+    candidates = ramp_points[x_delta_mm < GUIDED_FRONT_FILL_RAMP_X_TOLERANCE_MM]
+    candidates = candidates[
+        (candidates[:, 1] * 1000.0 > GUIDED_FRONT_FILL_RAMP_Y_RANGE_MM[0])
+        & (candidates[:, 1] * 1000.0 < GUIDED_FRONT_FILL_RAMP_Y_RANGE_MM[1])
+    ]
+    if len(candidates) == 0:
+        return np.array(
+            [
+                x_mm / 1000.0,
+                (bottom_y_mm + 1.0) / 1000.0,
+                GUIDED_FRONT_FILL_FALLBACK_Z_MM / 1000.0,
+            ],
+            dtype=float,
+        )
+
+    min_z = float(candidates[:, 2].min())
+    front_band = candidates[candidates[:, 2] <= (min_z + (GUIDED_FRONT_FILL_FRONT_BAND_MM / 1000.0))]
+    selected = front_band[np.argmax(front_band[:, 1])] if len(front_band) else candidates[np.argmax(candidates[:, 1])]
+    return np.array(
+        [
+            x_mm / 1000.0,
+            max(float(selected[1]) * 1000.0, bottom_y_mm + GUIDED_FRONT_FILL_MIN_RISE_MM) / 1000.0,
+            float(selected[2]),
+        ],
+        dtype=float,
+    )
+
+
+def loft_open_polylines(
+    polyline_a: list[np.ndarray],
+    polyline_b: list[np.ndarray],
+    reference_center: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    params_a = polyline_parameters(polyline_a)
+    params_b = polyline_parameters(polyline_b)
+    index_a = 0
+    index_b = 0
+    triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+
+    while index_a < len(polyline_a) - 1 or index_b < len(polyline_b) - 1:
+        if index_a == len(polyline_a) - 1:
+            triangle = (polyline_a[index_a], polyline_b[index_b + 1], polyline_b[index_b])
+            index_b += 1
+        elif index_b == len(polyline_b) - 1:
+            triangle = (polyline_a[index_a], polyline_a[index_a + 1], polyline_b[index_b])
+            index_a += 1
+        elif params_a[index_a + 1] <= params_b[index_b + 1]:
+            triangle = (polyline_a[index_a], polyline_a[index_a + 1], polyline_b[index_b])
+            index_a += 1
+        else:
+            triangle = (polyline_a[index_a], polyline_b[index_b + 1], polyline_b[index_b])
+            index_b += 1
+
+        area_vector = np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
+        if float(np.linalg.norm(area_vector)) <= 1e-12:
+            continue
+        triangles.append(orient_triangle_away_from_center(triangle, reference_center))
+    return triangles
+
+
+def signed_area_2d(points_2d: np.ndarray) -> float:
+    area = 0.0
+    for index in range(len(points_2d)):
+        point_a = points_2d[index]
+        point_b = points_2d[(index + 1) % len(points_2d)]
+        area += (point_a[0] * point_b[1]) - (point_b[0] * point_a[1])
+    return area * 0.5
+
+
+def point_in_triangle_2d(
+    point: np.ndarray,
+    point_a: np.ndarray,
+    point_b: np.ndarray,
+    point_c: np.ndarray,
+) -> bool:
+    vector_0 = point_c - point_a
+    vector_1 = point_b - point_a
+    vector_2 = point - point_a
+    denominator = (vector_0[0] * vector_1[1]) - (vector_1[0] * vector_0[1])
+    if abs(denominator) <= 1e-12:
+        return False
+    barycentric_u = ((vector_2[0] * vector_1[1]) - (vector_1[0] * vector_2[1])) / denominator
+    barycentric_v = ((vector_0[0] * vector_2[1]) - (vector_2[0] * vector_0[1])) / denominator
+    return barycentric_u >= -1e-12 and barycentric_v >= -1e-12 and (barycentric_u + barycentric_v) <= 1.0 + 1e-12
+
+
+def triangulate_boundary_loop_projected(
+    loop_points: list[np.ndarray],
+    *,
+    dims: tuple[int, int],
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    projected_points = np.array([[point[dims[0]], point[dims[1]]] for point in loop_points], dtype=float)
+    orientation_sign = 1 if signed_area_2d(projected_points) > 0.0 else -1
+    remaining_indices = list(range(len(loop_points)))
+    triangle_indices: list[tuple[int, int, int]] = []
+
+    while len(remaining_indices) > 3:
+        clipped = False
+        for loop_index in range(len(remaining_indices)):
+            index_a = remaining_indices[(loop_index - 1) % len(remaining_indices)]
+            index_b = remaining_indices[loop_index]
+            index_c = remaining_indices[(loop_index + 1) % len(remaining_indices)]
+            point_a = projected_points[index_a]
+            point_b = projected_points[index_b]
+            point_c = projected_points[index_c]
+            cross = ((point_b[0] - point_a[0]) * (point_c[1] - point_a[1])) - (
+                (point_b[1] - point_a[1]) * (point_c[0] - point_a[0])
+            )
+            if orientation_sign * cross < -1e-12:
+                continue
+            if any(
+                point_in_triangle_2d(projected_points[other_index], point_a, point_b, point_c)
+                for other_index in remaining_indices
+                if other_index not in (index_a, index_b, index_c)
+            ):
+                continue
+            triangle_indices.append((index_a, index_b, index_c))
+            del remaining_indices[loop_index]
+            clipped = True
+            break
+        if not clipped:
+            raise ValueError(
+                f"Projected ear clipping stalled for dims={dims} with remaining vertices={remaining_indices}."
+            )
+
+    triangle_indices.append(tuple(remaining_indices))
+    reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
+    return [
+        orient_triangle_away_from_center(
+            (loop_points[index_a], loop_points[index_b], loop_points[index_c]),
+            reference_center,
+        )
+        for index_a, index_b, index_c in triangle_indices
+    ]
+
+
+def build_guided_front_fill_patch(
+    loop_points: list[np.ndarray],
+    ramp_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray]], dict[str, object]]:
+    if len(loop_points) != EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT} boundary vertices for guided fill, "
+            f"found {len(loop_points)}."
+        )
+
+    outer_chain = [point.copy() for point in loop_points[:18]]
+    inner_chain = [loop_points[0].copy()] + [point.copy() for point in reversed(loop_points[18:])] + [loop_points[17].copy()]
+    ramp_points = build_unique_points(ramp_triangles)
+    outer_samples = resample_open_polyline(outer_chain, GUIDED_FRONT_FILL_SAMPLE_COUNT)
+    inner_samples = resample_open_polyline(inner_chain, GUIDED_FRONT_FILL_SAMPLE_COUNT)
+
+    guide_curve: list[np.ndarray] = []
+    midpoint_y_mm: list[float] = []
+    for outer_point, inner_point in zip(outer_samples, inner_samples):
+        midpoint = (outer_point + inner_point) * 0.5
+        sample_x_mm = float(midpoint[0]) * 1000.0
+        bottom_y_mm = min(float(outer_point[1]) * 1000.0, float(inner_point[1]) * 1000.0)
+        midpoint_y_mm.append(float(midpoint[1]) * 1000.0)
+        guide_point = select_guided_fill_ramp_point(
+            ramp_points,
+            x_mm=sample_x_mm,
+            bottom_y_mm=bottom_y_mm,
+        )
+        guide_point[0] = midpoint[0]
+        guide_point[1] = max(float(guide_point[1]), float(midpoint[1]))
+        guide_curve.append(guide_point)
+
+    smoothed_curve = [guide_curve[0].copy()]
+    for index in range(1, len(guide_curve) - 1):
+        smoothed = (
+            (guide_curve[index - 1] * 0.25)
+            + (guide_curve[index] * 0.5)
+            + (guide_curve[index + 1] * 0.25)
+        )
+        smoothed[0] = guide_curve[index][0]
+        smoothed[1] = max(float(smoothed[1]), midpoint_y_mm[index] / 1000.0)
+        smoothed_curve.append(smoothed)
+    smoothed_curve.append(guide_curve[-1].copy())
+    smoothed_curve[0] = outer_chain[0].copy()
+    smoothed_curve[-1] = outer_chain[-1].copy()
+
+    reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
+    fill_triangles = (
+        loft_open_polylines(outer_chain, smoothed_curve, reference_center)
+        + loft_open_polylines(smoothed_curve, inner_chain, reference_center)
+    )
+
+    guide_points = np.stack(smoothed_curve, axis=0)
+    guide_mins, guide_maxs = compute_bbox(list(guide_points))
+    return fill_triangles, {
+        "guideCurveSampleCount": len(smoothed_curve),
+        "outerChainVertexCount": len(outer_chain),
+        "innerChainVertexCount": len(inner_chain),
+        "guideCurveBboxMinProductMm": vector_to_mm_list(guide_mins),
+        "guideCurveBboxMaxProductMm": vector_to_mm_list(guide_maxs),
+        "guideCurveBboxSizeProductMm": vector_to_mm_list(guide_maxs - guide_mins),
+    }
+
+
+def build_structured_front_window_patch(
+    loop_points: list[np.ndarray],
+) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray]], dict[str, object]]:
+    if len(loop_points) != EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT} boundary vertices for structured fill, "
+            f"found {len(loop_points)}."
+        )
+
+    reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
+    outer_start, outer_stop = FRONT_WINDOW_OUTER_STRIP_SLICE
+    inner_start, inner_stop = FRONT_WINDOW_INNER_STRIP_SLICE
+    outer_strip = [point.copy() for point in loop_points[outer_start:outer_stop]]
+    inner_strip = [point.copy() for point in reversed(loop_points[inner_start:inner_stop])]
+    strip_triangles = loft_open_polylines(outer_strip, inner_strip, reference_center)
+
+    left_cap_loop = [loop_points[index].copy() for index in FRONT_WINDOW_LEFT_CAP_LOOP_INDICES]
+    left_cap_triangles = [
+        orient_triangle_away_from_center(
+            (
+                left_cap_loop[index_a],
+                left_cap_loop[index_b],
+                left_cap_loop[index_c],
+            ),
+            reference_center,
+        )
+        for index_a, index_b, index_c in FRONT_WINDOW_LEFT_CAP_TRIANGLE_INDICES
+    ]
+
+    right_cap_loop = [loop_points[index].copy() for index in FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES]
+    right_cap_triangles = [
+        orient_triangle_away_from_center(
+            (right_cap_loop[0], right_cap_loop[1], right_cap_loop[2]),
+            reference_center,
+        )
+    ]
+
+    patch_triangles = strip_triangles + left_cap_triangles + right_cap_triangles
+    patch_points = [point for triangle in patch_triangles for point in triangle]
+    patch_mins, patch_maxs = compute_bbox(patch_points)
+    strip_points = [point for triangle in strip_triangles for point in triangle]
+    strip_mins, strip_maxs = compute_bbox(strip_points)
+    left_points = [point for triangle in left_cap_triangles for point in triangle]
+    left_mins, left_maxs = compute_bbox(left_points)
+    right_points = [point for triangle in right_cap_triangles for point in triangle]
+    right_mins, right_maxs = compute_bbox(right_points)
+
+    return patch_triangles, {
+        "boundaryVertexCount": len(loop_points),
+        "outerStripVertexCount": len(outer_strip),
+        "innerStripVertexCount": len(inner_strip),
+        "stripTriangleCount": len(strip_triangles),
+        "leftCapTriangleCount": len(left_cap_triangles),
+        "rightCapTriangleCount": len(right_cap_triangles),
+        "outerStripSlice": list(FRONT_WINDOW_OUTER_STRIP_SLICE),
+        "innerStripSlice": list(FRONT_WINDOW_INNER_STRIP_SLICE),
+        "leftCapLoopIndices": list(FRONT_WINDOW_LEFT_CAP_LOOP_INDICES),
+        "rightCapLoopIndices": list(FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES),
+        "patchBboxMinProductMm": vector_to_mm_list(patch_mins),
+        "patchBboxMaxProductMm": vector_to_mm_list(patch_maxs),
+        "patchBboxSizeProductMm": vector_to_mm_list(patch_maxs - patch_mins),
+        "stripBboxMinProductMm": vector_to_mm_list(strip_mins),
+        "stripBboxMaxProductMm": vector_to_mm_list(strip_maxs),
+        "stripBboxSizeProductMm": vector_to_mm_list(strip_maxs - strip_mins),
+        "leftCapBboxMinProductMm": vector_to_mm_list(left_mins),
+        "leftCapBboxMaxProductMm": vector_to_mm_list(left_maxs),
+        "leftCapBboxSizeProductMm": vector_to_mm_list(left_maxs - left_mins),
+        "rightCapBboxMinProductMm": vector_to_mm_list(right_mins),
+        "rightCapBboxMaxProductMm": vector_to_mm_list(right_maxs),
+        "rightCapBboxSizeProductMm": vector_to_mm_list(right_maxs - right_mins),
+    }
+
+
+def select_front_fill_artifact_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        center_mm = points.mean(axis=0) * 1000.0
+        area_mm2 = triangle_area_mm2(triangle)
+        if (
+            FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM[0] <= float(center_mm[0]) <= FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM[1]
+            and FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM[0] <= float(center_mm[1]) <= FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM[1]
+            and FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM[0] <= float(center_mm[2]) <= FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM[1]
+            and area_mm2 >= FRONT_FILL_ARTIFACT_AREA_MM2_MIN
+        ):
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_FRONT_FILL_ARTIFACT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_FILL_ARTIFACT_TRIANGLE_COUNT} front fill artifact triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    selected_triangles = [shell_triangles[index] for index in triangle_indices]
+    selected_points = [point for triangle in selected_triangles for point in triangle]
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionCenterRangesMm": {
+            "x": list(FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM),
+            "y": list(FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM),
+            "z": list(FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM),
+        },
+        "areaMm2Min": FRONT_FILL_ARTIFACT_AREA_MM2_MIN,
+    }
+
+
+def append_product_triangles_to_shell(
+    gltf: dict,
+    bin_chunk: bytearray,
+    product_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> int:
+    if not product_triangles:
+        return 0
+
+    primitive, positions, normals = read_shell_primitive_rows(gltf, bin_chunk)
+    named_node_product_matrices = build_named_node_product_matrices(gltf)
+    shell_product_matrix = named_node_product_matrices["Case_Base_Shell"]
+    product_to_shell_matrix = np.linalg.inv(shell_product_matrix)
+
+    for product_triangle in product_triangles:
+        local_triangle: list[np.ndarray] = []
+        for product_point in product_triangle:
+            local = np.array(
+                [float(product_point[0]), float(product_point[1]), float(product_point[2]), 1.0],
+                dtype=float,
+            )
+            shell_local = product_to_shell_matrix @ local
+            local_triangle.append(shell_local[:3] / max(float(shell_local[3]), 1e-12))
+
+        local_normal = triangle_normal(tuple(local_triangle))
+        if np.allclose(local_normal, 0.0):
+            raise ValueError("Encountered degenerate bridge triangle while appending shell geometry.")
+
+        for local_point in local_triangle:
+            positions.append([float(local_point[0]), float(local_point[1]), float(local_point[2])])
+            normals.append([float(local_normal[0]), float(local_normal[1]), float(local_normal[2])])
+
+    replace_nonindexed_primitive_rows(gltf, bin_chunk, primitive, positions, normals)
+    return len(product_triangles)
+
+
+def replace_shell_with_product_triangles(
+    gltf: dict,
+    bin_chunk: bytearray,
+    product_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> int:
+    primitive, _, _ = read_shell_primitive_rows(gltf, bin_chunk)
+    named_node_product_matrices = build_named_node_product_matrices(gltf)
+    shell_product_matrix = named_node_product_matrices["Case_Base_Shell"]
+    product_to_shell_matrix = np.linalg.inv(shell_product_matrix)
+    positions: list[list[float]] = []
+    normals: list[list[float]] = []
+
+    for product_triangle in product_triangles:
+        local_triangle: list[np.ndarray] = []
+        for product_point in product_triangle:
+            local = np.array(
+                [float(product_point[0]), float(product_point[1]), float(product_point[2]), 1.0],
+                dtype=float,
+            )
+            shell_local = product_to_shell_matrix @ local
+            local_triangle.append(shell_local[:3] / max(float(shell_local[3]), 1e-12))
+
+        local_normal = triangle_normal(tuple(local_triangle))
+        if np.allclose(local_normal, 0.0):
+            raise ValueError("Encountered degenerate triangle while replacing shell geometry.")
+
+        for local_point in local_triangle:
+            positions.append([float(local_point[0]), float(local_point[1]), float(local_point[2])])
+            normals.append([float(local_normal[0]), float(local_normal[1]), float(local_normal[2])])
+
+    replace_nonindexed_primitive_rows(gltf, bin_chunk, primitive, positions, normals)
+    return len(product_triangles)
 
 
 def draw_depth_weighted_view(
@@ -567,74 +1209,243 @@ def remove_triangle_indices_from_shell(
     return len(target_triangle_indices), len(kept_positions) // 3
 
 
-def select_front_right_sidewall_component(
+def select_front_window_blocker_component(
     shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> dict[str, object]:
-    component_indices: list[int] = []
+    adjacency = build_triangle_vertex_adjacency(shell_triangles)
+    seed_indices: list[int] = []
+    allowed_indices: set[int] = set()
+
     for triangle_index, triangle in enumerate(shell_triangles):
         xs_mm = [float(point[0]) * 1000.0 for point in triangle]
         ys_mm = [float(point[1]) * 1000.0 for point in triangle]
         zs_mm = [float(point[2]) * 1000.0 for point in triangle]
-        if min(xs_mm) < FRONT_RIGHT_WALL_X_RANGE_MM[0] or max(xs_mm) > FRONT_RIGHT_WALL_X_RANGE_MM[1]:
-            continue
-        if min(ys_mm) < FRONT_RIGHT_WALL_Y_RANGE_MM[0] or max(ys_mm) > FRONT_RIGHT_WALL_Y_RANGE_MM[1]:
-            continue
-        if min(zs_mm) < FRONT_RIGHT_WALL_Z_RANGE_MM[0] or max(zs_mm) > FRONT_RIGHT_WALL_Z_RANGE_MM[1]:
-            continue
-        component_indices.append(triangle_index)
+        normal = triangle_normal(triangle)
 
-    if len(component_indices) != EXPECTED_FRONT_RIGHT_WALL_TRIANGLE_COUNT:
+        if (
+            min(xs_mm) >= FRONT_BLOCKER_ALLOWED_X_RANGE_MM[0]
+            and max(xs_mm) <= FRONT_BLOCKER_ALLOWED_X_RANGE_MM[1]
+            and min(ys_mm) >= FRONT_BLOCKER_ALLOWED_Y_RANGE_MM[0]
+            and max(ys_mm) <= FRONT_BLOCKER_ALLOWED_Y_RANGE_MM[1]
+            and min(zs_mm) >= FRONT_BLOCKER_ALLOWED_Z_RANGE_MM[0]
+            and max(zs_mm) <= FRONT_BLOCKER_ALLOWED_Z_RANGE_MM[1]
+        ):
+            allowed_indices.add(triangle_index)
+
+        if (
+            min(xs_mm) >= FRONT_BLOCKER_SEED_X_RANGE_MM[0]
+            and max(xs_mm) <= FRONT_BLOCKER_SEED_X_RANGE_MM[1]
+            and min(ys_mm) >= FRONT_BLOCKER_SEED_Y_RANGE_MM[0]
+            and max(ys_mm) <= FRONT_BLOCKER_SEED_Y_RANGE_MM[1]
+            and min(zs_mm) >= FRONT_BLOCKER_SEED_Z_RANGE_MM[0]
+            and max(zs_mm) <= FRONT_BLOCKER_SEED_Z_RANGE_MM[1]
+            and abs(float(normal[1])) <= FRONT_BLOCKER_NORMAL_Y_ABS_MAX
+            and abs(float(normal[2])) >= FRONT_BLOCKER_NORMAL_Z_ABS_MIN
+        ):
+            seed_indices.append(triangle_index)
+
+    component_indices: set[int] = set(seed_indices)
+    queue = deque(seed_indices)
+    while queue:
+        current_index = queue.popleft()
+        for neighbor_index in adjacency[current_index]:
+            if neighbor_index in component_indices or neighbor_index not in allowed_indices:
+                continue
+            component_indices.add(neighbor_index)
+            queue.append(neighbor_index)
+
+    sorted_indices = sorted(component_indices)
+    if len(sorted_indices) != EXPECTED_FRONT_BLOCKER_TRIANGLE_COUNT:
         raise ValueError(
-            f"Expected {EXPECTED_FRONT_RIGHT_WALL_TRIANGLE_COUNT} front-right sidewall triangles, "
-            f"found {len(component_indices)}."
+            f"Expected {EXPECTED_FRONT_BLOCKER_TRIANGLE_COUNT} front blocker triangles, "
+            f"found {len(sorted_indices)}."
         )
 
-    component_triangles = [shell_triangles[index] for index in component_indices]
+    component_triangles = [shell_triangles[index] for index in sorted_indices]
     component_points = [point for triangle in component_triangles for point in triangle]
     mins, maxs = compute_bbox(component_points)
     normals = [triangle_normal(triangle) for triangle in component_triangles]
     average_normal = np.mean(np.stack(normals, axis=0), axis=0)
     return {
-        "triangleIndices": component_indices,
-        "triangleCount": len(component_indices),
+        "triangleIndices": sorted_indices,
+        "triangleCount": len(sorted_indices),
         "bboxMinProductMm": vector_to_mm_list(mins),
         "bboxMaxProductMm": vector_to_mm_list(maxs),
         "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
         "averageNormal": [round(float(value), 4) for value in average_normal],
-        "selectionRangesMm": {
-            "x": list(FRONT_RIGHT_WALL_X_RANGE_MM),
-            "y": list(FRONT_RIGHT_WALL_Y_RANGE_MM),
-            "z": list(FRONT_RIGHT_WALL_Z_RANGE_MM),
+        "seedRangesMm": {
+            "x": list(FRONT_BLOCKER_SEED_X_RANGE_MM),
+            "y": list(FRONT_BLOCKER_SEED_Y_RANGE_MM),
+            "z": list(FRONT_BLOCKER_SEED_Z_RANGE_MM),
+        },
+        "allowedRangesMm": {
+            "x": list(FRONT_BLOCKER_ALLOWED_X_RANGE_MM),
+            "y": list(FRONT_BLOCKER_ALLOWED_Y_RANGE_MM),
+            "z": list(FRONT_BLOCKER_ALLOWED_Z_RANGE_MM),
         },
     }
 
 
-def remove_front_right_sidewall(
+def select_remaining_front_face_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        center_mm = points.mean(axis=0) * 1000.0
+        normal = triangle_normal(triangle)
+        edge_lengths_mm = [
+            float(np.linalg.norm(points[(edge_index + 1) % 3] - points[edge_index])) * 1000.0
+            for edge_index in range(3)
+        ]
+        aspect_ratio = max(edge_lengths_mm) / max(min(edge_lengths_mm), 1e-9)
+
+        if (
+            REMAINING_FRONT_FACE_CENTER_X_RANGE_MM[0] <= float(center_mm[0]) <= REMAINING_FRONT_FACE_CENTER_X_RANGE_MM[1]
+            and REMAINING_FRONT_FACE_CENTER_Y_RANGE_MM[0] <= float(center_mm[1]) <= REMAINING_FRONT_FACE_CENTER_Y_RANGE_MM[1]
+            and REMAINING_FRONT_FACE_CENTER_Z_RANGE_MM[0] <= float(center_mm[2]) <= REMAINING_FRONT_FACE_CENTER_Z_RANGE_MM[1]
+            and abs(float(normal[2])) >= REMAINING_FRONT_FACE_NORMAL_Z_ABS_MIN
+            and aspect_ratio >= REMAINING_FRONT_FACE_ASPECT_MIN
+        ):
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_REMAINING_FRONT_FACE_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_REMAINING_FRONT_FACE_TRIANGLE_COUNT} remaining front-face triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    selected_triangles = [shell_triangles[index] for index in triangle_indices]
+    selected_points = [point for triangle in selected_triangles for point in triangle]
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionCenterRangesMm": {
+            "x": list(REMAINING_FRONT_FACE_CENTER_X_RANGE_MM),
+            "y": list(REMAINING_FRONT_FACE_CENTER_Y_RANGE_MM),
+            "z": list(REMAINING_FRONT_FACE_CENTER_Z_RANGE_MM),
+        },
+        "normalZAbsMin": REMAINING_FRONT_FACE_NORMAL_Z_ABS_MIN,
+        "aspectRatioMin": REMAINING_FRONT_FACE_ASPECT_MIN,
+    }
+
+
+def select_remaining_sidewall_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        center_mm = points.mean(axis=0) * 1000.0
+        normal = triangle_normal(triangle)
+        area_mm2 = triangle_area_mm2(triangle)
+
+        if (
+            REMAINING_SIDEWALL_CENTER_X_RANGE_MM[0] <= float(center_mm[0]) <= REMAINING_SIDEWALL_CENTER_X_RANGE_MM[1]
+            and REMAINING_SIDEWALL_CENTER_Y_RANGE_MM[0] <= float(center_mm[1]) <= REMAINING_SIDEWALL_CENTER_Y_RANGE_MM[1]
+            and REMAINING_SIDEWALL_CENTER_Z_RANGE_MM[0] <= float(center_mm[2]) <= REMAINING_SIDEWALL_CENTER_Z_RANGE_MM[1]
+            and float(normal[0]) >= REMAINING_SIDEWALL_NORMAL_X_MIN
+            and area_mm2 >= REMAINING_SIDEWALL_AREA_MM2_MIN
+        ):
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_REMAINING_SIDEWALL_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_REMAINING_SIDEWALL_TRIANGLE_COUNT} remaining sidewall triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    selected_triangles = [shell_triangles[index] for index in triangle_indices]
+    selected_points = [point for triangle in selected_triangles for point in triangle]
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionCenterRangesMm": {
+            "x": list(REMAINING_SIDEWALL_CENTER_X_RANGE_MM),
+            "y": list(REMAINING_SIDEWALL_CENTER_Y_RANGE_MM),
+            "z": list(REMAINING_SIDEWALL_CENTER_Z_RANGE_MM),
+        },
+        "normalXMin": REMAINING_SIDEWALL_NORMAL_X_MIN,
+        "areaMm2Min": REMAINING_SIDEWALL_AREA_MM2_MIN,
+    }
+
+
+def rebuild_front_window_shell(
     gltf: dict,
     bin_chunk: bytearray,
 ) -> dict[str, object]:
     part_geometries = build_part_geometries(gltf, bin_chunk)
     shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
-    component = select_front_right_sidewall_component(shell_triangles)
-
-    target_triangle_indices = set(int(index) for index in component["triangleIndices"])
-    removed_points = [point for triangle_index in sorted(target_triangle_indices) for point in shell_triangles[triangle_index]]
-    removed_triangle_count, kept_triangle_count = remove_triangle_indices_from_shell(
+    blocker_component = select_front_window_blocker_component(shell_triangles)
+    blocker_indices = set(int(index) for index in blocker_component["triangleIndices"])
+    blocker_removed_count, after_blocker_triangle_count = remove_triangle_indices_from_shell(
         gltf,
         bin_chunk,
-        target_triangle_indices,
+        blocker_indices,
     )
 
-    removed_mins, removed_maxs = compute_bbox(removed_points)
+    part_geometries = build_part_geometries(gltf, bin_chunk)
+    shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
+    front_face_component = select_remaining_front_face_triangles(shell_triangles)
+    front_face_indices = set(int(index) for index in front_face_component["triangleIndices"])
+    front_face_removed_count, after_front_face_triangle_count = remove_triangle_indices_from_shell(
+        gltf,
+        bin_chunk,
+        front_face_indices,
+    )
+
+    part_geometries = build_part_geometries(gltf, bin_chunk)
+    shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
+    sidewall_component = select_remaining_sidewall_triangles(shell_triangles)
+    sidewall_indices = set(int(index) for index in sidewall_component["triangleIndices"])
+    sidewall_removed_count, after_sidewall_triangle_count = remove_triangle_indices_from_shell(
+        gltf,
+        bin_chunk,
+        sidewall_indices,
+    )
+
+    part_geometries = build_part_geometries(gltf, bin_chunk)
+    shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
+    boundary_loop = ordered_boundary_loop(shell_triangles)
+    fill_triangles, fill_patch_debug = build_structured_front_window_patch(boundary_loop)
+    final_product_triangles = shell_triangles + fill_triangles
+    replace_shell_with_product_triangles(gltf, bin_chunk, final_product_triangles)
+
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(f"Expected closed shell after rebuilding opening, found {len(final_boundary_edges)} boundary edges.")
+
+    fill_points = [point for triangle in fill_triangles for point in triangle]
+    fill_mins, fill_maxs = compute_bbox(fill_points)
     return {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_right_sidewall_component",
-        "removedTriangleCount": removed_triangle_count,
-        "keptTriangleCount": kept_triangle_count,
-        "removedComponent": component,
-        "removedBboxMinProductMm": vector_to_mm_list(removed_mins),
-        "removedBboxMaxProductMm": vector_to_mm_list(removed_maxs),
-        "removedBboxSizeProductMm": vector_to_mm_list(removed_maxs - removed_mins),
+        "operation": "delete_front_blocker_and_rebuild_front_window_with_structured_patch",
+        "blockerRemovedTriangleCount": blocker_removed_count,
+        "afterBlockerTriangleCount": after_blocker_triangle_count,
+        "frontFaceRemovedTriangleCount": front_face_removed_count,
+        "afterFrontFaceTriangleCount": after_front_face_triangle_count,
+        "sidewallRemovedTriangleCount": sidewall_removed_count,
+        "afterSidewallTriangleCount": after_sidewall_triangle_count,
+        "fillPatchTriangleCount": len(fill_triangles),
+        "finalTriangleCount": len(final_shell_triangles),
+        "boundaryVertexCountBeforeFill": len(boundary_loop),
+        "boundaryEdgeCountAfterFill": len(final_boundary_edges),
+        "blockerComponent": blocker_component,
+        "frontFaceComponent": front_face_component,
+        "sidewallComponent": sidewall_component,
+        "fillPatchDebug": fill_patch_debug,
+        "fillPatchBboxMinProductMm": vector_to_mm_list(fill_mins),
+        "fillPatchBboxMaxProductMm": vector_to_mm_list(fill_maxs),
+        "fillPatchBboxSizeProductMm": vector_to_mm_list(fill_maxs - fill_mins),
     }
 
 
@@ -667,22 +1478,22 @@ def apply_phase_2(
     *,
     sheet_path: Path,
 ) -> dict[str, object]:
-    delete_change_log = remove_front_right_sidewall(gltf, bin_chunk)
+    rebuild_change_log = rebuild_front_window_shell(gltf, bin_chunk)
     part_geometries = build_part_geometries(gltf, bin_chunk)
     candidate_summary = analyze_shell_candidate_components(part_geometries["Case_Base_Shell"]["triangles"])
     render_six_view_sheet(
         part_geometries,
         candidate_summary,
         sheet_path,
-        label="V5 Phase 2 Front-Right Sidewall Removal",
+        label="V5 Phase 2 Front Window Rebuild",
     )
     return {
         "phase": 2,
         "name": PHASE_NAMES[2],
         "geometryModified": True,
         "diagnosticSheetPath": str(sheet_path),
-        "deleteChangeLog": delete_change_log,
-        "postDeleteCandidateSummary": candidate_summary,
+        "rebuildChangeLog": rebuild_change_log,
+        "postRebuildCandidateSummary": candidate_summary,
     }
 
 

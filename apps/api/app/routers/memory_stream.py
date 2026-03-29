@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,9 +18,17 @@ from app.core.deps import (
 )
 from app.core.errors import ApiError
 from app.models.entities import Conversation, Memory, Project, User
+from app.services.memory_graph_events import get_project_memory_graph_revision
 from app.services.memory_visibility import memory_visible_to_user
 
 router = APIRouter(tags=["memory"])
+
+
+def _after_cursor(column, *, cursor_at: datetime, cursor_id: str):
+    return or_(
+        column > cursor_at,
+        and_(column == cursor_at, Memory.id > cursor_id),
+    )
 
 
 def _build_memory_stream_response(
@@ -33,7 +42,15 @@ def _build_memory_stream_response(
     conversation_id: str | None = None,
 ) -> StreamingResponse:
     async def event_generator():
-        last_check = datetime.now(timezone.utc)
+        initial_cursor = datetime.now(timezone.utc)
+        created_cursor_at = initial_cursor
+        created_cursor_id = ""
+        updated_cursor_at = initial_cursor
+        updated_cursor_id = ""
+        last_graph_revision = get_project_memory_graph_revision(
+            workspace_id=workspace_id,
+            project_id=project_id,
+        )
 
         while True:
             if await request.is_disconnected():
@@ -78,19 +95,23 @@ def _build_memory_stream_response(
                 .filter(
                     Memory.workspace_id == workspace_id,
                     Memory.project_id == project_id,
-                    Memory.created_at > last_check,
+                    _after_cursor(
+                        Memory.created_at,
+                        cursor_at=created_cursor_at,
+                        cursor_id=created_cursor_id,
+                    ),
                 )
-                .order_by(Memory.created_at)
+                .order_by(Memory.created_at, Memory.id)
             )
             if conversation_id:
                 new_memories_query = new_memories_query.filter(
                     (Memory.type == "permanent") | (Memory.source_conversation_id == conversation_id)
                 )
 
-            new_memories = new_memories_query.all()
+            queried_new_memories = new_memories_query.all()
             conversation_ids = {
                 mem.source_conversation_id
-                for mem in new_memories
+                for mem in queried_new_memories
                 if mem.type == "temporary" and mem.source_conversation_id
             }
             conversation_owner_by_id: dict[str, str | None] = {}
@@ -112,7 +133,7 @@ def _build_memory_stream_response(
                 }
             new_memories = [
                 mem
-                for mem in new_memories
+                for mem in queried_new_memories
                 if memory_visible_to_user(
                     mem,
                     current_user_id=current_user_id,
@@ -137,26 +158,37 @@ def _build_memory_stream_response(
                     "parent_memory_id": mem.parent_memory_id,
                     "position_x": mem.position_x,
                     "position_y": mem.position_y,
+                    "metadata_json": mem.metadata_json or {},
                     "created_at": mem.created_at.isoformat(),
                     "updated_at": mem.updated_at.isoformat(),
                 }
                 yield f"event: new_memory\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            if queried_new_memories:
+                last_memory = queried_new_memories[-1]
+                created_cursor_at = last_memory.created_at
+                created_cursor_id = last_memory.id
 
             promoted_query = (
                 db.query(Memory)
                 .filter(
                     Memory.workspace_id == workspace_id,
                     Memory.project_id == project_id,
-                    Memory.updated_at > last_check,
+                    _after_cursor(
+                        Memory.updated_at,
+                        cursor_at=updated_cursor_at,
+                        cursor_id=updated_cursor_id,
+                    ),
                     Memory.type == "permanent",
                 )
+                .order_by(Memory.updated_at, Memory.id)
             )
             if conversation_id:
                 promoted_query = promoted_query.filter(
                     (Memory.source_conversation_id.is_(None)) | (Memory.source_conversation_id == conversation_id)
                 )
 
-            for mem in promoted_query.all():
+            queried_updated_memories = promoted_query.all()
+            for mem in queried_updated_memories:
                 metadata = mem.metadata_json or {}
                 if not metadata.get("promoted_by"):
                     continue
@@ -173,8 +205,22 @@ def _build_memory_stream_response(
                     "promoted_by": metadata.get("promoted_by"),
                 }
                 yield f"event: memory_promoted\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+            if queried_updated_memories:
+                last_memory = queried_updated_memories[-1]
+                updated_cursor_at = last_memory.updated_at
+                updated_cursor_id = last_memory.id
 
-            last_check = datetime.now(timezone.utc)
+            current_graph_revision = get_project_memory_graph_revision(
+                workspace_id=workspace_id,
+                project_id=project_id,
+            )
+            if current_graph_revision != last_graph_revision:
+                yield (
+                    "event: graph_changed\n"
+                    f"data: {json.dumps({'revision': current_graph_revision}, ensure_ascii=False)}\n\n"
+                )
+                last_graph_revision = current_graph_revision
+
             yield "event: ping\ndata: {}\n\n"
             db.expire_all()
             await asyncio.sleep(3)

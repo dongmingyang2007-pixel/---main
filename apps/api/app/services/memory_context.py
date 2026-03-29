@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Awaitable, Callable, Literal
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import Conversation, Memory, MemoryEdge, Project
 from app.services.context_loader import filter_knowledge_chunks, load_conversation_context
+from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
+from app.services.memory_graph_events import bump_project_memory_graph_revision
 from app.services.memory_metadata import (
     MEMORY_KIND_GOAL,
     MEMORY_KIND_PREFERENCE,
@@ -19,11 +20,15 @@ from app.services.memory_metadata import (
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
+    is_category_path_memory,
+    is_concept_memory,
     is_pinned_memory,
+    is_structural_only_memory,
     is_summary_memory,
     shorten_text,
     stamp_memory_usage_metadata,
 )
+from app.services.memory_related_edges import RELATED_EDGE_TYPE, ensure_project_related_edges
 from app.services.memory_roots import is_assistant_root_memory
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 from app.services.embedding import search_similar
@@ -35,17 +40,15 @@ ContextLevel = Literal["none", "profile_only", "memory_only", "full_rag"]
 STATIC_MEMORY_LIMIT = 6
 RELEVANT_MEMORY_LIMIT = 10
 GRAPH_MEMORY_LIMIT = 4
+GRAPH_TRAVERSAL_DEPTH = 3
 TEMPORARY_MEMORY_LIMIT = 8
 KNOWLEDGE_CHUNK_LIMIT = 6
 LINKED_FILE_CHUNK_LIMIT = 4
 SEMANTIC_SEARCH_LIMIT = 18
-GRAPH_EDGE_MIN_STRENGTH = 0.55
+SEMANTIC_MEMORY_MIN_SCORE = 0.55
 
 _STATIC_KINDS = {
     MEMORY_KIND_PROFILE,
-    MEMORY_KIND_PREFERENCE,
-    MEMORY_KIND_GOAL,
-    MEMORY_KIND_SUMMARY,
 }
 _QUERY_TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]{2,}")
 
@@ -165,9 +168,14 @@ def _candidate_score(memory: Memory, *, source: str, semantic_score: float | Non
         "graph_parent": 0.12,
         "graph_child": 0.10,
         "graph_edge": 0.08,
+        "graph_related": 0.09,
         "recent_temporary": 0.06,
     }.get(source, 0.0)
     return round(score + source_bonus, 4)
+
+
+def _is_structural_graph_memory(memory: Memory) -> bool:
+    return is_concept_memory(memory) or is_category_path_memory(memory) or is_summary_memory(memory)
 
 
 def _select_best_candidates(candidates: list[MemoryCandidate], *, limit: int) -> list[MemoryCandidate]:
@@ -180,107 +188,142 @@ def _select_best_candidates(candidates: list[MemoryCandidate], *, limit: int) ->
 
 
 def _build_graph_neighbors(
-    db: Session,
     *,
-    workspace_id: str,
-    project_id: str,
     seed_candidates: list[MemoryCandidate],
     visible_memories_by_id: dict[str, Memory],
+    query_tokens: list[str],
+    lateral_edges: list[MemoryEdge] | None = None,
 ) -> list[MemoryCandidate]:
     seed_ids = [candidate.id for candidate in seed_candidates if candidate.memory.type == "permanent"]
     if not seed_ids:
         return []
 
-    edges = (
-        db.query(MemoryEdge)
-        .filter(
-            or_(
-                MemoryEdge.source_memory_id.in_(seed_ids),
-                MemoryEdge.target_memory_id.in_(seed_ids),
-            )
-        )
-        .all()
-    )
-
-    parent_ids = {
-        candidate.memory.parent_memory_id
-        for candidate in seed_candidates
-        if candidate.memory.parent_memory_id
-    }
-    child_memories = (
-        db.query(Memory)
-        .filter(
-            Memory.workspace_id == workspace_id,
-            Memory.project_id == project_id,
-            Memory.parent_memory_id.in_(seed_ids),
-        )
-        .all()
-        if seed_ids
-        else []
-    )
-
     candidates: list[MemoryCandidate] = []
-    seed_score_by_id = {candidate.id: candidate.score for candidate in seed_candidates}
+    seed_semantic_by_id = {
+        candidate.id: (
+            candidate.semantic_score
+            if candidate.semantic_score is not None
+            else 0.55
+        )
+        for candidate in seed_candidates
+    }
 
-    for parent_id in parent_ids:
-        parent_memory = visible_memories_by_id.get(parent_id or "")
+    structural_seed_ids = {
+        candidate.id
+        for candidate in seed_candidates
+        if _is_structural_graph_memory(candidate.memory)
+    }
+    structural_parent_depths: dict[str, int] = {}
+    for candidate in seed_candidates:
+        current = candidate.memory
+        depth = 0
+        while current.parent_memory_id and depth < GRAPH_TRAVERSAL_DEPTH:
+            parent_memory = visible_memories_by_id.get(current.parent_memory_id)
+            if not parent_memory or not _is_structural_graph_memory(parent_memory):
+                break
+            depth += 1
+            existing_depth = structural_parent_depths.get(parent_memory.id)
+            if existing_depth is None or depth < existing_depth:
+                structural_parent_depths[parent_memory.id] = depth
+            current = parent_memory
+
+    strongest_seed_score = max(
+        (seed_semantic_by_id.get(seed_id, 0.0) for seed_id in seed_ids if visible_memories_by_id.get(seed_id)),
+        default=0.0,
+    )
+    for parent_id, depth in structural_parent_depths.items():
+        parent_memory = visible_memories_by_id.get(parent_id)
         if not parent_memory:
             continue
-        semantic_score = max(
-            (seed_score_by_id.get(seed_id, 0.0) for seed_id in seed_ids if visible_memories_by_id.get(seed_id)),
-            default=0.0,
+        score = _candidate_score(parent_memory, source="graph_parent", semantic_score=strongest_seed_score) - (
+            (depth - 1) * 0.015
         )
         candidates.append(
             MemoryCandidate(
                 memory=parent_memory,
                 source="graph_parent",
-                semantic_score=semantic_score,
-                score=_candidate_score(parent_memory, source="graph_parent", semantic_score=semantic_score),
+                semantic_score=strongest_seed_score,
+                score=round(score, 4),
             )
         )
 
-    for child_memory in child_memories:
-        if child_memory.id in seed_score_by_id:
+    children_by_parent: dict[str, list[Memory]] = {}
+    for memory in visible_memories_by_id.values():
+        if memory.parent_memory_id:
+            children_by_parent.setdefault(memory.parent_memory_id, []).append(memory)
+
+    branch_root_ids = set(structural_seed_ids) | set(structural_parent_depths)
+    descendant_depths: dict[str, int] = {}
+    traversal_queue = [(parent_id, 0) for parent_id in branch_root_ids]
+    seen_structural_ids = set(branch_root_ids)
+
+    while traversal_queue:
+        parent_id, depth = traversal_queue.pop(0)
+        if depth >= GRAPH_TRAVERSAL_DEPTH:
             continue
-        parent_score = seed_score_by_id.get(child_memory.parent_memory_id or "", 0.0)
+        for child_memory in children_by_parent.get(parent_id, []):
+            if child_memory.id in seed_semantic_by_id:
+                continue
+            next_depth = depth + 1
+            existing_depth = descendant_depths.get(child_memory.id)
+            if existing_depth is None or next_depth < existing_depth:
+                descendant_depths[child_memory.id] = next_depth
+            if _is_structural_graph_memory(child_memory) and child_memory.id not in seen_structural_ids:
+                seen_structural_ids.add(child_memory.id)
+                traversal_queue.append((child_memory.id, next_depth))
+
+    for child_id, depth in descendant_depths.items():
+        child_memory = visible_memories_by_id.get(child_id)
+        if not child_memory:
+            continue
+        semantic_score = strongest_seed_score
+        score = _candidate_score(child_memory, source="graph_child", semantic_score=semantic_score) - (
+            (depth - 1) * 0.015
+        )
         candidates.append(
             MemoryCandidate(
                 memory=child_memory,
                 source="graph_child",
-                semantic_score=parent_score,
-                score=_candidate_score(child_memory, source="graph_child", semantic_score=parent_score),
+                semantic_score=semantic_score,
+                score=round(score, 4),
             )
         )
 
-    for edge in edges:
-        if edge.strength < GRAPH_EDGE_MIN_STRENGTH:
+    lateral_neighbors: dict[str, list[tuple[Memory, float, str]]] = {}
+    for edge in lateral_edges or []:
+        if edge.edge_type not in {"manual", RELATED_EDGE_TYPE}:
             continue
-        source_id = edge.source_memory_id
-        target_id = edge.target_memory_id
-        if source_id in seed_score_by_id and target_id in visible_memories_by_id:
-            neighbor = visible_memories_by_id[target_id]
-            if neighbor.id in seed_score_by_id:
+        source_memory = visible_memories_by_id.get(edge.source_memory_id)
+        target_memory = visible_memories_by_id.get(edge.target_memory_id)
+        if not source_memory or not target_memory:
+            continue
+        lateral_neighbors.setdefault(source_memory.id, []).append(
+            (target_memory, float(edge.strength or 0.0), edge.edge_type)
+        )
+        lateral_neighbors.setdefault(target_memory.id, []).append(
+            (source_memory, float(edge.strength or 0.0), edge.edge_type)
+        )
+
+    seen_related_ids: set[str] = set()
+    for seed_id in seed_ids:
+        for related_memory, relation_strength, edge_type in lateral_neighbors.get(seed_id, []):
+            if related_memory.id in seed_semantic_by_id or related_memory.id in seen_related_ids:
                 continue
-            semantic_score = seed_score_by_id[source_id] * max(edge.strength, 0.1)
+            if _is_structural_graph_memory(related_memory):
+                continue
+            seen_related_ids.add(related_memory.id)
+            semantic_score = max(strongest_seed_score, relation_strength)
+            score = _candidate_score(
+                related_memory,
+                source="graph_related",
+                semantic_score=semantic_score,
+            ) + (0.02 if edge_type == "manual" else 0.0)
             candidates.append(
                 MemoryCandidate(
-                    memory=neighbor,
-                    source="graph_edge",
+                    memory=related_memory,
+                    source="graph_related",
                     semantic_score=semantic_score,
-                    score=_candidate_score(neighbor, source="graph_edge", semantic_score=semantic_score),
-                )
-            )
-        if target_id in seed_score_by_id and source_id in visible_memories_by_id:
-            neighbor = visible_memories_by_id[source_id]
-            if neighbor.id in seed_score_by_id:
-                continue
-            semantic_score = seed_score_by_id[target_id] * max(edge.strength, 0.1)
-            candidates.append(
-                MemoryCandidate(
-                    memory=neighbor,
-                    source="graph_edge",
-                    semantic_score=semantic_score,
-                    score=_candidate_score(neighbor, source="graph_edge", semantic_score=semantic_score),
+                    score=round(score, 4),
                 )
             )
 
@@ -297,6 +340,9 @@ def _build_system_prompt(
     linked_file_chunks: list[dict[str, Any]],
     recent_messages: list[dict[str, str]] | None = None,
 ) -> str:
+    static_memories = [candidate for candidate in static_memories if not is_structural_only_memory(candidate.memory)]
+    relevant_memories = [candidate for candidate in relevant_memories if not is_structural_only_memory(candidate.memory)]
+    temporary_memories = [candidate for candidate in temporary_memories if not is_structural_only_memory(candidate.memory)]
     parts: list[str] = []
     if personality:
         parts.append(f"你的人格设定：\n{personality}")
@@ -393,6 +439,19 @@ async def build_memory_context(
         project_id=project_id,
         conversation_id=conversation_id,
     )
+    tree_summary = ensure_project_category_tree(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    related_summary = ensure_project_related_edges(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    if any(tree_summary.as_dict().values()) or any(related_summary.as_dict().values()):
+        db.commit()
+        bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
 
     semantic_results: list[dict[str, Any]] = []
     knowledge_chunks: list[dict[str, Any]] = []
@@ -413,6 +472,17 @@ async def build_memory_context(
         visible_memories_by_id = {
             memory.id: memory for memory in [*permanent_memories, *temporary_memories]
         }
+        lateral_edges = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.edge_type.in_(["manual", RELATED_EDGE_TYPE]),
+                MemoryEdge.source_memory_id.in_(list(visible_memories_by_id)),
+                MemoryEdge.target_memory_id.in_(list(visible_memories_by_id)),
+            )
+            .all()
+            if visible_memories_by_id
+            else []
+        )
         query_tokens = _normalize_query_tokens(user_message)
         static_candidates = [
             MemoryCandidate(
@@ -421,7 +491,8 @@ async def build_memory_context(
                 score=_candidate_score(memory, source="static"),
             )
             for memory in permanent_memories
-            if is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS
+            if not is_structural_only_memory(memory)
+            and (is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS)
         ]
         static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
 
@@ -446,7 +517,11 @@ async def build_memory_context(
                 memory = visible_memories_by_id.get(memory_id)
                 if not memory:
                     continue
+                if is_structural_only_memory(memory):
+                    continue
                 semantic_score = float(result.get("score") or 0.0)
+                if semantic_score < SEMANTIC_MEMORY_MIN_SCORE and not _memory_matches_query(memory, query_tokens):
+                    continue
                 semantic_memory_candidates.append(
                     MemoryCandidate(
                         memory=memory,
@@ -464,7 +539,7 @@ async def build_memory_context(
                     semantic_score=0.55,
                 )
                 for memory in [*permanent_memories, *temporary_memories]
-                if _memory_matches_query(memory, query_tokens)
+                if not is_structural_only_memory(memory) and _memory_matches_query(memory, query_tokens)
             ]
 
             permanent_relevant_candidates = [
@@ -478,11 +553,10 @@ async def build_memory_context(
             )
 
             graph_selected = _build_graph_neighbors(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
                 seed_candidates=relevant_selected,
                 visible_memories_by_id=visible_memories_by_id,
+                query_tokens=query_tokens,
+                lateral_edges=lateral_edges,
             )
 
             temporary_relevant_candidates = [
@@ -588,7 +662,11 @@ def touch_retrieved_memories(
     timestamp = used_at or datetime.now(timezone.utc)
     seen: set[str] = set()
     for candidate in selected_memories:
-        if candidate.id in seen or is_assistant_root_memory(candidate.memory):
+        if (
+            candidate.id in seen
+            or is_assistant_root_memory(candidate.memory)
+            or is_structural_only_memory(candidate.memory)
+        ):
             continue
         seen.add(candidate.id)
         candidate.memory.metadata_json = stamp_memory_usage_metadata(
@@ -625,6 +703,8 @@ def touch_memories_from_trace(
     timestamp = used_at or datetime.now(timezone.utc)
     memories = db.query(Memory).filter(Memory.id.in_(list(entry_by_id))).all()
     for memory in memories:
+        if is_structural_only_memory(memory):
+            continue
         entry = entry_by_id.get(memory.id) or {}
         score = entry.get("semantic_score")
         if not isinstance(score, (int, float)):
@@ -655,6 +735,21 @@ async def search_project_memories_for_tool(
         conversation_id=conversation_id,
         conversation_created_by=conversation_created_by,
     )
+    tree_summary = ensure_project_category_tree(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    if any(tree_summary.as_dict().values()):
+        db.commit()
+        bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
+        permanent_memories, temporary_memories = _load_visible_memories(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            conversation_created_by=conversation_created_by,
+        )
     visible_memories_by_id = {
         memory.id: memory for memory in [*permanent_memories, *temporary_memories]
     }
@@ -678,6 +773,8 @@ async def search_project_memories_for_tool(
         memory = visible_memories_by_id.get(memory_id)
         if not memory:
             continue
+        if is_structural_only_memory(memory):
+            continue
         semantic_score = float(result.get("score") or 0.0)
         candidates.append(
             MemoryCandidate(
@@ -697,7 +794,7 @@ async def search_project_memories_for_tool(
                 score=_candidate_score(memory, source="lexical", semantic_score=1.0),
             )
             for memory in [*permanent_memories, *temporary_memories]
-            if _memory_matches_query(memory, query_tokens)
+            if not is_structural_only_memory(memory) and _memory_matches_query(memory, query_tokens)
         ]
 
     selected = _select_best_candidates(candidates, limit=top_k)

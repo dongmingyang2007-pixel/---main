@@ -253,31 +253,31 @@ function DiscoverPageContent() {
 
         <div className="discover-main">
           {pickerMode ? (
-            <ConsoleSectionBlock
-              title={pickerCategoryLabel || t("discover.modelsOfficial")}
-              description={currentModelId || t("dashboard.modelFallback")}
-              className="discover-picker-context"
-              action={
-                from ? (
-                  <Link href={from} className="dashboard-ghost-btn" data-testid="discover-picker-context">
-                    {t("discover.pickerReturn")}
-                  </Link>
-                ) : (
-                  <div data-testid="discover-picker-context" />
-                )
-              }
-            >
-              <div className="discover-picker-meta">
-                <div className="discover-picker-item">
-                  <span className="discover-picker-item-label">{t("discover.pickerSlot")}</span>
-                  <strong>{pickerCategoryLabel || t("discover.tabModels")}</strong>
+            <div data-testid="discover-picker-context">
+              <ConsoleSectionBlock
+                title={pickerCategoryLabel || t("discover.modelsOfficial")}
+                description={currentModelId || t("dashboard.modelFallback")}
+                className="discover-picker-context"
+                action={
+                  from ? (
+                    <Link href={from} className="dashboard-ghost-btn">
+                      {t("discover.pickerReturn")}
+                    </Link>
+                  ) : null
+                }
+              >
+                <div className="discover-picker-meta">
+                  <div className="discover-picker-item">
+                    <span className="discover-picker-item-label">{t("discover.pickerSlot")}</span>
+                    <strong>{pickerCategoryLabel || t("discover.tabModels")}</strong>
+                  </div>
+                  <div className="discover-picker-item">
+                    <span className="discover-picker-item-label">{t("discover.pickerModel")}</span>
+                    <strong>{currentModelId || t("dashboard.modelFallback")}</strong>
+                  </div>
                 </div>
-                <div className="discover-picker-item">
-                  <span className="discover-picker-item-label">{t("discover.pickerModel")}</span>
-                  <strong>{currentModelId || t("dashboard.modelFallback")}</strong>
-                </div>
-              </div>
-            </ConsoleSectionBlock>
+              </ConsoleSectionBlock>
+            </div>
           ) : null}
 
           {showModels ? (

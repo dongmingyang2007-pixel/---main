@@ -15,14 +15,30 @@ export function GlassTopBar() {
   const locale = useLocale();
   const pathname = usePathname();
   const t = useTranslations("console");
+  const tCommon = useTranslations("common");
   const { openMenu } = useMobileMenu();
 
   const targetLocale = locale === "zh" ? "en" : "zh";
   const targetLabel = locale === "zh" ? "EN" : "中文";
+  const showBreadcrumb = pathname !== "/app";
+  const routeKey = pathname === "/app"
+    ? "app"
+    : pathname.startsWith("/app/chat")
+      ? "chat"
+      : pathname.startsWith("/app/memory")
+        ? "memory"
+        : pathname.startsWith("/app/discover")
+          ? "discover"
+          : pathname.startsWith("/app/devices")
+            ? "devices"
+            : pathname.startsWith("/app/settings")
+              ? "settings"
+              : "assistants";
+  const breadcrumbLabel = t(`breadcrumb.${routeKey}`);
 
   return (
     <header
-      className="glass-topbar"
+      className="glass-topbar site-header-v2 is-console"
       style={{
         position: "fixed",
         top: 0,
@@ -40,11 +56,11 @@ export function GlassTopBar() {
         padding: "0 16px",
       }}
     >
-      {/* Left side: mobile menu + brand + badge */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="console-topbar-compat" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <div className="inline-topbar-left" style={{ gap: 16 }}>
         <button
           type="button"
-          className="glass-topbar-menu-btn"
+          className="glass-topbar-menu-btn inline-topbar-menu"
           onClick={openMenu}
           aria-label={t("topbar.openMenu")}
           style={{
@@ -80,7 +96,7 @@ export function GlassTopBar() {
             color: "var(--text-primary)",
           }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14 }}>铭润</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{tCommon("brand.short")}</span>
         </Link>
 
         <span
@@ -95,10 +111,14 @@ export function GlassTopBar() {
         >
           Console
         </span>
-      </div>
+          {showBreadcrumb ? (
+            <div className="inline-topbar-breadcrumb" aria-label="Breadcrumb">
+              <span>{breadcrumbLabel}</span>
+            </div>
+          ) : null}
+        </div>
 
-      {/* Right side: ⌘K, language toggle, user dropdown */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button
           className="glass-topbar-cmdk"
           type="button"
@@ -162,6 +182,7 @@ export function GlassTopBar() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
 
       {/* Mobile menu button visibility via CSS */}

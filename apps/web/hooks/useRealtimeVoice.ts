@@ -5,6 +5,7 @@ import {
   type RealtimeState,
   type TranscriptEntry,
   type RealtimeVoiceBaseReturn,
+  type RealtimeVoiceBaseConfig,
 } from "./useRealtimeVoiceBase";
 
 export type { RealtimeState, TranscriptEntry };
@@ -39,6 +40,7 @@ interface UseRealtimeVoiceOptions {
     action?: "upsert" | "discard";
   }) => void;
   onTurnPersisted?: (payload: PersistedRealtimeTurnPayload) => void;
+  messages?: RealtimeVoiceBaseConfig["messages"];
 }
 
 interface UseRealtimeVoiceReturn {
@@ -49,6 +51,8 @@ interface UseRealtimeVoiceReturn {
   disconnect: () => void;
   toggleMute: () => void;
   isMuted: boolean;
+  toggleSpeakerMute: () => void;
+  isSpeakerMuted: boolean;
   userVolume: number;
   aiVolume: number;
 }
@@ -60,6 +64,7 @@ export function useRealtimeVoice({
   onTurnComplete,
   onTranscriptUpdate,
   onTurnPersisted,
+  messages,
 }: UseRealtimeVoiceOptions): UseRealtimeVoiceReturn {
   const base: RealtimeVoiceBaseReturn = useRealtimeVoiceBase({
     conversationId,
@@ -75,6 +80,7 @@ export function useRealtimeVoice({
     onError,
     onTurnComplete,
     onTranscriptUpdate,
+    messages,
     onCustomMessage: (data) => {
       if (data.type !== "turn.persisted") {
         return;
@@ -100,6 +106,8 @@ export function useRealtimeVoice({
     disconnect: base.disconnect,
     toggleMute: base.toggleMute,
     isMuted: base.isMuted,
+    toggleSpeakerMute: base.toggleSpeakerMute,
+    isSpeakerMuted: base.isSpeakerMuted,
     userVolume: base.userVolume,
     aiVolume: base.aiVolume,
   };

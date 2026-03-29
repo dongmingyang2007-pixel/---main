@@ -74,6 +74,9 @@ export interface Message {
   audioBase64?: string | null;
   memories_extracted?: string;
   extracted_facts?: ExtractedFact[];
+  memory_extraction_status?: string | null;
+  memory_extraction_attempts?: number | null;
+  memory_extraction_error?: string | null;
   animateOnMount?: boolean;
   isStreaming?: boolean;
 }
@@ -458,6 +461,19 @@ export function toMessage(message: ApiMessage): Message {
     typeof meta?.memories_extracted === "string" && meta.memories_extracted.trim()
       ? meta.memories_extracted
       : undefined;
+  const memoryExtractionStatus =
+    typeof meta?.memory_extraction_status === "string" && meta.memory_extraction_status.trim()
+      ? meta.memory_extraction_status.trim()
+      : null;
+  const memoryExtractionAttempts =
+    typeof meta?.memory_extraction_attempts === "number" &&
+    Number.isFinite(meta.memory_extraction_attempts)
+      ? meta.memory_extraction_attempts
+      : null;
+  const memoryExtractionError =
+    typeof meta?.memory_extraction_error === "string" && meta.memory_extraction_error.trim()
+      ? meta.memory_extraction_error.trim()
+      : null;
 
   return {
     id: message.id,
@@ -468,6 +484,9 @@ export function toMessage(message: ApiMessage): Message {
     retrievalTrace: normalizeRetrievalTrace(meta?.retrieval_trace),
     memories_extracted: memoriesExtracted,
     extracted_facts: extractedFacts,
+    memory_extraction_status: memoryExtractionStatus,
+    memory_extraction_attempts: memoryExtractionAttempts,
+    memory_extraction_error: memoryExtractionError,
     animateOnMount: false,
     isStreaming: false,
   };
@@ -489,6 +508,19 @@ export function mergeAssistantMetadataPatch(
     typeof candidate.memories_extracted === "string" && candidate.memories_extracted.trim()
       ? candidate.memories_extracted
       : undefined;
+  const memoryExtractionStatus =
+    typeof candidate.memory_extraction_status === "string" && candidate.memory_extraction_status.trim()
+      ? candidate.memory_extraction_status.trim()
+      : null;
+  const memoryExtractionAttempts =
+    typeof candidate.memory_extraction_attempts === "number" &&
+    Number.isFinite(candidate.memory_extraction_attempts)
+      ? candidate.memory_extraction_attempts
+      : null;
+  const memoryExtractionError =
+    typeof candidate.memory_extraction_error === "string" && candidate.memory_extraction_error.trim()
+      ? candidate.memory_extraction_error.trim()
+      : null;
 
   return {
     ...message,
@@ -496,6 +528,9 @@ export function mergeAssistantMetadataPatch(
     retrievalTrace: retrievalTrace ?? message.retrievalTrace,
     extracted_facts: extractedFacts ?? message.extracted_facts,
     memories_extracted: memoriesExtracted ?? message.memories_extracted,
+    memory_extraction_status: memoryExtractionStatus ?? message.memory_extraction_status,
+    memory_extraction_attempts: memoryExtractionAttempts ?? message.memory_extraction_attempts,
+    memory_extraction_error: memoryExtractionError ?? message.memory_extraction_error,
   };
 }
 

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import threading
 from types import SimpleNamespace
 
 from botocore.exceptions import ClientError
@@ -47,7 +48,12 @@ import app.routers.uploads as uploads_router
 from app.services.dashscope_client import SearchSource
 import app.services.dashscope_responses as dashscope_responses_service
 import app.services.dashscope_stream as dashscope_stream_service
+import app.services.assistant_markdown as assistant_markdown_service
+import app.services.memory_compaction as memory_compaction_service
+import app.services.memory_graph_events as memory_graph_events_service
 import app.services.memory_file_context as memory_file_context_service
+import app.services.memory_graph_repair as memory_graph_repair_service
+import app.services.memory_metadata as memory_metadata_service
 import app.services.orchestrator as orchestrator_service
 from app.core.config import settings
 from app.core.deps import revoke_user_tokens
@@ -70,6 +76,7 @@ from app.models import (
     Workspace,
 )
 from app.services.model_catalog_seed import seed_model_catalog
+from app.services.memory_roots import ensure_project_assistant_root
 from app.services import storage as storage_service
 from app.services.runtime_state import runtime_state
 import app.tasks.worker_tasks as worker_tasks
@@ -726,7 +733,8 @@ def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> Non
         assert text == "你好，我在。"
         return b"fake-mp3"
 
-    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
         persisted_turns.append((user_text, ai_text))
 
     class FakeRealtimeBridge:
@@ -828,7 +836,8 @@ def test_composed_realtime_websocket_autostarts_turn_without_audio_stop(monkeypa
         assert text == "你好，我在。"
         return b"fake-mp3"
 
-    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
         persisted_turns.append((user_text, ai_text))
 
     class FakeRealtimeBridge:
@@ -1201,8 +1210,16 @@ def test_composed_realtime_websocket_falls_back_to_text_when_tts_fails(monkeypat
         }
 
         websocket.send_json({"type": "session.end"})
-        with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+        try:
+            close_event = websocket.receive()
+        except WebSocketDisconnect:
+            close_event = None
+        if close_event is not None:
+            if close_event["type"] == "websocket.send":
+                persisted_payload = json.loads(close_event["text"])
+                assert persisted_payload["type"] == "turn.persisted"
+                close_event = websocket.receive()
+            assert close_event["type"] == "websocket.close"
 
 
 def test_composed_realtime_websocket_streams_partial_transcript_before_turn_completion(monkeypatch) -> None:
@@ -1297,8 +1314,16 @@ def test_composed_realtime_websocket_streams_partial_transcript_before_turn_comp
         assert done == {"type": "response.done"}
 
         websocket.send_json({"type": "session.end"})
-        with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+        try:
+            close_event = websocket.receive()
+        except WebSocketDisconnect:
+            close_event = None
+        if close_event is not None:
+            if close_event["type"] == "websocket.send":
+                persisted_payload = json.loads(close_event["text"])
+                assert persisted_payload["type"] == "turn.persisted"
+                close_event = websocket.receive()
+            assert close_event["type"] == "websocket.close"
 
 
 def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
@@ -1330,7 +1355,8 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
         assert text == "已看到图片。"
         return b"fake-mp3"
 
-    async def fake_persist(_session, user_text: str, ai_text: str) -> None:
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
         assert user_text == "看图"
         assert ai_text == "已看到图片。"
 
@@ -2714,6 +2740,44 @@ def test_send_message_persists_search_sources_metadata(monkeypatch) -> None:
     assert messages.json()[1]["content"] == "这是答案[ref_1]"
 
 
+def test_send_message_passes_assistant_message_id_to_memory_extraction(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-memory-id@example.com", "Chat Memory Id")
+    project = create_project(client, "Chat Memory Id Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        del args, kwargs
+        return "记住了"
+
+    def fake_trigger_memory_extraction(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+    monkeypatch.setattr(chat_router, "_trigger_memory_extraction", fake_trigger_memory_extraction)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        json={"content": "我喜欢冰美式"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["metadata_json"]["memory_extraction_status"] == "pending"
+    assert resp.json()["metadata_json"]["memory_extraction_attempts"] == 0
+    assert captured["kwargs"]["assistant_message_id"] == resp.json()["id"]
+
+
 def test_send_message_passes_enable_search_preference(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "chat-search@example.com", "Chat Search")
@@ -2745,7 +2809,7 @@ def test_send_message_passes_enable_search_preference(monkeypatch) -> None:
     assert captured["enable_search"] is True
 
 
-def test_send_message_auto_disables_thinking_for_simple_greeting(monkeypatch) -> None:
+def test_send_message_defers_auto_thinking_decision_for_simple_greeting(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "chat-auto-greeting@example.com", "Chat Auto Greeting")
     project = create_project(client, "Chat Auto Greeting Project")
@@ -2773,10 +2837,10 @@ def test_send_message_auto_disables_thinking_for_simple_greeting(monkeypatch) ->
     )
 
     assert resp.status_code == 200
-    assert captured["enable_thinking"] is False
+    assert captured["enable_thinking"] is None
 
 
-def test_send_message_auto_enables_thinking_for_analysis_prompt(monkeypatch) -> None:
+def test_send_message_defers_auto_thinking_decision_for_analysis_prompt(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "chat-auto-analysis@example.com", "Chat Auto Analysis")
     project = create_project(client, "Chat Auto Analysis Project")
@@ -2804,7 +2868,7 @@ def test_send_message_auto_enables_thinking_for_analysis_prompt(monkeypatch) -> 
     )
 
     assert resp.status_code == 200
-    assert captured["enable_thinking"] is True
+    assert captured["enable_thinking"] is None
 
 
 def test_stream_message_auto_disables_thinking_for_simple_greeting(monkeypatch) -> None:
@@ -2992,8 +3056,203 @@ def test_stream_message_emits_and_persists_search_sources(monkeypatch) -> None:
     assert messages.json()[1]["content"] == "整理如下[ref_1]"
 
 
-@pytest.mark.asyncio
-async def test_responses_completion_stream_emits_final_message_items_without_duplication(monkeypatch) -> None:
+def test_stream_message_passes_assistant_message_id_to_memory_extraction(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-stream-memory-id@example.com", "Chat Stream Memory Id")
+    project = create_project(client, "Chat Stream Memory Id Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_stream(
+        input_items,
+        model=None,
+        *,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        timeout=120.0,
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del input_items, model, enable_thinking, tools, tool_choice, timeout, image_bytes, image_mime_type
+        yield dashscope_responses_service.ResponsesStreamChunk(content="已经记住了")
+        yield dashscope_responses_service.ResponsesStreamChunk(finish_reason="completed")
+
+    def fake_trigger_memory_extraction(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_stream",
+        fake_responses_completion_stream,
+    )
+    monkeypatch.setattr(chat_router, "_trigger_memory_extraction", fake_trigger_memory_extraction)
+
+    resp = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        json={"content": "我喜欢冰美式"},
+        headers=csrf_headers(client),
+    )
+
+    assert resp.status_code == 200
+    assert '"memory_extraction_status": "pending"' in resp.text
+    messages = client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert messages.status_code == 200
+    assert messages.json()[1]["metadata_json"]["memory_extraction_status"] == "pending"
+    assert captured["kwargs"]["assistant_message_id"] == messages.json()[1]["id"]
+
+
+def test_orchestrate_inference_stream_emits_message_start_before_preparation(monkeypatch) -> None:
+    call_order: list[str] = []
+
+    async def fake_resolve_enable_thinking(*args, **kwargs):
+        del args, kwargs
+        call_order.append("resolve_enable_thinking")
+        return SimpleNamespace(enable_thinking=False)
+
+    monkeypatch.setattr(
+        orchestrator_service,
+        "resolve_enable_thinking",
+        fake_resolve_enable_thinking,
+    )
+
+    async def collect_first_event() -> dict[str, object]:
+        generator = orchestrator_service.orchestrate_inference_stream(
+            db=None,
+            workspace_id="ws_1",
+            project_id="proj_1",
+            conversation_id="conv_1",
+            user_message="你好",
+            recent_messages=[],
+        )
+        first = await generator.__anext__()
+        await generator.aclose()
+        return first
+
+    first_event = asyncio.run(collect_first_event())
+
+    assert first_event == {"event": "message_start", "data": {"role": "assistant"}}
+    assert call_order == []
+
+
+def test_normalize_assistant_markdown_repairs_inline_bullets() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown("-冰美式- 手冲- 冷萃")
+
+    assert normalized == "- 冰美式\n- 手冲\n- 冷萃"
+
+
+def test_normalize_assistant_markdown_repairs_sentence_prefixed_inline_bullets() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "好的，我记住了。- 乌龙茶- 茉莉花茶"
+    )
+
+    assert normalized == "好的，我记住了。\n- 乌龙茶\n- 茉莉花茶"
+
+
+def test_build_and_call_llm_normalizes_assistant_markdown(monkeypatch) -> None:
+    async def fake_resolve_enable_thinking(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_thinking=False)
+
+    async def fake_assemble_prompt_context(*args, **kwargs):
+        del args, kwargs
+        return ([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {})
+
+    async def fake_resolve_search_options(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_search=False, search_options=None)
+
+    async def fake_chat_completion_detailed(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(
+            content="-冰美式- 手冲- 冷萃",
+            reasoning_content=None,
+            search_sources=[],
+        )
+
+    monkeypatch.setattr(orchestrator_service, "resolve_enable_thinking", fake_resolve_enable_thinking)
+    monkeypatch.setattr(orchestrator_service, "_assemble_prompt_context", fake_assemble_prompt_context)
+    monkeypatch.setattr(orchestrator_service, "_resolve_search_options", fake_resolve_search_options)
+    monkeypatch.setattr(orchestrator_service, "_load_model_capabilities", lambda *args, **kwargs: set())
+    monkeypatch.setattr(orchestrator_service, "_should_use_responses_auto_tools", lambda **kwargs: False)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    result = asyncio.run(
+        orchestrator_service._build_and_call_llm(
+            db=None,
+            workspace_id="ws_1",
+            project_id="proj_1",
+            conversation_id="conv_1",
+            user_message="请用 markdown 列表复述",
+            recent_messages=[],
+            llm_model_id="model_1",
+        )
+    )
+
+    assert result["content"] == "- 冰美式\n- 手冲\n- 冷萃"
+
+
+def test_orchestrate_inference_stream_normalizes_message_done_markdown(monkeypatch) -> None:
+    async def fake_resolve_enable_thinking(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_thinking=False)
+
+    async def fake_resolve_search_options(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_search=False, search_options=None)
+
+    async def fake_assemble_prompt_context(*args, **kwargs):
+        del args, kwargs
+        return ([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {})
+
+    async def fake_chat_completion_stream(*args, **kwargs):
+        del args, kwargs
+        yield SimpleNamespace(content="-冰美式- 手冲- 冷萃", reasoning_content=None, search_sources=[])
+
+    monkeypatch.setattr(orchestrator_service, "resolve_pipeline_model_id", lambda *args, **kwargs: "model_1")
+    monkeypatch.setattr(orchestrator_service, "resolve_enable_thinking", fake_resolve_enable_thinking)
+    monkeypatch.setattr(orchestrator_service, "_resolve_search_options", fake_resolve_search_options)
+    monkeypatch.setattr(orchestrator_service, "_assemble_prompt_context", fake_assemble_prompt_context)
+    monkeypatch.setattr(orchestrator_service, "_load_model_capabilities", lambda *args, **kwargs: set())
+    monkeypatch.setattr(orchestrator_service, "_should_use_responses_auto_tools", lambda **kwargs: False)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_stream", fake_chat_completion_stream)
+
+    async def collect_events() -> list[dict[str, object]]:
+        return [
+            event
+            async for event in orchestrator_service.orchestrate_inference_stream(
+                db=None,
+                workspace_id="ws_1",
+                project_id="proj_1",
+                conversation_id="conv_1",
+                user_message="请用 markdown 列表复述",
+                recent_messages=[],
+            )
+        ]
+
+    events = asyncio.run(collect_events())
+    message_done = next(event for event in events if event["event"] == "message_done")
+
+    assert message_done["data"]["content"] == "- 冰美式\n- 手冲\n- 冷萃"
+
+
+def test_responses_completion_stream_emits_final_message_items_without_duplication(monkeypatch) -> None:
     class FakeStreamResponse:
         async def __aenter__(self):
             return self
@@ -3031,12 +3290,16 @@ async def test_responses_completion_stream_emits_final_message_items_without_dup
     monkeypatch.setattr(dashscope_responses_service, "get_client", lambda: FakeClient())
     monkeypatch.setattr(dashscope_responses_service, "dashscope_headers", lambda: {})
 
-    chunks = []
-    async for chunk in dashscope_responses_service.responses_completion_stream(
-        [{"role": "user", "content": "你好"}],
-        model="qwen-test",
-    ):
-        chunks.append(chunk)
+    async def collect_chunks() -> list[object]:
+        chunks = []
+        async for chunk in dashscope_responses_service.responses_completion_stream(
+            [{"role": "user", "content": "你好"}],
+            model="qwen-test",
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect_chunks())
 
     assert [chunk.content for chunk in chunks if chunk.content] == ["来自最终消息项的回复"]
     assert [chunk.reasoning_content for chunk in chunks if chunk.reasoning_content] == ["最终思考摘要"]
@@ -3361,8 +3624,7 @@ def test_web_search_rules_keep_local_time_queries_offline(monkeypatch) -> None:
     assert decision.source == "rules"
 
 
-@pytest.mark.asyncio
-async def test_chat_completion_stream_explicitly_sends_false_enable_thinking(monkeypatch) -> None:
+def test_chat_completion_stream_explicitly_sends_false_enable_thinking(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeStreamResponse:
@@ -3391,13 +3653,17 @@ async def test_chat_completion_stream_explicitly_sends_false_enable_thinking(mon
 
     monkeypatch.setattr(dashscope_stream_service, "get_client", lambda: FakeClient())
 
-    chunks: list[dashscope_stream_service.StreamChunk] = []
-    async for chunk in dashscope_stream_service.chat_completion_stream(
-        [{"role": "user", "content": "你好"}],
-        model="qwen3.5-plus",
-        enable_thinking=False,
-    ):
-        chunks.append(chunk)
+    async def collect_chunks() -> list[dashscope_stream_service.StreamChunk]:
+        chunks: list[dashscope_stream_service.StreamChunk] = []
+        async for chunk in dashscope_stream_service.chat_completion_stream(
+            [{"role": "user", "content": "你好"}],
+            model="qwen3.5-plus",
+            enable_thinking=False,
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect_chunks())
 
     assert [chunk.content for chunk in chunks] == ["你好"]
     assert isinstance(captured["json"], dict)
@@ -3811,6 +4077,91 @@ def test_memory_creation_defaults_to_project_root_and_root_is_protected() -> Non
     assert delete_root.json()["error"]["code"] == "bad_request"
 
 
+def test_memory_update_can_manually_rebind_and_disconnect_parent() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-manual-parent@example.com", "Memory Manual Parent")
+    project = create_project(client, "手动父节点项目")
+    root_id = project["assistant_root_memory_id"]
+
+    parent = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "用户正在准备主题分享", "category": "工作.项目", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert parent.status_code == 200
+
+    child = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "用户来自中国", "category": "身份.国籍", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert child.status_code == 200
+
+    rebind = client.patch(
+        f"/api/v1/memory/{child.json()['id']}",
+        json={"parent_memory_id": parent.json()["id"]},
+        headers=csrf_headers(client),
+    )
+    assert rebind.status_code == 200
+    rebound_body = rebind.json()
+    assert rebound_body["parent_memory_id"] == parent.json()["id"]
+    assert rebound_body["metadata_json"]["parent_binding"] == "manual"
+    assert rebound_body["metadata_json"]["manual_parent_id"] == parent.json()["id"]
+
+    graph_after_rebind = client.get(f"/api/v1/memory?project_id={project['id']}")
+    assert graph_after_rebind.status_code == 200
+    rebound_child = next(
+        node for node in graph_after_rebind.json()["nodes"] if node["id"] == child.json()["id"]
+    )
+    assert rebound_child["parent_memory_id"] == parent.json()["id"]
+
+    detach = client.patch(
+        f"/api/v1/memory/{child.json()['id']}",
+        json={"parent_memory_id": None},
+        headers=csrf_headers(client),
+    )
+    assert detach.status_code == 200
+    detached_body = detach.json()
+    assert detached_body["parent_memory_id"] == root_id
+    assert detached_body["metadata_json"]["parent_binding"] == "manual"
+    assert detached_body["metadata_json"]["manual_parent_id"] is None
+
+
+def test_memory_update_rejects_manual_parent_cycles() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-parent-cycle@example.com", "Memory Parent Cycle")
+    project = create_project(client, "父节点环路项目")
+
+    parent = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "父节点", "category": "身份.姓名", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert parent.status_code == 200
+
+    child = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "子节点", "category": "身份.昵称", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert child.status_code == 200
+
+    bind_child = client.patch(
+        f"/api/v1/memory/{child.json()['id']}",
+        json={"parent_memory_id": parent.json()["id"]},
+        headers=csrf_headers(client),
+    )
+    assert bind_child.status_code == 200
+
+    cycle_attempt = client.patch(
+        f"/api/v1/memory/{parent.json()['id']}",
+        json={"parent_memory_id": child.json()["id"]},
+        headers=csrf_headers(client),
+    )
+    assert cycle_attempt.status_code == 400
+    assert cycle_attempt.json()["error"]["code"] == "bad_request"
+
+
 def test_memory_graph_backfills_legacy_project_root() -> None:
     client = TestClient(main_module.app)
     user_info = register_user(client, "memory-legacy@example.com", "Memory Legacy")
@@ -3905,6 +4256,42 @@ def test_temporary_memory_requires_conversation_and_graph_includes_file_nodes() 
     file_edge = next(edge for edge in body["edges"] if edge["edge_type"] == "file")
     assert file_edge["source_memory_id"] == memory.json()["id"]
     assert file_edge["target_memory_id"] == file_node["id"]
+
+
+def test_memory_graph_include_temporary_returns_visible_project_temporary_memories() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-include-temp@example.com", "Memory Include Temp")
+    project = create_project(client, "Include Temp Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Include Temp Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    temp_memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户喜欢乌龙茶。",
+            "category": "饮食.偏好",
+            "type": "temporary",
+            "source_conversation_id": conversation_id,
+        },
+        headers=csrf_headers(client),
+    )
+    assert temp_memory.status_code == 200
+
+    graph_without_temp = client.get(f"/api/v1/memory?project_id={project['id']}")
+    assert graph_without_temp.status_code == 200
+    assert all(node["id"] != temp_memory.json()["id"] for node in graph_without_temp.json()["nodes"])
+
+    graph_with_temp = client.get(f"/api/v1/memory?project_id={project['id']}&include_temporary=true")
+    assert graph_with_temp.status_code == 200
+    temp_node = next(node for node in graph_with_temp.json()["nodes"] if node["id"] == temp_memory.json()["id"])
+    assert temp_node["type"] == "temporary"
+    assert temp_node["source_conversation_id"] == conversation_id
 
 
 def test_temporary_memory_is_hidden_from_other_workspace_members() -> None:
@@ -4499,6 +4886,8 @@ def test_extract_live_message_metadata_filters_valid_fields() -> None:
                 },
             ],
             "memories_extracted": "记录了用户的长期兴趣。",
+            "memory_extraction_status": "completed",
+            "memory_extraction_attempts": 2,
             "ignored": {"nested": True},
         },
     )
@@ -4518,6 +4907,117 @@ def test_extract_live_message_metadata_filters_valid_fields() -> None:
             }
         ],
         "memories_extracted": "记录了用户的长期兴趣。",
+        "memory_extraction_status": "completed",
+        "memory_extraction_attempts": 2,
+    }
+
+
+def test_trigger_memory_extraction_runs_inline_thread_in_local_env(monkeypatch) -> None:
+    call_args: list[tuple] = []
+    called = threading.Event()
+
+    original_env = config_module.settings.env
+    original_api_key = config_module.settings.dashscope_api_key
+
+    monkeypatch.setattr(config_module.settings, "env", "local")
+    monkeypatch.setattr(config_module.settings, "dashscope_api_key", "test-key")
+
+    def fake_execute_memory_extraction_job(*args):
+        call_args.append(args)
+        called.set()
+        return True
+
+    class FakeExtractTask:
+        def delay(self, *args):  # pragma: no cover - should not be reached
+            raise AssertionError("delay should not be used in local env")
+
+    monkeypatch.setattr(worker_tasks, "execute_memory_extraction_job", fake_execute_memory_extraction_job)
+    monkeypatch.setattr(worker_tasks, "extract_memories", FakeExtractTask())
+
+    chat_router._trigger_memory_extraction(
+        "ws_local",
+        "proj_local",
+        "conv_local",
+        "user text",
+        "assistant text",
+        assistant_message_id="msg_local",
+    )
+
+    assert called.wait(timeout=2)
+    assert call_args == [
+        (
+            "ws_local",
+            "proj_local",
+            "conv_local",
+            "user text",
+            "assistant text",
+            "msg_local",
+        )
+    ]
+
+    monkeypatch.setattr(config_module.settings, "env", original_env)
+    monkeypatch.setattr(config_module.settings, "dashscope_api_key", original_api_key)
+
+
+def test_execute_memory_extraction_job_retries_until_success(monkeypatch) -> None:
+    attempts: list[int] = []
+
+    def fake_run_memory_extraction(*args, attempt_index=1, **kwargs):
+        del args, kwargs
+        attempts.append(attempt_index)
+        return attempt_index >= 2
+
+    monkeypatch.setattr(worker_tasks, "run_memory_extraction", fake_run_memory_extraction)
+    monkeypatch.setattr(worker_tasks.time, "sleep", lambda *_args, **_kwargs: None)
+
+    succeeded = worker_tasks.execute_memory_extraction_job(
+        "ws_retry",
+        "proj_retry",
+        "conv_retry",
+        "user text",
+        "assistant text",
+        "msg_retry",
+        max_attempts=3,
+    )
+
+    assert succeeded is True
+    assert attempts == [1, 2]
+
+
+def test_execute_memory_extraction_job_marks_failed_after_max_attempts(monkeypatch) -> None:
+    attempts: list[int] = []
+    failure_payload: dict[str, object] = {}
+
+    def fake_run_memory_extraction(*args, attempt_index=1, **kwargs):
+        del args, kwargs
+        attempts.append(attempt_index)
+        return False
+
+    def fake_persist_failure(message_id: str | None, *, attempts: int, error_message: str) -> None:
+        failure_payload["message_id"] = message_id
+        failure_payload["attempts"] = attempts
+        failure_payload["error_message"] = error_message
+
+    monkeypatch.setattr(worker_tasks, "run_memory_extraction", fake_run_memory_extraction)
+    monkeypatch.setattr(worker_tasks, "_persist_memory_extraction_failure", fake_persist_failure)
+    monkeypatch.setattr(worker_tasks.time, "sleep", lambda *_args, **_kwargs: None)
+
+    succeeded = worker_tasks.execute_memory_extraction_job(
+        "ws_retry",
+        "proj_retry",
+        "conv_retry",
+        "user text",
+        "assistant text",
+        "msg_retry",
+        max_attempts=3,
+    )
+
+    assert succeeded is False
+    assert attempts == [1, 2, 3]
+    assert failure_payload == {
+        "message_id": "msg_retry",
+        "attempts": 3,
+        "error_message": worker_tasks.MEMORY_EXTRACTION_FAILURE_SUMMARY,
     }
 
 
@@ -4632,6 +5132,1300 @@ def test_extract_memories_persists_triage_results_for_frontend(monkeypatch) -> N
         updated_memory = db.get(Memory, existing_memory_id)
         assert updated_memory is not None
         assert updated_memory.content == "用户是帝国理工大学学习物理本科的中国留学生。"
+
+
+def test_extract_memories_targets_explicit_assistant_message_id(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-target@example.com", "Memory Target")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Target Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Target Conversation",
+    )
+
+    with SessionLocal() as db:
+        first_assistant = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="第一条 assistant",
+            metadata_json={},
+        )
+        second_assistant = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="第二条 assistant",
+            metadata_json={},
+        )
+        db.add(first_assistant)
+        db.add(second_assistant)
+        db.commit()
+        first_assistant_id = first_assistant.id
+        second_assistant_id = second_assistant.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户来自上海",
+                    "category": "身份.背景",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.12, 0.34, 0.56]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "请记住我来自上海",
+        "已记住。",
+        first_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        first_message = db.get(Message, first_assistant_id)
+        second_message = db.get(Message, second_assistant_id)
+        assert first_message is not None
+        assert second_message is not None
+        assert isinstance((first_message.metadata_json or {}).get("extracted_facts"), list)
+        assert not (second_message.metadata_json or {}).get("extracted_facts")
+
+
+def test_extract_memories_retries_with_user_only_fallback_when_primary_returns_empty(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-fallback@example.com", "Memory Fallback")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Fallback Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Fallback Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="已记住。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    call_count = {"value": 0}
+
+    async def fake_extract_completion(messages, *args, **kwargs):
+        del args, kwargs
+        call_count["value"] += 1
+        prompt_text = messages[0]["content"]
+        if call_count["value"] == 1:
+            assert "禁止输出“用户偏好A和B”这类聚合句" in prompt_text
+            return "[]"
+        assert "只根据用户原话" in prompt_text
+        assert "禁止输出“用户偏好A和B”这类聚合句" not in prompt_text
+        return json.dumps(
+            [
+                {
+                    "fact": "用户喜欢乌龙茶。",
+                    "category": "饮食.偏好",
+                    "importance": 0.95,
+                },
+                {
+                    "fact": "用户喜欢茉莉花茶。",
+                    "category": "饮食.偏好",
+                    "importance": 0.95,
+                },
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.18, 0.27, 0.36]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我喜欢乌龙茶，也喜欢茉莉花茶。请记住它们。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        assistant_message = db.get(Message, assistant_message_id)
+        assert assistant_message is not None
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert call_count["value"] == 2
+        assert isinstance(extracted_facts, list)
+        assert len(extracted_facts) == 2
+        assert metadata["memories_extracted"] == "新增永久记忆 2 条"
+
+
+def test_extract_memories_writes_empty_summary_when_no_fact_is_extracted(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-empty-summary@example.com", "Memory Empty Summary")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Empty Summary Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Empty Summary Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="好的，我来列一下。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return "[]"
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "请把这段回复整理成项目符号列表，不要新增任何记忆。",
+        "好的，我来列一下。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        assistant_message = db.get(Message, assistant_message_id)
+        assert assistant_message is not None
+        metadata = assistant_message.metadata_json or {}
+        assert metadata.get("extracted_facts") == []
+        assert metadata.get("memories_extracted") == "本轮未提取到可保存记忆"
+
+
+def test_extract_memories_heuristically_marks_duplicate_preferences_when_model_returns_empty(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-heuristic-duplicate@example.com", "Memory Heuristic Duplicate")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Heuristic Duplicate Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Heuristic Duplicate Conversation",
+    )
+
+    with SessionLocal() as db:
+        oolong = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢乌龙茶。",
+            category="饮食.偏好",
+            type="temporary",
+            metadata_json={"memory_kind": "preference"},
+        )
+        jasmine = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢茉莉花茶。",
+            category="饮食.偏好",
+            type="temporary",
+            metadata_json={"memory_kind": "preference"},
+        )
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="好的，已记住。",
+            metadata_json={},
+        )
+        db.add_all([oolong, jasmine, assistant_message])
+        db.commit()
+        oolong_id = oolong.id
+        jasmine_id = jasmine.id
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return "[]"
+
+    async def fake_find_duplicate(*args, **kwargs):
+        text = kwargs.get("text", "")
+        if "乌龙茶" in text:
+            return {"memory_id": oolong_id}, [0.11, 0.22, 0.33]
+        if "茉莉花茶" in text:
+            return {"memory_id": jasmine_id}, [0.11, 0.22, 0.33]
+        return None, [0.11, 0.22, 0.33]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我也很喜欢乌龙茶，平时还常喝茉莉花茶。",
+        "好的，已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        assistant_message = db.get(Message, assistant_message_id)
+        assert assistant_message is not None
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert [item["fact"] for item in extracted_facts] == ["用户喜欢乌龙茶。", "用户喜欢茉莉花茶。"]
+        assert all(item["status"] == "duplicate" for item in extracted_facts)
+        assert metadata.get("memories_extracted") == "重复跳过 2 条"
+
+
+def test_extract_facts_heuristically_ignores_instructional_prompt() -> None:
+    facts = worker_tasks._extract_facts_heuristically(
+        "只输出 markdown 无序列表，每个列表项单独占一行，列出我喜欢的饮品，不要添加任何其他内容。"
+    )
+
+    assert facts == []
+
+
+def test_extract_memories_resolves_conversation_from_assistant_message_id(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-assistant-fallback@example.com", "Memory Assistant Fallback")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Assistant Fallback Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Assistant Fallback Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="已记住。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户计划今年去东京旅行。",
+                    "category": "旅行.计划",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.19, 0.27, 0.35]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        "missing-conversation-id",
+        "我计划今年去东京旅行。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        assistant_message = db.get(Message, assistant_message_id)
+        assert assistant_message is not None
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "用户计划今年去东京旅行。"
+
+
+def test_temporary_preference_keeps_preference_memory_kind() -> None:
+    metadata = memory_metadata_service.normalize_memory_metadata(
+        content="用户喜欢冷萃咖啡。",
+        category="饮食.偏好",
+        memory_type="temporary",
+        metadata={},
+    )
+
+    assert metadata["memory_kind"] == "preference"
+
+
+def test_extract_memories_discards_aggregate_preference_fact(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-aggregate-filter@example.com", "Memory Aggregate Filter")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Aggregate Filter Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Aggregate Filter Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="已记住。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户偏好乌龙茶和茉莉花茶。",
+                    "category": "饮食.偏好",
+                    "importance": 0.95,
+                },
+                {
+                    "fact": "用户喜欢冷萃咖啡。",
+                    "category": "饮食.偏好",
+                    "importance": 0.95,
+                },
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.14, 0.28, 0.42]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我喜欢冷萃咖啡，也喜欢乌龙茶和茉莉花茶。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        saved_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content.in_(["用户偏好乌龙茶和茉莉花茶。", "用户喜欢冷萃咖啡。"]),
+            )
+            .all()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert [memory.content for memory in saved_memories] == ["用户喜欢冷萃咖啡。"]
+        extracted_facts = (assistant_message.metadata_json or {}).get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        aggregate_entry = next(item for item in extracted_facts if item["fact"] == "用户偏好乌龙茶和茉莉花茶。")
+        assert aggregate_entry["status"] == "discarded"
+        assert "聚合型事实" in aggregate_entry["triage_reason"]
+        assert "新增永久记忆 1 条" in assistant_message.metadata_json["memories_extracted"]
+        assert "被 triage 丢弃 1 条" in assistant_message.metadata_json["memories_extracted"]
+
+
+def test_validate_append_parent_downgrades_leaf_parent_to_sibling(monkeypatch) -> None:
+    async def fake_validation_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps({"relation": "parent", "reason": "旧记忆更泛化。"}, ensure_ascii=False)
+
+    monkeypatch.setattr(worker_tasks.dashscope_client, "chat_completion", fake_validation_completion)
+
+    candidate = Memory(
+        workspace_id="ws_1",
+        project_id="proj_1",
+        content="用户喜欢喝冰美式。",
+        category="饮食.偏好",
+        type="permanent",
+        metadata_json={"memory_kind": "preference"},
+    )
+
+    result = asyncio.run(
+        worker_tasks._validate_append_parent(
+            fact_text="用户喜欢冷萃咖啡。",
+            fact_category="饮食.偏好",
+            fact_memory_kind="preference",
+            candidate_memory=candidate,
+        )
+    )
+
+    assert result["relation"] == "sibling"
+
+
+def test_memory_compaction_skips_concept_nodes() -> None:
+    concept_memory = Memory(
+        workspace_id="ws_1",
+        project_id="proj_1",
+        content="用户对咖啡感兴趣",
+        category="饮食.偏好.咖啡",
+        type="permanent",
+        metadata_json={"memory_kind": "preference", "node_kind": "concept"},
+    )
+
+    assert memory_compaction_service._eligible_for_compaction(concept_memory) is False
+
+
+def test_extract_memories_groups_specific_preference_under_concept_parent(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-concept@example.com", "Memory Concept")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Concept Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Concept Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户喜欢喝冰美式",
+                    "category": "偏好.饮品",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.21, 0.43, 0.65]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return {
+            "topic": "咖啡",
+            "parent_text": "用户对咖啡感兴趣",
+            "parent_category": "偏好.饮品.咖啡",
+            "reason": "冰美式属于咖啡偏好。",
+        }
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "请记住我喜欢喝冰美式",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        concept_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对咖啡感兴趣",
+            )
+            .first()
+        )
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户喜欢喝冰美式",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert concept_memory is not None
+        assert child_memory is not None
+        assert child_memory.parent_memory_id == concept_memory.id
+        assert (concept_memory.metadata_json or {}).get("node_kind") == "concept"
+
+        edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == concept_memory.id,
+                MemoryEdge.target_memory_id == child_memory.id,
+            )
+            .first()
+        )
+        assert edge is not None
+
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert "用户对咖啡感兴趣" in extracted_facts[0]["triage_reason"]
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
+
+
+def test_extract_memories_promotes_explicit_preference_to_permanent(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-preference-promote@example.com", "Memory Promote")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Promote Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Promote Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户喜欢冷萃咖啡",
+                    "category": "饮食.偏好.咖啡",
+                    "importance": 0.8,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.11, 0.22, 0.33]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return {
+            "topic": "咖啡",
+            "parent_text": "用户对咖啡感兴趣",
+            "parent_category": "饮食.偏好.咖啡",
+            "reason": "冷萃咖啡属于咖啡偏好。",
+        }
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我喜欢冷萃咖啡。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        concept_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对咖啡感兴趣",
+            )
+            .first()
+        )
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.parent_memory_id == concept_memory.id,
+                Memory.id != concept_memory.id,
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert concept_memory is not None
+        assert child_memory is not None
+        assert child_memory.type == "permanent"
+        assert child_memory.parent_memory_id == concept_memory.id
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["status"] == "permanent"
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
+
+
+def test_extract_memories_promotes_first_person_preference_to_permanent(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-first-person-promote@example.com", "Memory First Person")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory First Person Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory First Person Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "我也很喜欢冷萃咖啡",
+                    "category": "饮食.偏好.咖啡",
+                    "importance": 0.8,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.11, 0.22, 0.33]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return {
+            "topic": "咖啡",
+            "parent_text": "用户对咖啡感兴趣",
+            "parent_category": "饮食.偏好.咖啡",
+            "reason": "冷萃咖啡属于咖啡偏好。",
+        }
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我也很喜欢冷萃咖啡。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.category == "饮食.偏好.咖啡",
+                Memory.content == "用户也很喜欢冷萃咖啡",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert child_memory is not None
+        assert child_memory.type == "permanent"
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "用户也很喜欢冷萃咖啡"
+        assert extracted_facts[0]["status"] == "permanent"
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
+
+
+def test_extract_memories_reuses_near_duplicate_concept_topics(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-concept-reuse@example.com", "Memory Concept Reuse")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Concept Reuse Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Concept Reuse Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户喜欢冷萃咖啡",
+                    "category": "饮食.偏好",
+                    "importance": 0.8,
+                },
+                {
+                    "fact": "用户喜欢冰美式",
+                    "category": "饮食.偏好",
+                    "importance": 0.8,
+                },
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.11, 0.22, 0.33]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        fact_text = kwargs.get("fact_text", "")
+        if "冷萃" in fact_text:
+            return {
+                "topic": "咖啡饮品",
+                "parent_text": "用户对咖啡饮品感兴趣",
+                "parent_category": "饮食.偏好.咖啡饮品",
+                "reason": "冷萃咖啡属于咖啡饮品。",
+            }
+        return {
+            "topic": "咖啡",
+            "parent_text": "用户对咖啡感兴趣",
+            "parent_category": "饮食.偏好.咖啡",
+            "reason": "冰美式属于咖啡。",
+        }
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我喜欢冷萃咖啡，也喜欢冰美式。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        concept_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.type == "permanent",
+            )
+            .all()
+        )
+        concept_nodes = [memory for memory in concept_memories if (memory.metadata_json or {}).get("node_kind") == "concept"]
+        child_nodes = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.parent_memory_id == concept_nodes[0].id,
+            )
+            .all()
+            if concept_nodes
+            else []
+        )
+        assert len(concept_nodes) == 1
+        assert concept_nodes[0].content == "用户对咖啡感兴趣"
+        assert len(child_nodes) == 2
+
+
+def test_upsert_auto_memory_edge_deduplicates_pending_edges() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-edge-dedupe@example.com", "Memory Edge Dedupe")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Edge Dedupe Project")
+
+    with SessionLocal() as db:
+        root = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="root",
+            category="assistant",
+            type="permanent",
+            metadata_json={"node_kind": "assistant-root"},
+        )
+        child = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="child",
+            category="偏好",
+            type="permanent",
+            metadata_json={"memory_kind": "preference"},
+        )
+        db.add_all([root, child])
+        db.flush()
+
+        worker_tasks._upsert_auto_memory_edge(
+            db,
+            source_memory_id=root.id,
+            target_memory_id=child.id,
+            strength=0.65,
+        )
+        worker_tasks._upsert_auto_memory_edge(
+            db,
+            source_memory_id=root.id,
+            target_memory_id=child.id,
+            strength=0.84,
+        )
+        db.flush()
+
+        edges = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == root.id,
+                MemoryEdge.target_memory_id == child.id,
+            )
+            .all()
+        )
+        assert len(edges) == 1
+        assert float(edges[0].strength) == 0.84
+
+
+def test_extract_memories_converts_append_siblings_into_shared_concept_parent(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-concept-siblings@example.com", "Memory Concept Siblings")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Concept Siblings Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Concept Siblings Conversation",
+    )
+
+    with SessionLocal() as db:
+        existing_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢喝冰美式。",
+            category="饮食.偏好",
+            type="permanent",
+            metadata_json={"memory_kind": "preference"},
+        )
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(existing_memory)
+        db.add(assistant_message)
+        db.commit()
+        existing_memory_id = existing_memory.id
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户喜欢手冲咖啡。",
+                    "category": "饮食.偏好",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.31, 0.52, 0.73]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return [
+            {
+                "memory_id": existing_memory_id,
+                "category": "饮食.偏好",
+                "content": "用户喜欢喝冰美式。",
+            }
+        ]
+
+    async def fake_triage(*args, **kwargs):
+        del args, kwargs
+        return {
+            "action": "append",
+            "target_memory_id": existing_memory_id,
+            "merged_content": None,
+            "reason": "同属咖啡偏好。",
+        }
+
+    async def fake_validate_append_parent(*args, **kwargs):
+        del args, kwargs
+        return {
+            "relation": "sibling",
+            "reason": "两条记忆是同一主题下的并列偏好，不应形成父子链。",
+        }
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return {
+            "topic": "咖啡",
+            "parent_text": "用户对咖啡感兴趣",
+            "parent_category": "饮食.偏好.咖啡",
+            "reason": "两条偏好都稳定归属于咖啡主题。",
+        }
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "triage_memory", fake_triage)
+    monkeypatch.setattr(worker_tasks, "_validate_append_parent", fake_validate_append_parent)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "请记住我喜欢手冲咖啡。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        concept_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对咖啡感兴趣",
+            )
+            .first()
+        )
+        existing_memory = db.get(Memory, existing_memory_id)
+        new_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户喜欢手冲咖啡。",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert concept_memory is not None
+        assert existing_memory is not None
+        assert new_memory is not None
+        assert existing_memory.parent_memory_id == concept_memory.id
+        assert new_memory.parent_memory_id == concept_memory.id
+
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert "并列偏好" in extracted_facts[0]["triage_reason"]
+        assert "用户对咖啡感兴趣" in extracted_facts[0]["triage_reason"]
+
+
+def test_repair_project_memory_graph_deletes_aggregate_nodes_and_repairs_auto_edges() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair@example.com", "Memory Repair")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Repair Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        root_memory, _ = ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        concept_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户对咖啡感兴趣",
+            category="饮食.偏好.咖啡",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={"memory_kind": "preference", "node_kind": "concept", "auto_generated": True},
+        )
+        leaf_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢喝冰美式。",
+            category="饮食.偏好",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={"memory_kind": "preference", "source": "auto_extraction"},
+        )
+        child_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢冷萃咖啡。",
+            category="饮食.偏好",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={"memory_kind": "preference", "source": "auto_extraction"},
+        )
+        aggregate_memory = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户偏好手冲咖啡、冰美式和冷萃咖啡。",
+            category="饮食.饮品偏好",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={"memory_kind": "preference", "source": "auto_extraction"},
+        )
+        db.add_all([concept_memory, leaf_memory, child_memory, aggregate_memory])
+        db.flush()
+        leaf_memory.parent_memory_id = concept_memory.id
+        child_memory.parent_memory_id = leaf_memory.id
+        db.add(
+            MemoryEdge(
+                source_memory_id=concept_memory.id,
+                target_memory_id=leaf_memory.id,
+                edge_type="auto",
+                strength=0.8,
+            )
+        )
+        db.add(
+            MemoryEdge(
+                source_memory_id=leaf_memory.id,
+                target_memory_id=child_memory.id,
+                edge_type="auto",
+                strength=0.72,
+            )
+        )
+        db.commit()
+        child_memory_id = child_memory.id
+        aggregate_memory_id = aggregate_memory.id
+        concept_memory_id = concept_memory.id
+        leaf_memory_id = leaf_memory.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        repaired_child = db.get(Memory, child_memory_id)
+        deleted_aggregate = db.get(Memory, aggregate_memory_id)
+        assert repaired_child is not None
+        assert repaired_child.parent_memory_id == concept_memory_id
+        assert deleted_aggregate is None
+        assert summary.deleted_aggregate_nodes == 1
+        assert summary.reparented_nodes >= 1
+
+        concept_child_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == concept_memory_id,
+                MemoryEdge.target_memory_id == child_memory_id,
+                MemoryEdge.edge_type == "auto",
+            )
+            .first()
+        )
+        stale_leaf_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == leaf_memory_id,
+                MemoryEdge.target_memory_id == child_memory_id,
+                MemoryEdge.edge_type == "auto",
+            )
+            .first()
+        )
+        assert concept_child_edge is not None
+        assert stale_leaf_edge is None
 
 
 def test_cleanup_pending_upload_session_skips_completed_items_when_task_replays(monkeypatch) -> None:
@@ -5246,6 +7040,206 @@ def test_orchestrator_memory_only_context_excludes_knowledge_and_linked_files(mo
     assert "这段关联文件也不应该出现在 memory_only 中" not in captured["system_prompt"]
 
 
+def test_orchestrator_memory_only_context_excludes_unrelated_static_preferences(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "context-strict-related@example.com", "Context Strict Related")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Context Strict Related Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Strict Related Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    travel_memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户计划于2026年去东京旅行。",
+            "category": "旅行.计划",
+        },
+        headers=csrf_headers(client),
+    )
+    assert travel_memory.status_code == 200
+
+    tea_memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户喜欢乌龙茶。",
+            "category": "饮食.偏好",
+        },
+        headers=csrf_headers(client),
+    )
+    assert tea_memory.status_code == 200
+
+    captured: dict[str, str] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        del args, kwargs
+        return [
+            {
+                "id": "embedding-travel-1",
+                "chunk_text": "用户计划于2026年去东京旅行。",
+                "memory_id": travel_memory.json()["id"],
+                "data_item_id": None,
+                "score": 0.91,
+            },
+            {
+                "id": "embedding-tea-1",
+                "chunk_text": "用户喜欢乌龙茶。",
+                "memory_id": tea_memory.json()["id"],
+                "data_item_id": None,
+                "score": 0.49,
+            },
+        ]
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        captured["system_prompt"] = input_items[0]["content"]
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="你记得我的东京旅行计划吗？",
+                recent_messages=[],
+            )
+        )
+
+    assert result["content"] == "ok"
+    assert result["retrieval_trace"]["context_level"] == "memory_only"
+    assert result["retrieval_trace"]["memory_counts"]["static"] == 0
+    assert "用户计划于2026年去东京旅行。" in captured["system_prompt"]
+    assert "用户喜欢乌龙茶。" not in captured["system_prompt"]
+
+
+def test_orchestrator_memory_only_graph_expansion_keeps_parent_but_not_sibling(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "context-graph-parent@example.com", "Context Graph Parent")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Context Graph Parent Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Graph Parent Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        root_memory, _ = ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        tea_concept = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户对茶感兴趣",
+            category="饮食.偏好.茶",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={"memory_kind": "preference", "node_kind": "concept", "auto_generated": True},
+        )
+        jasmine = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢茉莉花茶。",
+            category="饮食.偏好",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={"memory_kind": "preference"},
+        )
+        oolong = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户喜欢乌龙茶。",
+            category="饮食.偏好",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={"memory_kind": "preference"},
+        )
+        db.add_all([tea_concept, jasmine, oolong])
+        db.flush()
+        jasmine.parent_memory_id = tea_concept.id
+        oolong.parent_memory_id = tea_concept.id
+        db.commit()
+        jasmine_id = jasmine.id
+
+    captured: dict[str, str] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        del args, kwargs
+        return [
+            {
+                "id": "embedding-jasmine-1",
+                "chunk_text": "用户喜欢茉莉花茶。",
+                "memory_id": jasmine_id,
+                "data_item_id": None,
+                "score": 0.92,
+            }
+        ]
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        *,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del model, enable_thinking, tools, tool_choice, image_bytes, image_mime_type
+        captured["system_prompt"] = input_items[0]["content"]
+        return SimpleNamespace(content="ok", reasoning_content=None, search_sources=[], tool_calls=[])
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service.orchestrate_inference(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="你记得我喜欢茉莉花茶吗？",
+                recent_messages=[],
+            )
+        )
+
+    assert result["content"] == "ok"
+    assert "用户对茶感兴趣" in captured["system_prompt"]
+    assert "用户喜欢茉莉花茶。" in captured["system_prompt"]
+    assert "用户喜欢乌龙茶。" not in captured["system_prompt"]
+
+
 def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> None:
     client = TestClient(main_module.app)
     owner_info = register_user(client, "linked-rag@example.com", "Linked Rag")
@@ -5605,7 +7599,7 @@ def test_memory_compaction_task_creates_summary_memory_and_edges(monkeypatch) ->
         summary = next(
             memory
             for memory in summaries
-            if memory.metadata_json.get("node_kind") == "summary"
+            if (memory.metadata_json or {}).get("summary_group_key")
         )
         assert "稳定关注数学学习" in summary.content
         assert summary.metadata_json["source_count"] >= 3
@@ -5618,3 +7612,160 @@ def test_memory_compaction_task_creates_summary_memory_and_edges(monkeypatch) ->
             .all()
         )
         assert {edge.target_memory_id for edge in edges} >= set(source_ids)
+
+
+def test_memory_compaction_removes_stale_summary_when_group_shrinks(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "summary-cleanup@example.com", "Summary Cleanup")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Summary Cleanup Project")
+
+    async def fake_chat_completion(*args, **kwargs):
+        return json.dumps(
+            {
+                "skip": False,
+                "summary": "用户持续推进旅行规划，并记录了多个稳定目标。",
+                "category": "生活.计划.旅行计划",
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("app.services.memory_compaction.chat_completion", fake_chat_completion)
+
+    memory_ids: list[str] = []
+    for content in (
+        "用户计划今年秋天去上海。",
+        "用户准备为旅行制定预算。",
+        "用户正在整理旅行行程清单。",
+    ):
+        response = client.post(
+            "/api/v1/memory",
+            json={
+                "project_id": project["id"],
+                "content": content,
+                "category": "生活.计划.旅行计划",
+            },
+            headers=csrf_headers(client),
+        )
+        assert response.status_code == 200
+        memory_ids.append(response.json()["id"])
+
+    worker_tasks.compact_project_memories_task(workspace_id, project["id"])
+
+    with SessionLocal() as db:
+        summary = next(
+            (
+                memory
+                for memory in db.query(Memory)
+                .filter(
+                    Memory.project_id == project["id"],
+                    Memory.workspace_id == workspace_id,
+                    Memory.type == "permanent",
+                )
+                .all()
+                if (memory.metadata_json or {}).get("summary_group_key")
+            ),
+            None,
+        )
+        assert summary is not None
+        summary_id = summary.id
+
+    delete_resp = client.delete(
+        f"/api/v1/memory/{memory_ids[0]}",
+        headers=csrf_headers(client),
+    )
+    assert delete_resp.status_code == 204
+
+    with SessionLocal() as db:
+        assert db.get(Memory, summary_id) is None
+        summary_edges = (
+            db.query(MemoryEdge)
+            .filter(
+                (MemoryEdge.source_memory_id == summary_id)
+                | (MemoryEdge.target_memory_id == summary_id)
+            )
+            .all()
+        )
+        assert summary_edges == []
+
+
+def test_memory_graph_revision_increments_on_structure_mutations() -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "graph-revision@example.com", "Graph Revision")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Graph Revision Project")
+
+    start_revision = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+
+    first = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户来自中国。",
+            "category": "身份.国籍",
+        },
+        headers=csrf_headers(client),
+    )
+    assert first.status_code == 200
+    after_first = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+    assert after_first > start_revision
+
+    second = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户计划去上海。",
+            "category": "生活.计划.旅行计划",
+        },
+        headers=csrf_headers(client),
+    )
+    assert second.status_code == 200
+    after_second = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+    assert after_second > after_first
+
+    edge = client.post(
+        "/api/v1/memory/edges",
+        json={
+            "source_memory_id": first.json()["id"],
+            "target_memory_id": second.json()["id"],
+            "strength": 0.9,
+        },
+        headers=csrf_headers(client),
+    )
+    assert edge.status_code == 200
+    after_edge_create = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+    assert after_edge_create > after_second
+
+    remove_edge = client.delete(
+        f"/api/v1/memory/edges/{edge.json()['id']}",
+        headers=csrf_headers(client),
+    )
+    assert remove_edge.status_code == 204
+    after_edge_delete = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+    assert after_edge_delete > after_edge_create
+
+    delete_memory = client.delete(
+        f"/api/v1/memory/{second.json()['id']}",
+        headers=csrf_headers(client),
+    )
+    assert delete_memory.status_code == 204
+    after_memory_delete = memory_graph_events_service.get_project_memory_graph_revision(
+        workspace_id=workspace_id,
+        project_id=project["id"],
+    )
+    assert after_memory_delete > after_edge_delete

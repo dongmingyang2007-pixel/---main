@@ -280,6 +280,31 @@ def test_session_switches_to_text_stream_without_repeating_audio_transcript_pref
     assert session._current_response_text == "你好"
 
 
+def test_session_replaces_visible_text_when_audio_and_text_streams_diverge():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio_transcript.delta",
+                "delta": "你好呀",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好，今天",
+            }
+        )
+    )
+
+    assert first == [{"type": "response.text", "text": "你好呀"}]
+    assert second == [{"type": "response.text", "text": "你好，今天", "replace": True}]
+    assert session._current_response_text == "你好，今天"
+
+
 def test_session_accumulates_partial_user_transcripts():
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
 

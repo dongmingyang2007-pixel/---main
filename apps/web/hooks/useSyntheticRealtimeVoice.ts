@@ -5,6 +5,7 @@ import {
   useRealtimeVoiceBase,
   type RealtimeState,
   type TranscriptEntry,
+  type RealtimeVoiceBaseConfig,
 } from "./useRealtimeVoiceBase";
 import type { PersistedRealtimeMessage, PersistedRealtimeTurnPayload } from "./useRealtimeVoice";
 
@@ -32,6 +33,7 @@ interface UseSyntheticRealtimeVoiceOptions {
     action?: "upsert" | "discard";
   }) => void;
   onTurnPersisted?: (payload: PersistedRealtimeTurnPayload) => void;
+  messages?: RealtimeVoiceBaseConfig["messages"];
 }
 
 interface UseSyntheticRealtimeVoiceReturn {
@@ -42,6 +44,8 @@ interface UseSyntheticRealtimeVoiceReturn {
   disconnect: () => void;
   toggleMute: () => void;
   isMuted: boolean;
+  toggleSpeakerMute: () => void;
+  isSpeakerMuted: boolean;
   userVolume: number;
   aiVolume: number;
   pendingMedia: SyntheticPendingMedia | null;
@@ -65,13 +69,20 @@ export function useSyntheticRealtimeVoice({
   onTurnComplete,
   onTranscriptUpdate,
   onTurnPersisted,
+  messages,
 }: UseSyntheticRealtimeVoiceOptions): UseSyntheticRealtimeVoiceReturn {
   const [pendingMedia, setPendingMedia] = useState<SyntheticPendingMedia | null>(null);
   const pendingMediaRef = useRef<SyntheticPendingMedia | null>(null);
+  const pendingMediaVersionRef = useRef(0);
+  const lastSentMediaVersionRef = useRef(0);
 
   const sendPendingMedia = useCallback((ws: WebSocket) => {
     const media = pendingMediaRef.current;
-    if (!media || ws.readyState !== WebSocket.OPEN) return;
+    const version = pendingMediaVersionRef.current;
+    if (!media || ws.readyState !== WebSocket.OPEN || version === lastSentMediaVersionRef.current) return;
+    if (pendingMediaRef.current !== media || pendingMediaVersionRef.current !== version) {
+      return;
+    }
     ws.send(
       JSON.stringify({
         type: "media.set",
@@ -79,6 +90,7 @@ export function useSyntheticRealtimeVoice({
         filename: media.filename,
       }),
     );
+    lastSentMediaVersionRef.current = version;
   }, []);
 
   const base = useRealtimeVoiceBase({
@@ -95,10 +107,11 @@ export function useSyntheticRealtimeVoice({
     onError,
     onTurnComplete,
     onTranscriptUpdate,
+    messages,
     onSessionReady: sendPendingMedia,
     onCustomMessage: (data) => {
       if (data.type === "media.attached") {
-        // acknowledged by server, nothing to do
+        lastSentMediaVersionRef.current = pendingMediaVersionRef.current;
       } else if (data.type === "media.cleared") {
         setPendingMedia(null);
         pendingMediaRef.current = null;
@@ -127,6 +140,7 @@ export function useSyntheticRealtimeVoice({
           file.type || (file.name.toLowerCase().endsWith(".mp4") ? "video/mp4" : "image/jpeg"),
         dataUrl,
       };
+      pendingMediaVersionRef.current += 1;
       pendingMediaRef.current = nextMedia;
       setPendingMedia(nextMedia);
 
@@ -140,6 +154,7 @@ export function useSyntheticRealtimeVoice({
   );
 
   const clearPendingMedia = useCallback(() => {
+    pendingMediaVersionRef.current += 1;
     pendingMediaRef.current = null;
     setPendingMedia(null);
     base.sendJson({ type: "media.clear" });
@@ -153,6 +168,8 @@ export function useSyntheticRealtimeVoice({
     disconnect: base.disconnect,
     toggleMute: base.toggleMute,
     isMuted: base.isMuted,
+    toggleSpeakerMute: base.toggleSpeakerMute,
+    isSpeakerMuted: base.isSpeakerMuted,
     userVolume: base.userVolume,
     aiVolume: base.aiVolume,
     pendingMedia,

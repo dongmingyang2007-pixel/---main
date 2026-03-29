@@ -3,6 +3,7 @@ import base64
 from datetime import datetime, timezone
 import json
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
@@ -28,7 +29,6 @@ from app.services.orchestrator import (
     orchestrate_inference,
     orchestrate_inference_stream,
     orchestrate_voice_inference,
-    resolve_enable_thinking,
     synthesize_speech_for_project,
     transcribe_audio_input_for_project,
 )
@@ -60,6 +60,9 @@ _MODEL_API_UNCONFIGURED_MESSAGE = (
     "AI service is not configured. Set DASHSCOPE_API_KEY and restart the API service."
 )
 
+_MEMORY_EXTRACTION_STATUS_PENDING = "pending"
+
+
 def _normalize_inference_result(result: str | dict) -> tuple[str, str | None, dict[str, object]]:
     if isinstance(result, str):
         return result, None, {}
@@ -79,6 +82,17 @@ def _normalize_inference_result(result: str | dict) -> tuple[str, str | None, di
         metadata_json["retrieval_trace"] = retrieval_trace
 
     return result.get("content", "") or "", result.get("reasoning_content"), metadata_json
+
+
+def _apply_pending_memory_extraction_metadata(
+    metadata_json: dict[str, object] | None,
+) -> dict[str, object]:
+    next_metadata = dict(metadata_json or {})
+    next_metadata["memory_extraction_status"] = _MEMORY_EXTRACTION_STATUS_PENDING
+    next_metadata["memory_extraction_attempts"] = 0
+    next_metadata.pop("memory_extraction_error", None)
+    next_metadata["memory_extraction_updated_at"] = datetime.now(timezone.utc).isoformat()
+    return next_metadata
 
 
 def _normalize_media_type(content_type: str | None) -> str:
@@ -176,6 +190,18 @@ def _extract_live_message_metadata(message: Message) -> dict[str, object] | None
     raw_memories_extracted = metadata.get("memories_extracted")
     if isinstance(raw_memories_extracted, str) and raw_memories_extracted.strip():
         payload["memories_extracted"] = raw_memories_extracted.strip()
+
+    raw_memory_extraction_status = metadata.get("memory_extraction_status")
+    if isinstance(raw_memory_extraction_status, str) and raw_memory_extraction_status.strip():
+        payload["memory_extraction_status"] = raw_memory_extraction_status.strip()
+
+    raw_memory_extraction_attempts = metadata.get("memory_extraction_attempts")
+    if isinstance(raw_memory_extraction_attempts, int):
+        payload["memory_extraction_attempts"] = raw_memory_extraction_attempts
+
+    raw_memory_extraction_error = metadata.get("memory_extraction_error")
+    if isinstance(raw_memory_extraction_error, str) and raw_memory_extraction_error.strip():
+        payload["memory_extraction_error"] = raw_memory_extraction_error.strip()
 
     return payload or None
 
@@ -368,7 +394,9 @@ async def send_message(
         content=payload.content,
     )
     db.add(user_message)
-    db.flush()
+    conversation.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user_message)
 
     # Load recent messages for context
     recent = (
@@ -382,15 +410,6 @@ async def send_message(
         .all()
     )
     recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
-    thinking_decision = await resolve_enable_thinking(
-        db,
-        project_id=conversation.project_id,
-        user_message=payload.content,
-        recent_messages=recent_msgs,
-        preference=payload.enable_thinking,
-    )
-    enable_thinking = thinking_decision.enable_thinking
-
     # Real inference
     try:
         inference_result = await orchestrate_inference(
@@ -400,13 +419,15 @@ async def send_message(
             conversation_id=conversation_id,
             user_message=payload.content,
             recent_messages=recent_msgs,
-            enable_thinking=enable_thinking,
+            enable_thinking=payload.enable_thinking,
             enable_search=payload.enable_search,
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         _raise_inference_api_error(exc)
     ai_response_text, ai_reasoning_content, ai_metadata_json = _normalize_inference_result(inference_result)
+    if settings.dashscope_api_key:
+        ai_metadata_json = _apply_pending_memory_extraction_metadata(ai_metadata_json)
 
     # Save AI response
     ai_message = Message(
@@ -429,19 +450,14 @@ async def send_message(
     db.refresh(ai_message)
 
     # Trigger async memory extraction (non-fatal)
-    if settings.dashscope_api_key:
-        try:
-            from app.tasks.worker_tasks import extract_memories
-
-            extract_memories.delay(
-                workspace_id,
-                conversation.project_id,
-                conversation_id,
-                payload.content,
-                ai_response_text,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # Celery failure is non-fatal
+    _trigger_memory_extraction(
+        workspace_id,
+        conversation.project_id,
+        conversation_id,
+        payload.content,
+        ai_response_text,
+        assistant_message_id=ai_message.id,
+    )
 
     return MessageOut.model_validate(ai_message, from_attributes=True)
 
@@ -486,7 +502,9 @@ async def stream_message(
         content=payload.content,
     )
     db.add(user_message)
-    db.flush()
+    conversation.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user_message)
 
     # Load recent messages for context
     recent = (
@@ -500,20 +518,12 @@ async def stream_message(
         .all()
     )
     recent_msgs = [{"role": m.role, "content": m.content} for m in reversed(recent)]
-    thinking_decision = await resolve_enable_thinking(
-        db,
-        project_id=conversation.project_id,
-        user_message=payload.content,
-        recent_messages=recent_msgs,
-        preference=payload.enable_thinking,
-    )
-    enable_thinking = thinking_decision.enable_thinking
-
     async def _event_generator():
         """Yield SSE-formatted lines from the streaming orchestrator."""
         full_content = ""
         full_reasoning: str | None = None
         full_metadata_json: dict[str, object] = {}
+        final_event_data: dict[str, object] | None = None
 
         try:
             async for event in orchestrate_inference_stream(
@@ -523,7 +533,7 @@ async def stream_message(
                 conversation_id=conversation_id,
                 user_message=payload.content,
                 recent_messages=recent_msgs,
-                enable_thinking=enable_thinking,
+                enable_thinking=payload.enable_thinking,
                 enable_search=payload.enable_search,
                 user_id=current_user.id,
             ):
@@ -541,6 +551,8 @@ async def stream_message(
                     retrieval_trace = data.get("retrieval_trace")
                     if isinstance(retrieval_trace, dict) and retrieval_trace:
                         full_metadata_json["retrieval_trace"] = retrieval_trace
+                    final_event_data = dict(data)
+                    continue
 
                 yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -550,8 +562,13 @@ async def stream_message(
             yield f"event: error\ndata: {error_data}\n\n"
             return
 
-        # Save assistant message after stream completes
+        if final_event_data is None and not (full_content or full_reasoning or full_metadata_json):
+            return
+
+        persisted_message_id: str | None = None
         try:
+            if settings.dashscope_api_key:
+                full_metadata_json = _apply_pending_memory_extraction_metadata(full_metadata_json)
             ai_message = Message(
                 conversation_id=conversation_id,
                 role="assistant",
@@ -566,18 +583,40 @@ async def stream_message(
                 retrieval_trace=full_metadata_json.get("retrieval_trace") if isinstance(full_metadata_json, dict) else None,
             )
             db.commit()
+            persisted_message_id = ai_message.id
         except Exception:  # noqa: BLE001
             logger.exception("Failed to persist streamed assistant message")
             db.rollback()
 
-        # Trigger async memory extraction (non-fatal)
-        _trigger_memory_extraction(
-            workspace_id,
-            conversation.project_id,
-            conversation_id,
-            payload.content,
-            full_content,
-        )
+        completion_payload = dict(final_event_data or {})
+        if "content" not in completion_payload:
+            completion_payload["content"] = full_content
+        if "reasoning_content" not in completion_payload:
+            completion_payload["reasoning_content"] = full_reasoning
+        if "sources" not in completion_payload and isinstance(full_metadata_json.get("sources"), list):
+            completion_payload["sources"] = full_metadata_json["sources"]
+        if "retrieval_trace" not in completion_payload and isinstance(full_metadata_json.get("retrieval_trace"), dict):
+            completion_payload["retrieval_trace"] = full_metadata_json["retrieval_trace"]
+        if "memory_extraction_status" not in completion_payload and isinstance(full_metadata_json.get("memory_extraction_status"), str):
+            completion_payload["memory_extraction_status"] = full_metadata_json["memory_extraction_status"]
+        if "memory_extraction_attempts" not in completion_payload and isinstance(full_metadata_json.get("memory_extraction_attempts"), int):
+            completion_payload["memory_extraction_attempts"] = full_metadata_json["memory_extraction_attempts"]
+        if "memory_extraction_error" not in completion_payload and isinstance(full_metadata_json.get("memory_extraction_error"), str):
+            completion_payload["memory_extraction_error"] = full_metadata_json["memory_extraction_error"]
+        if persisted_message_id:
+            completion_payload["id"] = persisted_message_id
+
+        yield f"event: message_done\ndata: {json.dumps(completion_payload, ensure_ascii=False)}\n\n"
+
+        if persisted_message_id:
+            _trigger_memory_extraction(
+                workspace_id,
+                conversation.project_id,
+                conversation_id,
+                payload.content,
+                full_content,
+                assistant_message_id=persisted_message_id,
+            )
 
     return StreamingResponse(
         _event_generator(),
@@ -623,15 +662,45 @@ def _get_conversation_or_404(
 
 
 def _trigger_memory_extraction(
-    workspace_id: str, project_id: str, conversation_id: str, user_text: str, ai_text: str
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_text: str,
+    ai_text: str,
+    *,
+    assistant_message_id: str | None = None,
 ) -> None:
     """Fire-and-forget Celery task for memory extraction."""
     if not settings.dashscope_api_key:
         return
     try:
-        from app.tasks.worker_tasks import extract_memories
+        from app.tasks.worker_tasks import execute_memory_extraction_job, extract_memories
 
-        extract_memories.delay(workspace_id, project_id, conversation_id, user_text, ai_text)
+        if settings.env == "local":
+            args = (
+                workspace_id,
+                project_id,
+                conversation_id,
+                user_text,
+                ai_text,
+                assistant_message_id,
+            )
+            logger.info("Scheduling local memory extraction in dedicated background thread")
+            threading.Thread(
+                target=execute_memory_extraction_job,
+                args=args,
+                daemon=True,
+            ).start()
+            return
+
+        extract_memories.delay(
+            workspace_id,
+            project_id,
+            conversation_id,
+            user_text,
+            ai_text,
+            assistant_message_id,
+        )
     except Exception:  # noqa: BLE001
         pass  # Celery failure is non-fatal
 
@@ -659,7 +728,22 @@ def _save_pipeline_messages(
         content=result["text_response"],
         reasoning_content=result.get("reasoning_content"),
         metadata_json=(
-            {
+            _apply_pending_memory_extraction_metadata(
+                {
+                    **(
+                        {"sources": sources}
+                        if isinstance((sources := result.get("sources")), list) and sources
+                        else {}
+                    ),
+                    **(
+                        {"retrieval_trace": trace}
+                        if isinstance((trace := result.get("retrieval_trace")), dict) and trace
+                        else {}
+                    ),
+                }
+            )
+            if settings.dashscope_api_key
+            else {
                 **(
                     {"sources": sources}
                     if isinstance((sources := result.get("sources")), list) and sources
@@ -744,6 +828,7 @@ async def send_voice_message(
     _trigger_memory_extraction(
         workspace_id, conversation.project_id, conversation_id,
         result["text_input"], result["text_response"],
+        assistant_message_id=ai_msg.id,
     )
 
     return _build_pipeline_response(ai_msg, result)
@@ -888,6 +973,7 @@ async def send_image_message(
     _trigger_memory_extraction(
         workspace_id, conversation.project_id, conversation_id,
         result["text_input"], result["text_response"],
+        assistant_message_id=ai_msg.id,
     )
 
     return _build_pipeline_response(ai_msg, result)

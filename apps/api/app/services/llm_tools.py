@@ -83,6 +83,18 @@ def get_function_tools() -> list[dict[str, Any]]:
     return [json.loads(json.dumps(tool)) for tool in FUNCTION_TOOLS]
 
 
+def _normalize_response_tool_parameters_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = json.loads(json.dumps(schema))
+    if normalized.get("type") == "object":
+        properties = normalized.get("properties")
+        if not isinstance(properties, dict):
+            normalized["properties"] = {}
+        if "required" not in normalized or not isinstance(normalized.get("required"), list):
+            normalized["required"] = []
+        normalized.setdefault("additionalProperties", False)
+    return normalized
+
+
 def get_response_function_tools() -> list[dict[str, Any]]:
     response_tools: list[dict[str, Any]] = []
     for tool in FUNCTION_TOOLS:
@@ -101,7 +113,7 @@ def get_response_function_tools() -> list[dict[str, Any]]:
             response_tool["description"] = description
         parameters = function_payload.get("parameters")
         if isinstance(parameters, dict):
-            response_tool["parameters"] = json.loads(json.dumps(parameters))
+            response_tool["parameters"] = _normalize_response_tool_parameters_schema(parameters)
         response_tools.append(response_tool)
     return response_tools
 

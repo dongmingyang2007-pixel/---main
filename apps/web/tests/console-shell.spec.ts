@@ -329,19 +329,20 @@ test.describe("Console Shell", () => {
   test("IconBar visible on desktop", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/app");
-    await expect(page.locator(".sidebar-v2")).toBeVisible();
+    await expect(page.locator(".glass-sidebar--collapsed")).toBeVisible();
   });
 
   test("IconBar hidden on mobile", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/app");
-    await expect(page.locator(".sidebar-v2")).not.toBeVisible();
+    await expect(page.locator(".glass-sidebar--collapsed")).not.toBeVisible();
   });
 
-  test("inline top bar renders with breadcrumbs", async ({ page }) => {
+  test("dashboard keeps the home chrome free of breadcrumb strips", async ({ page }) => {
     await page.goto("/app");
-    await expect(page.locator(".inline-topbar")).toBeVisible();
-    await expect(page.locator(".inline-topbar-breadcrumb")).toContainText("仪表盘");
+    await expect(page.locator("header.site-header-v2.is-console")).toBeVisible();
+    await expect(page.locator(".inline-topbar-breadcrumb")).toHaveCount(0);
+    await expect(page.locator("main [aria-label='Breadcrumb']")).toHaveCount(0);
   });
 
   test("dashboard shows all projects and their configured models", async ({ page }) => {
@@ -412,13 +413,12 @@ test.describe("Console Shell", () => {
 
     await page.goto("/app");
 
-    await expect(page.locator(".inline-topbar-project-select")).toBeVisible();
     await expect(page.locator(".dashboard-project-card")).toHaveCount(2);
     await expect(page.locator(".dashboard-project-card").filter({ hasText: "Seed Console Project" })).toContainText("Qwen3.5-Plus");
     await expect(page.locator(".dashboard-project-card").filter({ hasText: "医生" })).toContainText("Qwen3-Omni-Flash-Realtime");
   });
 
-  test("dashboard command center switches when selecting a different project", async ({ page }) => {
+  test("dashboard cards open the assistant detail route", async ({ page }) => {
     await page.addInitScript(() => {
       (
         window as Window & {
@@ -482,8 +482,7 @@ test.describe("Console Shell", () => {
 
     await page.goto("/app");
     await page.getByTestId("dashboard-project-card-proj-doctor").click();
-    await expect(page.locator(".dashboard-command-center")).toContainText("医生");
-    await expect(page.locator(".dashboard-command-center")).toContainText("Qwen3-Omni-Flash-Realtime");
+    await expect(page).toHaveURL(/\/app\/assistants\/proj-doctor$/);
   });
 
   test("StatusBar visible on desktop", async ({ page }) => {

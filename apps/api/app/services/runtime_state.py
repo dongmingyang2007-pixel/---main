@@ -141,6 +141,19 @@ class RuntimeStateStore:
             return None
         return json.loads(payload)
 
+    def get_int(self, scope: str, key: str) -> int:
+        namespaced_key = self._namespaced(scope, key)
+        payload = self._run(
+            lambda client: client.get(namespaced_key),
+            lambda: self._memory.get(namespaced_key),
+        )
+        if payload is None:
+            return 0
+        try:
+            return int(payload)
+        except (TypeError, ValueError):
+            return 0
+
     def pop_json(self, scope: str, key: str) -> dict[str, Any] | None:
         namespaced_key = self._namespaced(scope, key)
 

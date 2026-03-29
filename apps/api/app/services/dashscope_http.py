@@ -1,5 +1,6 @@
 """Shared DashScope HTTP constants and client."""
 
+import asyncio
 import httpx
 
 from app.core.config import settings
@@ -9,25 +10,38 @@ DASHSCOPE_RESPONSES_BASE_URL = "https://dashscope.aliyuncs.com/api/v2/apps/proto
 DASHSCOPE_NATIVE_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
-_client: httpx.AsyncClient | None = None
+_clients: dict[int, httpx.AsyncClient] = {}
 
 
 def get_client() -> httpx.AsyncClient:
-    """Return a shared httpx.AsyncClient, creating it lazily."""
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(
+    """Return a loop-local shared httpx.AsyncClient, creating it lazily."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    client = _clients.get(key)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
             timeout=httpx.Timeout(90.0, connect=10.0),
         )
-    return _client
+        _clients[key] = client
+    return client
+
+
+async def close_current_client() -> None:
+    """Close the shared client bound to the current event loop."""
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    client = _clients.pop(key, None)
+    if client is not None and not client.is_closed:
+        await client.aclose()
 
 
 async def close_client() -> None:
-    """Close the shared client (call during app shutdown)."""
-    global _client
-    if _client is not None and not _client.is_closed:
-        await _client.close()
-        _client = None
+    """Close all shared clients (call during app shutdown)."""
+    clients = list(_clients.values())
+    _clients.clear()
+    for client in clients:
+        if not client.is_closed:
+            await client.aclose()
 
 
 def dashscope_headers() -> dict[str, str]:

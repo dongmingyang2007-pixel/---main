@@ -81,6 +81,14 @@ export default function RealtimeVoicePanel({
     [onError, t],
   );
 
+  const localizedRealtimeMessages = {
+    autoplayBlocked: t("errors.autoplayBlocked"),
+    microphonePermissionRequired: t("errors.microphoneRequired"),
+    websocketConnectionFailed: t("errors.connectionFailed"),
+    turnError: t("errors.turnProcessingFailed"),
+    turnNotice: t("errors.audioTemporarilyUnavailable"),
+  };
+
   // IMPORTANT: Both hooks must be called unconditionally to satisfy React's
   // rules of hooks. Both start idle; only the active one's connect() is called.
   const omni = useRealtimeVoice({
@@ -90,6 +98,7 @@ export default function RealtimeVoicePanel({
     onTurnPersisted,
     onTranscriptUpdate,
     onError: handleRealtimeError,
+    messages: localizedRealtimeMessages,
   });
 
   const synthetic = useSyntheticRealtimeVoice({
@@ -99,6 +108,7 @@ export default function RealtimeVoicePanel({
     onTurnPersisted,
     onTranscriptUpdate,
     onError: handleRealtimeError,
+    messages: localizedRealtimeMessages,
   });
 
   // Select active hook result based on chatMode
@@ -111,6 +121,8 @@ export default function RealtimeVoicePanel({
     disconnect,
     toggleMute,
     isMuted,
+    toggleSpeakerMute,
+    isSpeakerMuted,
     userVolume,
     aiVolume,
   } = active;
@@ -130,6 +142,38 @@ export default function RealtimeVoicePanel({
   useEffect(() => {
     onStateChange(state);
   }, [onStateChange, state]);
+
+  const sessionIdentityRef = useRef(`${chatMode}:${projectId}:${conversationId}`);
+  useEffect(() => {
+    const nextIdentity = `${chatMode}:${projectId}:${conversationId}`;
+    if (sessionIdentityRef.current === nextIdentity) {
+      return;
+    }
+    const hadActiveSession =
+      omni.state !== "idle" ||
+      synthetic.state !== "idle" ||
+      omni.transcript.length > 0 ||
+      synthetic.transcript.length > 0;
+    sessionIdentityRef.current = nextIdentity;
+    setExpanded(false);
+    omni.disconnect();
+    synthetic.disconnect();
+    if (hadActiveSession) {
+      onError(t("realtimeRestartAfterContextChange"));
+    }
+  }, [
+    chatMode,
+    conversationId,
+    omni.disconnect,
+    omni.state,
+    omni.transcript.length,
+    onError,
+    projectId,
+    synthetic.disconnect,
+    synthetic.state,
+    synthetic.transcript.length,
+    t,
+  ]);
 
   const isListening = state === "listening" || state === "ready";
   const isSpeaking = state === "ai_speaking";
@@ -163,17 +207,26 @@ export default function RealtimeVoicePanel({
   }, [disconnect]);
 
   // ─── Idle / error state: entry capsule ────────────────────────
-  if (state === "idle" || state === "error") {
+  if (state === "idle" || state === "error" || state === "connecting" || state === "reconnecting") {
+    const entryText =
+      state === "error"
+        ? t("realtimeRetry")
+        : state === "connecting"
+          ? t("realtimePreparing")
+          : state === "reconnecting"
+            ? t("realtimeReconnecting")
+            : entryLabel;
     return (
       <div className="rt-float">
         <button
           type="button"
           className="rt-capsule rt-entry"
           onClick={connect}
+          disabled={state === "connecting" || state === "reconnecting"}
           style={{ cursor: "pointer" }}
         >
           <span className="rt-capsule-label rt-entry-label">
-            {state === "error" ? t("realtimeRetry") : entryLabel}
+            {entryText}
           </span>
         </button>
       </div>
@@ -255,7 +308,7 @@ export default function RealtimeVoicePanel({
         <WaveformBars levels={waveformLevels} barCount={8} />
 
         <div className="rt-card-transcript" ref={transcriptRef}>
-          {transcript.slice(-2).map((entry, i) => (
+          {transcript.map((entry, i) => (
             <div
               key={i}
               className={`rt-card-transcript-line${entry.role === "user" ? " is-user" : ""}`}
@@ -300,11 +353,17 @@ export default function RealtimeVoicePanel({
               </svg>
             </button>
           ) : (
-            <button className="rt-card-control-btn" title={t("realtimeSpeaker")}>
+            <button
+              type="button"
+              className={`rt-card-control-btn${isSpeakerMuted ? " is-muted" : ""}`}
+              title={t("realtimeSpeaker")}
+              onClick={toggleSpeakerMute}
+            >
               <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
                 <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                {isSpeakerMuted && <line x1="2" y1="2" x2="22" y2="22" stroke="#ef4444" strokeWidth={2.5} />}
               </svg>
             </button>
           )}

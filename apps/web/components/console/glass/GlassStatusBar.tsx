@@ -12,7 +12,7 @@ export function GlassStatusBar() {
 
   return (
     <div
-      className="glass-statusbar"
+      className="glass-statusbar statusbar"
       role="status"
       aria-live="polite"
       style={{

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import { getApiHttpBaseUrl } from "@/lib/env";
 
@@ -15,6 +15,9 @@ export type MemoryKind =
 export interface MemoryMetadataJson extends Record<string, unknown> {
   memory_kind?: MemoryKind;
   node_kind?: string;
+  concept_source?: string;
+  parent_binding?: "auto" | "manual" | string;
+  manual_parent_id?: string | null;
   pinned?: boolean;
   salience?: number;
   importance?: number;
@@ -29,6 +32,12 @@ export interface MemoryMetadataJson extends Record<string, unknown> {
   owner_user_id?: string;
   auto_generated?: boolean;
   promoted_by?: string;
+  structural_only?: boolean;
+  category_path?: string;
+  category_label?: string;
+  category_segments?: string[];
+  category_prefixes?: string[];
+  category_depth?: number;
 }
 
 export interface MemoryNode {
@@ -64,8 +73,18 @@ export function isAssistantRootMemoryNode(node: MemoryNode): boolean {
   return node.metadata_json?.node_kind === "assistant-root";
 }
 
+export function isCategoryPathMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  const metadata = getMemoryMetadata(node);
+  return metadata.node_kind === "category-path" || metadata.concept_source === "category_path";
+}
+
+export function isStructuralOnlyMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  const metadata = getMemoryMetadata(node);
+  return metadata.structural_only === true || isCategoryPathMemoryNode(metadata);
+}
+
 export function isOrdinaryMemoryNode(node: MemoryNode): boolean {
-  return !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node);
+  return !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node) && !isStructuralOnlyMemoryNode(node);
 }
 
 export function getMemoryMetadata(
@@ -84,6 +103,15 @@ export function getMemoryKind(node: MemoryNode | MemoryMetadataJson): MemoryKind
   const metadata = getMemoryMetadata(node);
   const kind = metadata.memory_kind;
   return typeof kind === "string" && kind.length > 0 ? kind : null;
+}
+
+export function getMemoryParentBinding(node: MemoryNode | MemoryMetadataJson): "auto" | "manual" {
+  const value = getMemoryMetadata(node).parent_binding;
+  return value === "manual" ? "manual" : "auto";
+}
+
+export function hasManualParentBinding(node: MemoryNode | MemoryMetadataJson): boolean {
+  return getMemoryParentBinding(node) === "manual";
 }
 
 export function isSummaryMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
@@ -105,6 +133,43 @@ export function getMemoryRetrievalCount(node: MemoryNode | MemoryMetadataJson): 
   return typeof count === "number" && Number.isFinite(count) ? count : 0;
 }
 
+export function getMemoryCategorySegments(node: MemoryNode | MemoryMetadataJson): string[] {
+  const metadata = getMemoryMetadata(node);
+  const segments = metadata.category_segments;
+  if (Array.isArray(segments)) {
+    return segments.filter((value): value is string => typeof value === "string" && value.length > 0);
+  }
+  if ("category" in node && typeof node.category === "string") {
+    return node.category.split(".").map((segment) => segment.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export function getMemoryCategoryPrefixes(node: MemoryNode | MemoryMetadataJson): string[] {
+  const metadata = getMemoryMetadata(node);
+  const prefixes = metadata.category_prefixes;
+  if (Array.isArray(prefixes)) {
+    return prefixes.filter((value): value is string => typeof value === "string" && value.length > 0);
+  }
+  const segments = getMemoryCategorySegments(node);
+  const values: string[] = [];
+  const parts: string[] = [];
+  segments.forEach((segment) => {
+    parts.push(segment);
+    values.push(parts.join("."));
+  });
+  return values;
+}
+
+export function getMemoryCategoryLabel(node: MemoryNode | MemoryMetadataJson): string {
+  const metadata = getMemoryMetadata(node);
+  if (typeof metadata.category_label === "string" && metadata.category_label.trim()) {
+    return metadata.category_label.trim();
+  }
+  const segments = getMemoryCategorySegments(node);
+  return segments[segments.length - 1] || "";
+}
+
 export function getMemoryLastUsedAt(node: MemoryNode | MemoryMetadataJson): string | null {
   const value = getMemoryMetadata(node).last_used_at;
   return typeof value === "string" && value ? value : null;
@@ -124,7 +189,7 @@ export interface MemoryEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual" | "summary" | "file" | "center";
+  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center";
   strength: number;
   created_at: string;
   // D3 fields
@@ -185,31 +250,62 @@ function normalizeStreamNode(
   };
 }
 
-export function useGraphData(projectId: string, conversationId?: string) {
+interface UseGraphDataOptions {
+  conversationId?: string;
+  includeTemporary?: boolean;
+}
+
+export function useGraphData(projectId: string, options: UseGraphDataOptions = {}) {
+  const { conversationId, includeTemporary = false } = options;
   const [data, setData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(true);
+  const silentRefreshTimerRef = useRef<number | null>(null);
 
-  const fetchGraph = useCallback(async () => {
+  const fetchGraph = useCallback(async (options?: { silent?: boolean }) => {
     if (!projectId) {
       setData({ nodes: [], edges: [] });
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!options?.silent) {
+      setLoading(true);
+    }
     try {
       const params = new URLSearchParams({ project_id: projectId });
       if (conversationId) params.set("conversation_id", conversationId);
+      if (includeTemporary) params.set("include_temporary", "true");
       const result = await apiGet<GraphData>(`/api/v1/memory?${params}`);
       setData(result);
     } catch {
       // show empty graph on error
       setData({ nodes: [], edges: [] });
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
-  }, [projectId, conversationId]);
+  }, [projectId, conversationId, includeTemporary]);
+
+  const scheduleSilentGraphRefresh = useCallback((delayMs = 180) => {
+    if (silentRefreshTimerRef.current !== null) {
+      window.clearTimeout(silentRefreshTimerRef.current);
+    }
+    silentRefreshTimerRef.current = window.setTimeout(() => {
+      silentRefreshTimerRef.current = null;
+      void fetchGraph({ silent: true });
+    }, delayMs);
+  }, [fetchGraph]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph]);
+
+  useEffect(
+    () => () => {
+      if (silentRefreshTimerRef.current !== null) {
+        window.clearTimeout(silentRefreshTimerRef.current);
+      }
+    },
+    [],
+  );
 
   // SSE subscription for real-time memory updates
   useEffect(() => {
@@ -245,6 +341,7 @@ export function useGraphData(projectId: string, conversationId?: string) {
                 )
               : [...prev.nodes, normalizeStreamNode(newNode, { projectId })],
           }));
+          scheduleSilentGraphRefresh();
         } catch { /* ignore parse errors */ }
       });
 
@@ -259,7 +356,12 @@ export function useGraphData(projectId: string, conversationId?: string) {
                 : n
             ),
           }));
+          scheduleSilentGraphRefresh();
         } catch { /* ignore parse errors */ }
+      });
+
+      eventSource.addEventListener("graph_changed", () => {
+        scheduleSilentGraphRefresh(80);
       });
 
       eventSource.onerror = () => {
@@ -277,53 +379,41 @@ export function useGraphData(projectId: string, conversationId?: string) {
       eventSource?.close();
       clearTimeout(retryTimeout);
     };
-  }, [conversationId, loading, projectId]);
+  }, [conversationId, loading, projectId, scheduleSilentGraphRefresh]);
 
   const createMemory = async (content: string, category?: string) => {
     const node = await apiPost<MemoryNode>("/api/v1/memory", {
       project_id: projectId, content, category: category || "",
     });
-    setData((prev) => ({ ...prev, nodes: [...prev.nodes, node] }));
+    await fetchGraph();
     return node;
   };
 
   const updateMemory = async (id: string, updates: Partial<MemoryNode>) => {
-    const updated = await apiPatch<MemoryNode>(`/api/v1/memory/${id}`, updates);
-    setData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...updated } : n)),
-    }));
+    await apiPatch<MemoryNode>(`/api/v1/memory/${id}`, updates);
+    await fetchGraph();
   };
 
   const deleteMemory = async (id: string) => {
     await apiDelete(`/api/v1/memory/${id}`);
-    setData((prev) => ({
-      nodes: prev.nodes.filter((n) => n.id !== id),
-      edges: prev.edges.filter((e) => e.source_memory_id !== id && e.target_memory_id !== id),
-    }));
+    await fetchGraph();
   };
 
   const promoteMemory = async (id: string) => {
-    const updated = await apiPost<MemoryNode>(`/api/v1/memory/${id}/promote`);
-    setData((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...updated } : n)),
-    }));
+    await apiPost<MemoryNode>(`/api/v1/memory/${id}/promote`);
+    await fetchGraph();
   };
 
   const createEdge = async (sourceId: string, targetId: string) => {
-    const edge = await apiPost<MemoryEdge>("/api/v1/memory/edges", {
+    await apiPost<MemoryEdge>("/api/v1/memory/edges", {
       source_memory_id: sourceId, target_memory_id: targetId,
     });
-    setData((prev) => ({ ...prev, edges: [...prev.edges, edge] }));
+    await fetchGraph();
   };
 
   const deleteEdge = async (id: string) => {
     await apiDelete(`/api/v1/memory/edges/${id}`);
-    setData((prev) => ({
-      ...prev,
-      edges: prev.edges.filter((e) => e.id !== id),
-    }));
+    await fetchGraph();
   };
 
   const attachFileToMemory = async (memoryId: string, dataItemId: string) => {

@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import {
   type MemoryNode,
+  getMemoryCategoryLabel,
+  getMemoryCategorySegments,
   getMemoryKind,
   getMemoryLastUsedAt,
   getMemoryLastUsedSource,
@@ -13,6 +15,7 @@ import {
   isAssistantRootMemoryNode,
   isFileMemoryNode,
   isPinnedMemoryNode,
+  isStructuralOnlyMemoryNode,
   isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { formatRelativeTime } from "@/lib/format-time";
@@ -61,7 +64,10 @@ export default function MemoryListView({
   const memoryNodes = useMemo(
     () =>
       nodes.filter(
-        (node) => !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node),
+        (node) =>
+          !isFileMemoryNode(node) &&
+          !isAssistantRootMemoryNode(node) &&
+          !isStructuralOnlyMemoryNode(node),
       ),
     [nodes],
   );
@@ -180,7 +186,9 @@ export default function MemoryListView({
             >
               <div className="memory-list-item-header">
                 <span className={`memory-type-dot ${getTypeClass(node)}`} />
-                <span className="memory-list-category">{node.category || getMemoryKindLabel(getMemoryKind(node), t)}</span>
+                <span className="memory-list-category">
+                  {getMemoryCategoryLabel(node) || node.category || getMemoryKindLabel(getMemoryKind(node), t)}
+                </span>
                 {isSummaryMemoryNode(node) ? (
                   <span className="memory-list-chip is-summary">{t("memory.summaryBadge")}</span>
                 ) : null}
@@ -218,7 +226,7 @@ export default function MemoryListView({
               <div className="memory-detail-header-row">
                 <span className={`memory-type-dot ${getTypeClass(selectedNode)}`} />
                 <span className="memory-detail-category">
-                  {selectedNode.category || getMemoryKindLabel(selectedKind, t)}
+                  {getMemoryCategoryLabel(selectedNode) || selectedNode.category || getMemoryKindLabel(selectedKind, t)}
                 </span>
                 <span className="memory-detail-type-badge">
                   {selectedNode.type === "permanent" ? t("memory.permanentLabel") : t("memory.temporaryLabel")}
@@ -241,6 +249,15 @@ export default function MemoryListView({
             </div>
 
             <div className="memory-detail-body">
+              {getMemoryCategorySegments(selectedNode).length > 0 ? (
+                <div className="memory-detail-header-row" style={{ marginBottom: 12 }}>
+                  {getMemoryCategorySegments(selectedNode).map((segment) => (
+                    <span key={segment} className="memory-detail-type-badge">
+                      {segment}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {editingContent !== null ? (
                 <textarea
                   className="memory-detail-edit-textarea"

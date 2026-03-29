@@ -105,6 +105,12 @@ function ChatPageContent() {
     () => buildProjectDisplayMap(projects),
     [projects],
   );
+  const settledConversationId = useMemo(() => {
+    if (!activeConversationId || isCreatingConversation) {
+      return null;
+    }
+    return requestedConversationId === activeConversationId ? activeConversationId : null;
+  }, [activeConversationId, isCreatingConversation, requestedConversationId]);
 
   const deferredSearch = useDeferredValue(searchQuery);
 
@@ -669,7 +675,7 @@ function ChatPageContent() {
             </svg>
           </button>
           <ChatInterface
-            conversationId={activeConversationId}
+            conversationId={settledConversationId}
             projectId={selectedProjectId}
             onConversationActivity={handleConversationActivity}
             onConversationLoaded={handleConversationLoaded}

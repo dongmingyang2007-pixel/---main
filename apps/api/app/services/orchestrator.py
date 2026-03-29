@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.entities import Conversation, Memory, ModelCatalog, PipelineConfig, Project
+from app.services.assistant_markdown import normalize_assistant_markdown
 from app.services.context_loader import (
     extract_personality,
     filter_knowledge_chunks,
@@ -239,6 +240,7 @@ _CONTEXT_ROUTE_HINTS_PERSONAL = (
     "my previous",
 )
 _CONTEXT_ROUTE_VALUES = {"none", "profile_only", "memory_only", "full_rag"}
+_MARKDOWN_LIST_INSTRUCTION = "输出格式要求：如使用 Markdown 列表，每个列表项必须单独占一行，并以 `- ` 开头。"
 
 ContextRoute = Literal["none", "profile_only", "memory_only", "full_rag"]
 
@@ -646,7 +648,6 @@ def _pick_thinking_classifier_model(
     candidates = [
         settings.thinking_classifier_model,
         "qwen3.5-flash",
-        "qwen3-flash",
         llm_model_id,
         settings.dashscope_model,
     ]
@@ -701,7 +702,6 @@ def _pick_search_classifier_model(
     candidates = [
         settings.web_search_classifier_model,
         "qwen3.5-flash",
-        "qwen3-flash",
         llm_model_id,
         settings.dashscope_model,
     ]
@@ -1347,7 +1347,8 @@ async def _assemble_prompt_context(
             "decision_confidence": context_route.confidence,
         }
     )
-    messages: list[dict[str, str]] = [{"role": "system", "content": context.system_prompt}]
+    system_prompt = f"{context.system_prompt}\n\n{_MARKDOWN_LIST_INSTRUCTION}".strip()
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})
     return messages, retrieval_trace
@@ -1473,9 +1474,10 @@ async def _build_and_call_llm(
             enable_search=search_enabled,
             search_options=search_options,
         )
+    normalized_content = normalize_assistant_markdown(result.content)
     reasoning_content = result.reasoning_content if resolved_enable_thinking else None
     return {
-        "content": result.content,
+        "content": normalized_content,
         "reasoning_content": reasoning_content,
         "sources": serialize_search_sources(result.search_sources),
         "retrieval_trace": retrieval_trace,
@@ -1546,6 +1548,10 @@ async def orchestrate_inference_stream(
 
     On error an ``{"event": "error", "data": {"message": ...}}`` is emitted.
     """
+    # Push an immediate SSE frame so the client can keep the turn alive while
+    # planning, retrieval, and model-selection work is still in progress.
+    yield {"event": "message_start", "data": {"role": "assistant"}}
+
     llm_model_id = resolve_pipeline_model_id(db, project_id=project_id, model_type="llm")
     thinking_decision = await resolve_enable_thinking(
         db,
@@ -1578,8 +1584,6 @@ async def orchestrate_inference_stream(
         llm_model_id=llm_model_id,
         enable_thinking=resolved_enable_thinking,
     )
-
-    yield {"event": "message_start", "data": {"role": "assistant"}}
 
     full_content = ""
     full_reasoning = ""
@@ -1616,10 +1620,11 @@ async def orchestrate_inference_stream(
             yield {"event": "error", "data": {"message": str(exc)}}
             return
 
+        normalized_full_content = normalize_assistant_markdown(full_content)
         yield {
             "event": "message_done",
             "data": {
-                "content": full_content,
+                "content": normalized_full_content,
                 "reasoning_content": (full_reasoning or None) if should_emit_reasoning else None,
                 "sources": serialize_search_sources(full_sources),
                 "retrieval_trace": retrieval_trace,
@@ -1648,10 +1653,11 @@ async def orchestrate_inference_stream(
         yield {"event": "error", "data": {"message": str(exc)}}
         return
 
+    normalized_full_content = normalize_assistant_markdown(full_content)
     yield {
         "event": "message_done",
         "data": {
-            "content": full_content,
+            "content": normalized_full_content,
             "reasoning_content": (full_reasoning or None) if should_emit_reasoning else None,
             "sources": serialize_search_sources(full_sources),
             "retrieval_trace": retrieval_trace,

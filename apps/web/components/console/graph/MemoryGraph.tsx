@@ -12,9 +12,12 @@ import * as d3 from "d3";
 import {
   type MemoryNode,
   type MemoryEdge,
+  getMemoryCategoryLabel,
+  getMemoryCategoryPrefixes,
   getMemoryKind,
   getMemoryRetrievalCount,
   isAssistantRootMemoryNode,
+  isCategoryPathMemoryNode,
   isFileMemoryNode,
   isPinnedMemoryNode,
   isOrdinaryMemoryNode,
@@ -51,10 +54,20 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   strength: number;
 }
 
+interface TreeLayoutTarget {
+  x: number;
+  y: number;
+  angle: number;
+  depth: number;
+}
+
+type GraphSelectionMode = "parent" | "children" | "related" | null;
+
 interface MemoryGraphProps {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
   assistantName?: string;
+  renderMode?: "workbench" | "orbit";
   onNodeSelect: (node: MemoryNode | null) => void;
   onCenterNodeClick?: () => void;
   onCreateMemory: (content: string, category?: string) => Promise<void>;
@@ -81,6 +94,7 @@ const FILE_ATTACH_SPREAD = 24;
 const FILE_LINK_DISTANCE = 58;
 const PARENT_LINK_DISTANCE = 112;
 const CENTER_LINK_DISTANCE = 164;
+const GRAPH_TOP_LEVEL_TARGET_ID = "__graph_top_level__";
 const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
@@ -123,31 +137,56 @@ function getLabel(node: MemoryNode): string {
         : node.content;
     return filename.length > 16 ? `${filename.slice(0, 16)}...` : filename;
   }
+  if (isCategoryPathMemoryNode(node)) {
+    return getMemoryCategoryLabel(node) || node.content;
+  }
+  const content = node.content.trim();
+  if (content) {
+    return content.length > 12
+      ? content.slice(0, 12) + "..."
+      : content;
+  }
+  const categoryLabel = getMemoryCategoryLabel(node);
+  if (categoryLabel) {
+    return categoryLabel;
+  }
   if (node.category) return node.category;
-  return node.content.length > 12
-    ? node.content.slice(0, 12) + "..."
-    : node.content;
+  return node.id.slice(0, 8);
 }
 
 function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string {
+  const kind = getMemoryKind(node);
+  const baseColor = (() => {
+    if (isSummaryMemoryNode(node)) {
+      return COLORS.summary;
+    }
+    if (isPinnedMemoryNode(node)) {
+      return COLORS.core;
+    }
+    if (kind === "profile" || kind === "preference" || kind === "goal") {
+      return COLORS.core;
+    }
+    return node.type === "permanent" ? COLORS.permanent : COLORS.temporary;
+  })();
+
   const retrievalCount = getMemoryRetrievalCount(node);
   if (retrievalCount > 0 && maxRetrievalCount > 0) {
     const normalized = Math.log(retrievalCount + 1) / Math.log(maxRetrievalCount + 1);
-    return d3.interpolateRgbBasis(["#d9c2af", "#d99167", "#c95a3f", "#a32020"])(
-      0.18 + normalized * 0.82,
-    );
+    const targetColor =
+      node.type === "temporary"
+        ? "#215e99"
+        : isSummaryMemoryNode(node)
+          ? "#8a6715"
+          : isPinnedMemoryNode(node) || kind === "profile" || kind === "preference" || kind === "goal"
+            ? "#b85d39"
+            : "#a32020";
+    const intensity =
+      node.type === "temporary"
+        ? 0.22 + normalized * 0.44
+        : 0.18 + normalized * 0.68;
+    return d3.interpolateRgb(baseColor, targetColor)(Math.min(0.88, intensity));
   }
-  if (isSummaryMemoryNode(node)) {
-    return COLORS.summary;
-  }
-  if (isPinnedMemoryNode(node)) {
-    return COLORS.core;
-  }
-  const kind = getMemoryKind(node);
-  if (kind === "profile" || kind === "preference" || kind === "goal") {
-    return COLORS.core;
-  }
-  return node.type === "permanent" ? COLORS.permanent : COLORS.temporary;
+  return baseColor;
 }
 
 function truncateCenterLabel(label: string): string {
@@ -332,6 +371,204 @@ function buildEdgeKey(sourceId: string, targetId: string): string {
   return sourceId < targetId ? `${sourceId}::${targetId}` : `${targetId}::${sourceId}`;
 }
 
+function isStructuralTreeEdgePair(
+  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id">>,
+  sourceId: string,
+  targetId: string,
+  centerNodeId: string,
+): boolean {
+  if (sourceId === targetId) {
+    return false;
+  }
+  const source = nodeById.get(sourceId);
+  const target = nodeById.get(targetId);
+  if (!source || !target) {
+    return false;
+  }
+  if (target.parent_memory_id === sourceId) {
+    return target.id !== centerNodeId;
+  }
+  if (source.parent_memory_id === targetId) {
+    return source.id !== centerNodeId;
+  }
+  return false;
+}
+
+function isCenterStructuralTreeEdgePair(
+  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id">>,
+  sourceId: string,
+  targetId: string,
+  centerNodeId: string,
+): boolean {
+  return (
+    isStructuralTreeEdgePair(nodeById, sourceId, targetId, centerNodeId) &&
+    (sourceId === centerNodeId || targetId === centerNodeId)
+  );
+}
+
+function canGraphRepositionNode(node: Pick<MemoryNode, "id" | "metadata_json" | "category">, centerNodeId: string): boolean {
+  const nodeKind = node.metadata_json?.node_kind;
+  const isFile = node.category === "file" || node.category === "文件" || nodeKind === "file";
+  return node.id !== centerNodeId && !isFile && !isCategoryPathMemoryNode(node.metadata_json);
+}
+
+function sortTreeChildren(left: SimNode, right: SimNode): number {
+  const structuralBias =
+    Number(isCategoryPathMemoryNode(right)) - Number(isCategoryPathMemoryNode(left));
+  if (structuralBias !== 0) {
+    return structuralBias;
+  }
+  const summaryBias =
+    Number(isSummaryMemoryNode(right)) - Number(isSummaryMemoryNode(left));
+  if (summaryBias !== 0) {
+    return summaryBias;
+  }
+  return getStableNodeSortKey(left).localeCompare(getStableNodeSortKey(right));
+}
+
+function getTreeNodeDistance(node: SimNode, depth: number, centerNodeId: string): number {
+  if (node.id === centerNodeId) {
+    return 0;
+  }
+  if (depth <= 1) {
+    return CENTER_LINK_DISTANCE + 18;
+  }
+  if (isCategoryPathMemoryNode(node)) {
+    return PARENT_LINK_DISTANCE + 4;
+  }
+  if (isSummaryMemoryNode(node)) {
+    return PARENT_LINK_DISTANCE + 14;
+  }
+  return PARENT_LINK_DISTANCE + 22;
+}
+
+function getChildAngle(
+  parentTarget: TreeLayoutTarget,
+  index: number,
+  siblingCount: number,
+): number {
+  if (siblingCount <= 1) {
+    return parentTarget.angle;
+  }
+  const spread =
+    parentTarget.depth <= 1
+      ? Math.min(1.18, 0.52 + siblingCount * 0.16)
+      : Math.min(0.82, 0.34 + siblingCount * 0.11);
+  const normalizedIndex = siblingCount <= 1
+    ? 0
+    : (index - (siblingCount - 1) / 2) / ((siblingCount - 1) / 2 || 1);
+  return parentTarget.angle + normalizedIndex * (spread / 2);
+}
+
+function buildTreeLayoutTargets(nodes: SimNode[], centerNodeId: string): Map<string, TreeLayoutTarget> {
+  const targets = new Map<string, TreeLayoutTarget>();
+  targets.set(centerNodeId, { x: 0, y: 0, angle: -Math.PI / 2, depth: 0 });
+
+  const treeNodes = nodes.filter((node) => !isFileMemoryNode(node));
+  const nodeById = new Map(treeNodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<string, SimNode[]>();
+
+  treeNodes.forEach((node) => {
+    if (node.id === centerNodeId) {
+      return;
+    }
+    const parentId =
+      node.parent_memory_id && nodeById.has(node.parent_memory_id)
+        ? node.parent_memory_id
+        : centerNodeId;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(node);
+    childrenByParent.set(parentId, siblings);
+  });
+
+  childrenByParent.forEach((siblings) => siblings.sort(sortTreeChildren));
+
+  const rootChildren = childrenByParent.get(centerNodeId) ?? [];
+  const rootStep = rootChildren.length > 0 ? (Math.PI * 2) / rootChildren.length : 0;
+
+  const assignNodeTarget = (
+    node: SimNode,
+    parentTarget: TreeLayoutTarget,
+    angle: number,
+  ) => {
+    const hasStoredPosition =
+      typeof node.position_x === "number" && typeof node.position_y === "number";
+    const target = hasStoredPosition
+      ? {
+          x: node.position_x as number,
+          y: node.position_y as number,
+        }
+      : {
+          x: parentTarget.x + Math.cos(angle) * getTreeNodeDistance(node, parentTarget.depth + 1, centerNodeId),
+          y: parentTarget.y + Math.sin(angle) * getTreeNodeDistance(node, parentTarget.depth + 1, centerNodeId),
+        };
+    const resolvedAngle = hasStoredPosition
+      ? Math.atan2(target.y - parentTarget.y, target.x - parentTarget.x) || angle
+      : angle;
+    const nextTarget: TreeLayoutTarget = {
+      x: target.x,
+      y: target.y,
+      angle: resolvedAngle,
+      depth: parentTarget.depth + 1,
+    };
+    targets.set(node.id, nextTarget);
+
+    const children = childrenByParent.get(node.id) ?? [];
+    children.forEach((child, index) => {
+      assignNodeTarget(
+        child,
+        nextTarget,
+        getChildAngle(nextTarget, index, children.length),
+      );
+    });
+  };
+
+  rootChildren.forEach((child, index) => {
+    const baseAngle = rootChildren.length <= 1
+      ? -Math.PI / 2
+      : -Math.PI / 2 + index * rootStep;
+    assignNodeTarget(
+      child,
+      targets.get(centerNodeId)!,
+      baseAngle,
+    );
+  });
+
+  return targets;
+}
+
+function createTreeScaffoldForce(centerNodeId: string): d3.Force<SimNode, SimLink> {
+  let layoutTargets = new Map<string, TreeLayoutTarget>();
+  let simulationNodes: SimNode[] = [];
+
+  const force = ((alpha: number) => {
+    simulationNodes.forEach((node) => {
+      if (node.id === centerNodeId || isFileMemoryNode(node) || node.fx != null || node.fy != null) {
+        return;
+      }
+      const target = layoutTargets.get(node.id);
+      if (!target) {
+        return;
+      }
+      const spring =
+        typeof node.position_x === "number" && typeof node.position_y === "number"
+          ? 0.05
+          : isCategoryPathMemoryNode(node)
+            ? 0.22
+            : 0.14;
+      node.vx = (node.vx ?? 0) + (target.x - node.x) * spring * alpha;
+      node.vy = (node.vy ?? 0) + (target.y - node.y) * spring * alpha;
+    });
+  }) as d3.Force<SimNode, SimLink>;
+
+  force.initialize = (nodes) => {
+    simulationNodes = nodes as SimNode[];
+    layoutTargets = buildTreeLayoutTargets(simulationNodes, centerNodeId);
+  };
+
+  return force;
+}
+
 /* ── Component ─────────────────────────────────── */
 
 export default function MemoryGraph(props: MemoryGraphProps) {
@@ -340,6 +577,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     nodes,
     edges,
     assistantName,
+    renderMode = "workbench",
     onNodeSelect,
     onCenterNodeClick,
     onCreateMemory,
@@ -353,6 +591,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     searchQuery: externalSearchQuery,
     filters: externalFilters,
   } = props;
+  const isOrbitMode = renderMode === "orbit";
   /* refs */
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
@@ -360,8 +599,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
   const animFrameRef = useRef<number>(0);
   const connectStartRef = useRef<SimNode | null>(null);
+  const connectModeRef = useRef<"parent" | "manual" | null>(null);
   const connectPointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
+  const editModeRef = useRef<GraphSelectionMode>(null);
+  const selectedNodeRef = useRef<MemoryNode | null>(null);
+  const selectableNodeIdsRef = useRef<Set<string>>(new Set());
 
   /* state */
   const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
@@ -384,6 +627,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const [createMemoryContent, setCreateMemoryContent] = useState("");
   const [createMemoryCategory, setCreateMemoryCategory] = useState("");
   const [creatingMemory, setCreatingMemory] = useState(false);
+  const [editMode, setEditMode] = useState<GraphSelectionMode>(null);
+  const [editSelectionIds, setEditSelectionIds] = useState<string[]>([]);
+  const [editPending, setEditPending] = useState(false);
 
   const modal = useModal();
 
@@ -395,6 +641,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   );
   const addMemoryPrompt = t("graph.addMemoryPrompt");
   const confirmDeleteMessage = t("graph.confirmDelete");
+
+  useEffect(() => {
+    setFiltersCollapsed(renderMode === "orbit");
+  }, [renderMode]);
 
   const openCreateMemoryDialog = useCallback(() => {
     setCreateMemoryContent("");
@@ -486,6 +736,21 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     }
   }, [nodes, onNodeSelect, selectedNode]);
 
+  useEffect(() => {
+    if (!selectedNode && editMode) {
+      setEditMode(null);
+      setEditSelectionIds([]);
+    }
+  }, [editMode, selectedNode]);
+
+  useEffect(() => {
+    editModeRef.current = editMode;
+  }, [editMode]);
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode;
+  }, [selectedNode]);
+
   /* ── Derive sim data ────────────────────────── */
 
   const { simNodes, simLinks, centerNodeId } = useMemo(() => {
@@ -516,18 +781,31 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           fy: 0,
         };
 
-    const nonFileNodes: SimNode[] = nodes
+    const provisionalNonFileNodes: SimNode[] = nodes
       .filter((node) => !isFileMemoryNode(node))
       .map((node) => {
         const isRoot = isAssistantRootMemoryNode(node);
         return {
           ...node,
-          x: isRoot ? 0 : (node.position_x ?? (Math.random() - 0.5) * 400),
-          y: isRoot ? 0 : (node.position_y ?? (Math.random() - 0.5) * 400),
+          x: isRoot ? 0 : (node.position_x ?? 0),
+          y: isRoot ? 0 : (node.position_y ?? 0),
           fx: isRoot ? 0 : null,
           fy: isRoot ? 0 : null,
         };
       });
+    const treeTargets = buildTreeLayoutTargets(
+      assistantNode ? [assistantNode, ...provisionalNonFileNodes] : provisionalNonFileNodes,
+      cId,
+    );
+    const nonFileNodes: SimNode[] = provisionalNonFileNodes.map((node) => {
+      const isRoot = isAssistantRootMemoryNode(node);
+      const target = treeTargets.get(node.id);
+      return {
+        ...node,
+        x: isRoot ? 0 : (node.position_x ?? target?.x ?? (Math.random() - 0.5) * 320),
+        y: isRoot ? 0 : (node.position_y ?? target?.y ?? (Math.random() - 0.5) * 320),
+      };
+    });
 
     const seededNodeById = new Map<string, SimNode>(
       (assistantNode ? [assistantNode, ...nonFileNodes] : nonFileNodes).map((node) => [node.id, node]),
@@ -581,6 +859,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const sn: SimNode[] = assistantNode ? [assistantNode, ...memoryNodes] : memoryNodes;
 
     const nodeIdSet = new Set(sn.map((n) => n.id));
+    const simNodeById = new Map(sn.map((node) => [node.id, node] as const));
     const sl: SimLink[] = edges
       .filter(
         (e) => nodeIdSet.has(e.source_memory_id) && nodeIdSet.has(e.target_memory_id)
@@ -593,12 +872,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         strength: e.strength,
       }));
 
-    const peerEdgeKeys = new Set(
+    const structuralEdgeKeys = new Set(
       sl
-        .filter((link) => link.edge_type !== "file" && link.edge_type !== "center")
+        .filter((link) =>
+          isStructuralTreeEdgePair(
+            simNodeById,
+            String(link.source),
+            String(link.target),
+            cId,
+          ),
+        )
         .map((link) => buildEdgeKey(String(link.source), String(link.target))),
     );
-    const peerConnectedNodeIds = new Set<string>();
 
     nodes
       .filter(
@@ -615,9 +900,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           return;
         }
         const edgeKey = buildEdgeKey(parentId, node.id);
-        peerConnectedNodeIds.add(parentId);
-        peerConnectedNodeIds.add(node.id);
-        if (peerEdgeKeys.has(edgeKey)) {
+        if (structuralEdgeKeys.has(edgeKey)) {
           return;
         }
         sl.unshift({
@@ -627,26 +910,21 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           edge_type: "parent",
           strength: 0.46,
         });
-        peerEdgeKeys.add(edgeKey);
+        structuralEdgeKeys.add(edgeKey);
       });
-
-    sl.forEach((link) => {
-      if (link.edge_type === "file" || link.edge_type === "center") {
-        return;
-      }
-      peerConnectedNodeIds.add(String(link.source));
-      peerConnectedNodeIds.add(String(link.target));
-    });
 
     nodes
       .filter(
         (node) =>
           !isFileMemoryNode(node) &&
           !isAssistantRootMemoryNode(node) &&
-          !peerConnectedNodeIds.has(node.id) &&
           (node.parent_memory_id === cId || (rootNode === null && !node.parent_memory_id)),
       )
       .forEach((node) => {
+        const edgeKey = buildEdgeKey(cId, node.id);
+        if (structuralEdgeKeys.has(edgeKey)) {
+          return;
+        }
         sl.unshift({
           source: cId,
           target: node.id,
@@ -659,6 +937,209 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     return { simNodes: sn, simLinks: sl, centerNodeId: cId };
   }, [centerNodeLabel, nodes, edges]);
 
+  const currentChildIds = useMemo(() => {
+    if (!selectedNode) {
+      return [];
+    }
+    return nodes
+      .filter(
+        (candidate) =>
+          !isFileMemoryNode(candidate) &&
+          !isAssistantRootMemoryNode(candidate) &&
+          candidate.parent_memory_id === selectedNode.id,
+      )
+      .map((candidate) => candidate.id);
+  }, [nodes, selectedNode]);
+
+  const currentManualEdges = useMemo(() => {
+    if (!selectedNode) {
+      return [];
+    }
+    return edges.filter(
+      (edge) =>
+        edge.edge_type === "manual" &&
+        (edge.source_memory_id === selectedNode.id || edge.target_memory_id === selectedNode.id),
+    );
+  }, [edges, selectedNode]);
+
+  const currentManualRelatedIds = useMemo(
+    () =>
+      currentManualEdges.map((edge) =>
+        edge.source_memory_id === selectedNode?.id ? edge.target_memory_id : edge.source_memory_id,
+      ),
+    [currentManualEdges, selectedNode?.id],
+  );
+
+  const currentAncestorIds = useMemo(() => {
+    if (!selectedNode) {
+      return new Set<string>();
+    }
+    const ids = new Set<string>();
+    const nodeById = new Map(nodes.map((candidate) => [candidate.id, candidate]));
+    let current = selectedNode;
+    while (current.parent_memory_id && nodeById.has(current.parent_memory_id)) {
+      ids.add(current.parent_memory_id);
+      current = nodeById.get(current.parent_memory_id)!;
+    }
+    return ids;
+  }, [nodes, selectedNode]);
+
+  const selectableNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!selectedNode || !editMode) {
+      return ids;
+    }
+    if (editMode === "parent") {
+      ids.add(centerNodeId);
+      const blockedIds = new Set<string>([selectedNode.id]);
+      const queue = [selectedNode.id];
+      while (queue.length > 0) {
+        const currentId = queue.shift();
+        if (!currentId) {
+          continue;
+        }
+        nodes.forEach((candidate) => {
+          if (candidate.parent_memory_id !== currentId || blockedIds.has(candidate.id)) {
+            return;
+          }
+          blockedIds.add(candidate.id);
+          queue.push(candidate.id);
+        });
+      }
+      nodes.forEach((candidate) => {
+        if (
+          isFileMemoryNode(candidate) ||
+          candidate.id === selectedNode.id ||
+          blockedIds.has(candidate.id)
+        ) {
+          return;
+        }
+        ids.add(candidate.id);
+      });
+      return ids;
+    }
+
+    nodes.forEach((candidate) => {
+      if (isFileMemoryNode(candidate) || isAssistantRootMemoryNode(candidate) || candidate.id === selectedNode.id) {
+        return;
+      }
+      if (editMode === "children" && currentAncestorIds.has(candidate.id)) {
+        return;
+      }
+      ids.add(candidate.id);
+    });
+    return ids;
+  }, [centerNodeId, currentAncestorIds, editMode, nodes, selectedNode]);
+
+  const editSelectionSet = useMemo(() => new Set(editSelectionIds), [editSelectionIds]);
+
+  useEffect(() => {
+    selectableNodeIdsRef.current = selectableNodeIds;
+  }, [selectableNodeIds]);
+
+  const beginEditMode = useCallback(
+    (mode: Exclude<GraphSelectionMode, null>) => {
+      if (!selectedNode) {
+        return;
+      }
+      setEditMode(mode);
+      if (mode === "parent") {
+        setEditSelectionIds([
+          selectedNode.parent_memory_id && selectedNode.parent_memory_id !== centerNodeId
+            ? selectedNode.parent_memory_id
+            : GRAPH_TOP_LEVEL_TARGET_ID,
+        ]);
+        return;
+      }
+      if (mode === "children") {
+        setEditSelectionIds(currentChildIds);
+        return;
+      }
+      setEditSelectionIds(currentManualRelatedIds);
+    },
+    [centerNodeId, currentChildIds, currentManualRelatedIds, selectedNode],
+  );
+
+  const cancelEditMode = useCallback(() => {
+    setEditMode(null);
+    setEditSelectionIds([]);
+  }, []);
+
+  const clearEditSelection = useCallback(() => {
+    if (editMode === "parent") {
+      setEditSelectionIds([GRAPH_TOP_LEVEL_TARGET_ID]);
+      return;
+    }
+    setEditSelectionIds([]);
+  }, [editMode]);
+
+  const applyEditMode = useCallback(async () => {
+    if (!selectedNode || !editMode || editPending) {
+      return;
+    }
+    setEditPending(true);
+    try {
+      if (editMode === "parent") {
+        const nextParentId = editSelectionIds[0];
+        await onUpdateMemory(selectedNode.id, {
+          parent_memory_id:
+            !nextParentId || nextParentId === GRAPH_TOP_LEVEL_TARGET_ID ? null : nextParentId,
+        });
+      } else if (editMode === "children") {
+        const nextChildIds = new Set(editSelectionIds);
+        const currentChildIdSet = new Set(currentChildIds);
+        for (const currentChildId of currentChildIds) {
+          if (nextChildIds.has(currentChildId)) {
+            continue;
+          }
+          await onUpdateMemory(currentChildId, { parent_memory_id: null });
+        }
+        for (const childId of editSelectionIds) {
+          if (currentChildIdSet.has(childId)) {
+            continue;
+          }
+          await onUpdateMemory(childId, { parent_memory_id: selectedNode.id });
+        }
+      } else if (editMode === "related") {
+        const nextRelatedIds = new Set(editSelectionIds);
+        const currentEdgeByRelatedId = new Map(
+          currentManualEdges.map((edge) => [
+            edge.source_memory_id === selectedNode.id ? edge.target_memory_id : edge.source_memory_id,
+            edge.id,
+          ]),
+        );
+        for (const edge of currentManualEdges) {
+          const otherId =
+            edge.source_memory_id === selectedNode.id ? edge.target_memory_id : edge.source_memory_id;
+          if (nextRelatedIds.has(otherId)) {
+            continue;
+          }
+          await onDeleteEdge(edge.id);
+        }
+        for (const relatedId of editSelectionIds) {
+          if (currentEdgeByRelatedId.has(relatedId)) {
+            continue;
+          }
+          await onCreateEdge(selectedNode.id, relatedId);
+        }
+      }
+      setEditMode(null);
+      setEditSelectionIds([]);
+    } finally {
+      setEditPending(false);
+    }
+  }, [
+    currentChildIds,
+    currentManualEdges,
+    editMode,
+    editPending,
+    editSelectionIds,
+    onCreateEdge,
+    onDeleteEdge,
+    onUpdateMemory,
+    selectedNode,
+  ]);
+
   /* ── Filtering ──────────────────────────────── */
 
   const activeTypes = externalFilters?.types ?? filterState.types;
@@ -668,6 +1149,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
   const visibleNodeIds = useMemo(() => {
     const ids = new Set<string>();
+    const nodeById = new Map(simNodes.map((node) => [node.id, node]));
     simNodes.forEach((n) => {
       if (n.id === centerNodeId) {
         ids.add(n.id);
@@ -679,7 +1161,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         if (!activeTypes.includes(nodeType)) return;
       }
       // Category filter
-      if (activeCategories.length > 0 && !activeCategories.includes(n.category)) {
+      if (
+        activeCategories.length > 0 &&
+        !activeCategories.some((categoryPath) => getMemoryCategoryPrefixes(n).includes(categoryPath))
+      ) {
         return;
       }
       // Source filter
@@ -698,6 +1183,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
       ids.add(n.id);
     });
+    const matchedIds = Array.from(ids);
+    matchedIds.forEach((nodeId) => {
+      let current = nodeById.get(nodeId);
+      while (current?.parent_memory_id && nodeById.has(current.parent_memory_id)) {
+        ids.add(current.parent_memory_id);
+        current = nodeById.get(current.parent_memory_id);
+      }
+    });
     return ids;
   }, [activeCategories, activeSources, activeTimeRange, activeTypes, centerNodeId, simNodes]);
 
@@ -709,7 +1202,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (n.id === centerNodeId) return;
       if (
         n.content.toLowerCase().includes(q) ||
-        n.category.toLowerCase().includes(q)
+        n.category.toLowerCase().includes(q) ||
+        getMemoryCategoryPrefixes(n).some((value) => value.toLowerCase().includes(q))
       ) {
         ids.add(n.id);
       }
@@ -718,6 +1212,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   }, [centerNodeId, searchQuery, simNodes]);
 
   const searchMatchIds = semanticMatchIds ?? localSearchMatchIds;
+  const simNodeById = useMemo(
+    () => new Map(simNodes.map((node) => [node.id, node] as const)),
+    [simNodes],
+  );
   const maxRetrievalCount = useMemo(
     () =>
       Math.max(
@@ -753,8 +1251,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const transform = transformRef.current;
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.k, transform.k);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
     const hasSearch = searchMatchIds !== null;
+    const isEditActive = Boolean(editMode && selectedNode);
+    const activeNodeId = selectedNode?.id || null;
 
     /* ── Draw edges ── */
     simLinks.forEach((link) => {
@@ -763,48 +1265,118 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       if (!visibleNodeIds.has(src.id) || !visibleNodeIds.has(tgt.id)) return;
 
       const isFileEdge = link.edge_type === "file";
-      const isCenterEdge = link.edge_type === "center";
-      const isParentEdge = link.edge_type === "parent";
       const isSummaryEdge = link.edge_type === "summary";
-      const isPermanent =
-        !isFileEdge &&
-        !isCenterEdge &&
-        !isParentEdge &&
-        !isSummaryEdge &&
-        ((src.type === "permanent" && tgt.type === "permanent") ||
-          link.edge_type === "manual");
+      const isManualRelatedEdge = link.edge_type === "manual";
+      const isSystemRelatedEdge = link.edge_type === "related";
+      const isLateralEdge = isManualRelatedEdge || isSystemRelatedEdge;
+      const isStructuralEdge = isStructuralTreeEdgePair(
+        simNodeById,
+        src.id,
+        tgt.id,
+        centerNodeId,
+      );
+      const isCenterEdge =
+        link.edge_type === "center" ||
+        isCenterStructuralTreeEdgePair(simNodeById, src.id, tgt.id, centerNodeId);
+      const isParentEdge =
+        link.edge_type === "parent" || (isStructuralEdge && !isCenterEdge);
       const lineWidth = isFileEdge
         ? 1
         : isCenterEdge
-          ? 0.65
+          ? isOrbitMode ? 2.1 : 1.75
           : isParentEdge
-            ? 1.05
-            : 0.7 + link.strength * 1.8;
-
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(tgt.x, tgt.y);
+            ? isOrbitMode ? 1.55 : 1.3
+            : isManualRelatedEdge
+              ? isOrbitMode ? 1.95 : 1.7
+              : isSystemRelatedEdge
+                ? isOrbitMode ? 1.65 : 1.4
+                : isSummaryEdge
+                  ? isOrbitMode ? 1.45 : 1.2
+                  : 0.85 + link.strength * 1.2;
+      const edgeTouchesActiveNode = Boolean(activeNodeId && (src.id === activeNodeId || tgt.id === activeNodeId));
+      const edgeTouchesSelection =
+        edgeTouchesActiveNode ||
+        editSelectionSet.has(src.id) ||
+        editSelectionSet.has(tgt.id) ||
+        (editSelectionSet.has(GRAPH_TOP_LEVEL_TARGET_ID) &&
+          (src.id === centerNodeId || tgt.id === centerNodeId));
 
       if (isFileEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
       } else if (isParentEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([]);
-        ctx.strokeStyle = "rgba(200, 115, 74, 0.26)";
+        ctx.strokeStyle = isOrbitMode ? "rgba(209, 132, 91, 0.5)" : "rgba(200, 115, 74, 0.34)";
       } else if (isSummaryEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([]);
-        ctx.strokeStyle = "rgba(182, 138, 47, 0.45)";
+        ctx.strokeStyle = isOrbitMode ? "rgba(191, 155, 63, 0.58)" : "rgba(182, 138, 47, 0.45)";
+      } else if (isSystemRelatedEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([6, 6]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(91, 118, 255, 0.66)" : "rgba(89, 102, 241, 0.52)";
+      } else if (isManualRelatedEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([10, 6]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(89, 111, 255, 0.9)" : "rgba(79, 93, 232, 0.82)";
       } else if (isCenterEdge) {
-        ctx.setLineDash([3, 6]);
-        ctx.strokeStyle = "rgba(138, 122, 106, 0.14)";
-      } else if (isPermanent) {
+        const glowGradient = ctx.createLinearGradient(src.x, src.y, tgt.x, tgt.y);
+        glowGradient.addColorStop(0, "rgba(255, 236, 221, 0.4)");
+        glowGradient.addColorStop(1, "rgba(200, 115, 74, 0.16)");
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([]);
-        ctx.strokeStyle = "rgba(200, 115, 74, 0.46)";
+        ctx.strokeStyle = glowGradient;
+        ctx.lineWidth = lineWidth + 2.6;
+        if (hasSearch) {
+          const srcMatch = searchMatchIds.has(src.id);
+          const tgtMatch = searchMatchIds.has(tgt.id);
+          if (!srcMatch && !tgtMatch) {
+            ctx.globalAlpha = 0.12;
+          }
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        const centerGradient = ctx.createLinearGradient(src.x, src.y, tgt.x, tgt.y);
+        centerGradient.addColorStop(0, "rgba(242, 214, 188, 0.9)");
+        centerGradient.addColorStop(0.55, "rgba(210, 142, 95, 0.62)");
+        centerGradient.addColorStop(1, "rgba(200, 115, 74, 0.26)");
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.strokeStyle = centerGradient;
       } else {
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = "rgba(74, 138, 200, 0.42)";
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = "rgba(200, 115, 74, 0.22)";
       }
       ctx.lineWidth = lineWidth;
+
+      if (isEditActive) {
+        if (!edgeTouchesSelection) {
+          ctx.globalAlpha = 0.08;
+        } else if (isLateralEdge) {
+          ctx.globalAlpha = 0.72;
+        } else {
+          ctx.globalAlpha = 0.56;
+        }
+      }
 
       if (hasSearch) {
         const srcMatch = searchMatchIds.has(src.id);
@@ -823,29 +1395,46 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       ctx.beginPath();
       ctx.moveTo(connectStartRef.current.x, connectStartRef.current.y);
       ctx.lineTo(connectPointerRef.current.x, connectPointerRef.current.y);
-      ctx.setLineDash([6, 4]);
-      ctx.strokeStyle = "rgba(200, 115, 74, 0.75)";
+      if (connectModeRef.current === "parent") {
+        ctx.setLineDash([]);
+        ctx.strokeStyle = "rgba(200, 115, 74, 0.82)";
+      } else {
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = "rgba(74, 138, 200, 0.75)";
+      }
       ctx.lineWidth = 2;
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    /* ── Draw nodes ── */
+      /* ── Draw nodes ── */
     simNodes.forEach((node) => {
       if (!visibleNodeIds.has(node.id)) return;
 
       const isCenter = node.id === centerNodeId;
       const isSearched = hasSearch && searchMatchIds.has(node.id);
-      const isFaded = hasSearch && !isSearched && !isCenter;
+      const isEditSelected =
+        isEditActive &&
+        ((node.id === centerNodeId && editSelectionSet.has(GRAPH_TOP_LEVEL_TARGET_ID)) ||
+          editSelectionSet.has(node.id));
+      const isEditAnchor = Boolean(isEditActive && activeNodeId === node.id);
+      const isEditSelectable = Boolean(isEditActive && selectableNodeIds.has(node.id));
+      const isFaded =
+        (hasSearch && !isSearched && !isCenter) ||
+        (isEditActive && !isEditAnchor && !isEditSelected && !isEditSelectable);
 
       if (isFaded) ctx.globalAlpha = 0.3;
 
-      if (isSearched) {
+      if (isSearched || isEditSelected || isEditAnchor) {
         ctx.save();
-        ctx.shadowColor = isCenter
-          ? COLORS.centerGradStart
-          : getMemoryNodeColor(node, maxRetrievalCount);
-        ctx.shadowBlur = 18;
+        ctx.shadowColor = isEditAnchor
+          ? "rgba(255, 146, 90, 0.92)"
+          : isEditSelected
+            ? "rgba(99, 102, 241, 0.9)"
+            : isCenter
+              ? COLORS.centerGradStart
+              : getMemoryNodeColor(node, maxRetrievalCount);
+        ctx.shadowBlur = isEditAnchor ? 24 : 18;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
       }
@@ -869,6 +1458,26 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 2;
         ctx.stroke();
+
+        if (isOrbitMode) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, CENTER_NODE_RADIUS + 14, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(232, 185, 140, 0.28)";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+
+        if (isEditSelectable || isEditSelected || isEditAnchor) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, CENTER_NODE_RADIUS + 9, 0, Math.PI * 2);
+          ctx.strokeStyle = isEditAnchor
+            ? "rgba(255, 255, 255, 0.96)"
+            : isEditSelected
+              ? "rgba(99, 102, 241, 0.82)"
+              : "rgba(99, 102, 241, 0.34)";
+          ctx.lineWidth = isEditAnchor ? 2.4 : 1.8;
+          ctx.stroke();
+        }
 
         /* center label (inside) */
         ctx.fillStyle = "#ffffff";
@@ -906,9 +1515,38 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         /* memory node circle */
         const radius = nodeRadius(node, false);
         const color = getMemoryNodeColor(node, maxRetrievalCount);
+        if (isOrbitMode) {
+          ctx.beginPath();
+          ctx.ellipse(
+            node.x,
+            node.y + radius * 0.95,
+            Math.max(5, radius * 0.92),
+            Math.max(3, radius * 0.32),
+            0,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fillStyle = "rgba(73, 48, 30, 0.12)";
+          ctx.fill();
+        }
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
+        if (isOrbitMode) {
+          const fillGradient = ctx.createRadialGradient(
+            node.x - radius * 0.35,
+            node.y - radius * 0.45,
+            Math.max(1, radius * 0.15),
+            node.x,
+            node.y,
+            radius,
+          );
+          fillGradient.addColorStop(0, d3.interpolateRgb(color, "#fff4eb")(0.34));
+          fillGradient.addColorStop(0.58, color);
+          fillGradient.addColorStop(1, d3.interpolateRgb(color, "#6a3921")(0.18));
+          ctx.fillStyle = fillGradient;
+        } else {
+          ctx.fillStyle = color;
+        }
         ctx.fill();
 
         if (node.type === "temporary") {
@@ -918,6 +1556,22 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.lineWidth = isSummaryMemoryNode(node) ? 2.4 : 1.5;
         ctx.stroke();
         ctx.setLineDash([]);
+
+        if (isEditSelectable && !isEditSelected && !isEditAnchor) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 7, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(99, 102, 241, 0.34)";
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+
+        if (isEditSelected || isEditAnchor) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2);
+          ctx.strokeStyle = isEditAnchor ? "rgba(255, 255, 255, 0.96)" : "rgba(99, 102, 241, 0.82)";
+          ctx.lineWidth = isEditAnchor ? 2.2 : 1.8;
+          ctx.stroke();
+        }
 
         if (isSummaryMemoryNode(node)) {
           ctx.beginPath();
@@ -935,7 +1589,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         }
       }
 
-      if (isSearched) {
+      if (isSearched || isEditSelected || isEditAnchor) {
         ctx.restore();
       }
 
@@ -949,8 +1603,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
       ctx.fillStyle = isFaded
         ? "rgba(42, 32, 24, 0.3)"
-        : "var(--text-primary, #2a2018)";
-      ctx.font = "11px sans-serif";
+        : isOrbitMode
+          ? "rgba(49, 30, 20, 0.92)"
+          : "#2a2018";
+      ctx.font = isOrbitMode ? "600 11.5px sans-serif" : "11px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       ctx.fillText(label, node.x, labelY);
@@ -959,7 +1615,22 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     });
 
     ctx.restore();
-  }, [centerNodeId, centerNodeLabel, centerNodeShortLabel, maxRetrievalCount, searchMatchIds, simLinks, simNodes, visibleNodeIds]);
+  }, [
+    centerNodeId,
+    centerNodeLabel,
+    centerNodeShortLabel,
+    editMode,
+    editSelectionSet,
+    isOrbitMode,
+    maxRetrievalCount,
+    searchMatchIds,
+    selectableNodeIds,
+    selectedNode,
+    simNodeById,
+    simLinks,
+    simNodes,
+    visibleNodeIds,
+  ]);
 
   /* ── Simulation setup ───────────────────────── */
 
@@ -976,26 +1647,60 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           .forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
           .distance((link) => {
+            const sourceId =
+              typeof link.source === "object" ? link.source.id : String(link.source);
+            const targetId =
+              typeof link.target === "object" ? link.target.id : String(link.target);
+            const isStructuralCenterEdge =
+              link.edge_type === "center" ||
+              isCenterStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId);
+            const isStructuralParentEdge =
+              link.edge_type === "parent" ||
+              (isStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId) &&
+                !isStructuralCenterEdge);
             if (link.edge_type === "file") {
               return FILE_LINK_DISTANCE;
             }
-            if (link.edge_type === "parent") {
-              return PARENT_LINK_DISTANCE;
+            if (isStructuralParentEdge) {
+              return isOrbitMode ? PARENT_LINK_DISTANCE + 10 : PARENT_LINK_DISTANCE;
             }
-            if (link.edge_type === "center") {
-              return CENTER_LINK_DISTANCE;
+            if (isStructuralCenterEdge) {
+              return isOrbitMode ? CENTER_LINK_DISTANCE + 6 : CENTER_LINK_DISTANCE - 16;
+            }
+            if (link.edge_type === "related") {
+              return isOrbitMode ? 148 : 134;
+            }
+            if (link.edge_type === "manual") {
+              return isOrbitMode ? 140 : 126;
             }
             return 100;
           })
           .strength((link) => {
+            const sourceId =
+              typeof link.source === "object" ? link.source.id : String(link.source);
+            const targetId =
+              typeof link.target === "object" ? link.target.id : String(link.target);
+            const isStructuralCenterEdge =
+              link.edge_type === "center" ||
+              isCenterStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId);
+            const isStructuralParentEdge =
+              link.edge_type === "parent" ||
+              (isStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId) &&
+                !isStructuralCenterEdge);
             if (link.edge_type === "file") {
               return 0.9;
             }
-            if (link.edge_type === "parent") {
-              return 0.48;
+            if (isStructuralParentEdge) {
+              return isOrbitMode ? 0.42 : 0.48;
             }
-            if (link.edge_type === "center") {
-              return Math.max(0.05, link.strength * 0.12);
+            if (isStructuralCenterEdge) {
+              return Math.max(isOrbitMode ? 0.12 : 0.14, link.strength * (isOrbitMode ? 0.18 : 0.22));
+            }
+            if (link.edge_type === "related") {
+              return Math.max(isOrbitMode ? 0.1 : 0.12, link.strength * (isOrbitMode ? 0.16 : 0.18));
+            }
+            if (link.edge_type === "manual") {
+              return Math.max(0.16, link.strength * (isOrbitMode ? 0.22 : 0.26));
             }
             return Math.max(0.18, link.strength * 0.3);
           })
@@ -1004,17 +1709,20 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         "charge",
         d3.forceManyBody<SimNode>().strength((node) => {
           if (node.id === centerNodeId) {
-            return -260;
+            return isOrbitMode ? -280 : -220;
           }
           if (isFileMemoryNode(node)) {
             return -12;
           }
-          return -200;
+          return isCategoryPathMemoryNode(node)
+            ? (isOrbitMode ? -178 : -140)
+            : (isOrbitMode ? -196 : -160);
         }),
       )
       .force("collide", d3.forceCollide<SimNode>((d) => nodeRadius(d, d.id === centerNodeId) + 8))
+      .force("treeScaffold", createTreeScaffoldForce(centerNodeId))
       .force("fileAttachment", createFileAttachmentForce(centerNodeId))
-      .alphaDecay(0.02)
+      .alphaDecay(isOrbitMode ? 0.018 : 0.02)
       .on("tick", () => {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = requestAnimationFrame(draw);
@@ -1049,7 +1757,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
     const dragStarted = (x: number, y: number) => {
       const node = hitTestDirect(x, y);
-      if (!node || node.id === centerNodeId || isFileMemoryNode(node)) return;
+      if (!node || !canGraphRepositionNode(node, centerNodeId)) return;
       dragNode = node;
       sim.alphaTarget(0.3).restart();
       node.fx = node.x;
@@ -1108,9 +1816,22 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
-      if (e.shiftKey && node && node.id !== centerNodeId && !isFileMemoryNode(node)) {
+      if (editModeRef.current && selectedNodeRef.current) {
+        if (
+          node &&
+          (
+            selectableNodeIdsRef.current.has(node.id) ||
+            (editModeRef.current === "parent" && node.id === centerNodeId)
+          )
+        ) {
+          suppressClickRef.current = true;
+        }
+        return;
+      }
+      if ((e.shiftKey || e.altKey) && node && canGraphRepositionNode(node, centerNodeId)) {
         const t = transformRef.current;
         connectStartRef.current = node;
+        connectModeRef.current = e.altKey ? "manual" : "parent";
         connectPointerRef.current = {
           x: (mx - t.x) / t.k,
           y: (my - t.y) / t.k,
@@ -1121,7 +1842,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         e.stopPropagation();
         return;
       }
-      if (node && node.id !== centerNodeId && !isFileMemoryNode(node)) {
+      if (node && canGraphRepositionNode(node, centerNodeId)) {
         isDragging = true;
         dragStartPos = { x: e.clientX, y: e.clientY };
         dragStarted(mx, my);
@@ -1133,6 +1854,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onMouseMove = (e: MouseEvent) => {
+      if (editModeRef.current) {
+        return;
+      }
       if (connectStartRef.current) {
         const rect = canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -1153,15 +1877,30 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onMouseUp = (e: MouseEvent) => {
+      if (editModeRef.current && selectedNodeRef.current) {
+        return;
+      }
       if (connectStartRef.current) {
         const rect = canvas.getBoundingClientRect();
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
         const sourceNode = connectStartRef.current;
+        const connectMode = connectModeRef.current;
         const targetNode = hitTestDirect(mx, my);
         connectStartRef.current = null;
+        connectModeRef.current = null;
         connectPointerRef.current = null;
-        if (
+        if (connectMode === "parent") {
+          if (targetNode?.id === centerNodeId) {
+            onUpdateMemory(sourceNode.id, { parent_memory_id: null }).catch(() => {});
+          } else if (
+            targetNode &&
+            sourceNode.id !== targetNode.id &&
+            !isFileMemoryNode(targetNode)
+          ) {
+            onUpdateMemory(sourceNode.id, { parent_memory_id: targetNode.id }).catch(() => {});
+          }
+        } else if (
           targetNode &&
           sourceNode.id !== targetNode.id &&
           targetNode.id !== centerNodeId &&
@@ -1208,13 +1947,37 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const onClick = (e: MouseEvent) => {
       if (suppressClickRef.current) {
         suppressClickRef.current = false;
-        return;
+        if (!editMode || !selectedNode) {
+          return;
+        }
       }
       // Only handle clicks on blank canvas (not on nodes which are handled via drag flow)
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const node = hitTestDirect(mx, my);
+      if (editModeRef.current && selectedNodeRef.current) {
+        if (!node) {
+          return;
+        }
+        if (editModeRef.current === "parent" && node.id === centerNodeId) {
+          setEditSelectionIds([GRAPH_TOP_LEVEL_TARGET_ID]);
+          return;
+        }
+        if (!selectableNodeIdsRef.current.has(node.id)) {
+          return;
+        }
+        if (editModeRef.current === "parent") {
+          setEditSelectionIds([node.id]);
+          return;
+        }
+        setEditSelectionIds((current) =>
+          current.includes(node.id)
+            ? current.filter((candidateId) => candidateId !== node.id)
+            : [...current, node.id],
+        );
+        return;
+      }
       if (!node) {
         setSelectedNode(null);
         onNodeSelect(null);
@@ -1229,6 +1992,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     };
 
     const onDblClick = (e: MouseEvent) => {
+      if (editModeRef.current) {
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -1273,7 +2039,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     // We intentionally exclude draw from deps to avoid re-creating the simulation
     // on every render. The draw function is captured by the tick callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [centerNodeId, onCenterNodeClick, onCreateEdge, onNodeSelect, onUpdateMemory, openCreateMemoryDialog, simLinks, simNodes]);
+  }, [
+    centerNodeId,
+    isOrbitMode,
+    onCenterNodeClick,
+    onCreateEdge,
+    onNodeSelect,
+    onUpdateMemory,
+    openCreateMemoryDialog,
+    simLinks,
+    simNodeById,
+    simNodes,
+  ]);
 
   /* ── Redraw when filters/search change ─────── */
 
@@ -1394,6 +2171,49 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       ).length,
     [nodes, searchMatchIds, visibleNodeIds],
   );
+  const branchCount = useMemo(() => {
+    const branchIds = new Set<string>();
+    nodes.forEach((node) => {
+      if (
+        !visibleNodeIds.has(node.id) ||
+        (searchMatchIds !== null && !searchMatchIds.has(node.id)) ||
+        isFileMemoryNode(node) ||
+        node.id === centerNodeId
+      ) {
+        return;
+      }
+      const parentId = node.parent_memory_id;
+      if (!parentId || parentId === centerNodeId) {
+        branchIds.add(node.id);
+      }
+    });
+    return branchIds.size;
+  }, [centerNodeId, nodes, searchMatchIds, visibleNodeIds]);
+  const relatedCount = useMemo(
+    () =>
+      simLinks.filter((link) => {
+        const source = link.source as SimNode;
+        const target = link.target as SimNode;
+        return (
+          visibleNodeIds.has(source.id) &&
+          visibleNodeIds.has(target.id) &&
+          (!searchMatchIds || (searchMatchIds.has(source.id) || searchMatchIds.has(target.id))) &&
+          (link.edge_type === "manual" || link.edge_type === "related")
+        );
+      }).length,
+    [searchMatchIds, simLinks, visibleNodeIds],
+  );
+  const temporaryCount = useMemo(
+    () =>
+      nodes.filter(
+        (node) =>
+          visibleNodeIds.has(node.id) &&
+          (!searchMatchIds || searchMatchIds.has(node.id)) &&
+          !isFileMemoryNode(node) &&
+          node.type === "temporary",
+      ).length,
+    [nodes, searchMatchIds, visibleNodeIds],
+  );
 
   /* ── Context menu actions ───────────────────── */
 
@@ -1425,7 +2245,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   /* ── Render ─────────────────────────────────── */
 
   return (
-    <div className="graph-container">
+    <div className={`graph-container graph-container--${renderMode}`}>
       <GraphFilters
         nodes={nodes}
         activeFilters={filterState}
@@ -1434,15 +2254,83 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         onToggleCollapsed={() => setFiltersCollapsed((value) => !value)}
       />
 
-      <div className="graph-main">
+      <div className={`graph-main graph-main--${renderMode}`}>
+        <div className="graph-atmosphere" aria-hidden="true">
+          <span className="graph-atmosphere-orb is-primary" />
+          <span className="graph-atmosphere-orb is-secondary" />
+          <span className="graph-atmosphere-grid" />
+        </div>
+        <div className={`graph-mode-hud graph-mode-hud--${renderMode}`}>
+          <span className="graph-mode-hud-kicker">
+            {isOrbitMode ? t("graph.modeOrbit") : t("graph.modeWorkbench")}
+          </span>
+          <h3 className="graph-mode-hud-title">
+            {isOrbitMode ? t("graph.modeOrbitTitle") : t("graph.modeWorkbenchTitle")}
+          </h3>
+          <p className="graph-mode-hud-copy">
+            {isOrbitMode ? t("graph.modeOrbitBody") : t("graph.modeWorkbenchBody")}
+          </p>
+        </div>
+
         <canvas
           ref={canvasRef}
           className="graph-canvas"
         />
 
+        {selectedNode && editMode ? (
+          <div className="graph-edit-banner">
+            <div className="graph-edit-banner-copy">
+              <span className="graph-edit-banner-kicker">
+                {editMode === "parent"
+                  ? t("graph.selectionParentTitle")
+                  : editMode === "children"
+                    ? t("graph.selectionChildrenTitle")
+                    : t("graph.selectionRelatedTitle")}
+              </span>
+              <p className="graph-edit-banner-text">
+                {editMode === "parent"
+                  ? t("graph.selectionParentDescription")
+                  : editMode === "children"
+                    ? t("graph.selectionChildrenDescription")
+                    : t("graph.selectionRelatedDescription")}
+              </p>
+            </div>
+            <div className="graph-edit-banner-actions">
+              <button
+                type="button"
+                className="graph-controls-btn"
+                onClick={clearEditSelection}
+                disabled={editPending}
+              >
+                {t("graph.clearSelection")}
+              </button>
+              <button
+                type="button"
+                className="graph-controls-btn"
+                onClick={cancelEditMode}
+                disabled={editPending}
+              >
+                {t("graph.cancel")}
+              </button>
+              <button
+                type="button"
+                className="graph-controls-btn is-add"
+                onClick={() => void applyEditMode()}
+                disabled={editPending}
+              >
+                {editPending ? t("graph.applyingSelection") : t("graph.applySelection")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <GraphControls
           nodeCount={memoryCount}
           fileCount={fileCount}
+          branchCount={branchCount}
+          relatedCount={relatedCount}
+          temporaryCount={temporaryCount}
+          renderMode={renderMode}
           onAdd={openCreateMemoryDialog}
           searchQuery={searchQuery}
           onSearchChange={setLocalSearch}
@@ -1458,8 +2346,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           node={selectedNode}
           allNodes={nodes}
           onClose={() => {
+            cancelEditMode();
             setSelectedNode(null);
             onNodeSelect(null);
+          }}
+          onFocusNode={(node) => {
+            cancelEditMode();
+            setSelectedNode(node);
+            onNodeSelect(node);
           }}
           onUpdate={onUpdateMemory}
           onDelete={onDeleteMemory}
@@ -1467,6 +2361,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           onDeleteEdge={onDeleteEdge}
           onAttachFile={onAttachFile}
           onDetachFile={onDetachFile}
+          editMode={editMode}
+          editSelectionIds={editSelectionIds}
+          editPending={editPending}
+          topLevelSelectionId={GRAPH_TOP_LEVEL_TARGET_ID}
+          onBeginEditMode={beginEditMode}
+          onCancelEditMode={cancelEditMode}
+          onClearEditModeSelection={clearEditSelection}
+          onApplyEditMode={applyEditMode}
         />
       )}
 

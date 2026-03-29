@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import {
   type MemoryNode,
+  getMemoryCategoryPrefixes,
   isAssistantRootMemoryNode,
   isFileMemoryNode,
 } from "@/hooks/useGraphData";
@@ -49,13 +50,22 @@ export default function GraphFilters({
 }: GraphFiltersProps) {
   const t = useTranslations("console-assistants");
   const categories = useMemo(() => {
-    const cats = new Set<string>();
+    const paths = new Set<string>();
     nodes.forEach((n) => {
       if (n.category && !isFileMemoryNode(n) && !isAssistantRootMemoryNode(n)) {
-        cats.add(n.category);
+        getMemoryCategoryPrefixes(n).forEach((prefix) => paths.add(prefix));
       }
     });
-    return Array.from(cats).sort();
+    return Array.from(paths)
+      .sort((left, right) => {
+        const depthDelta = left.split(".").length - right.split(".").length;
+        return depthDelta !== 0 ? depthDelta : left.localeCompare(right, "zh-CN");
+      })
+      .map((path) => ({
+        path,
+        depth: path.split(".").length,
+        label: path.split(".").at(-1) || path,
+      }));
   }, [nodes]);
   const sourceOptions = useMemo(
     () =>
@@ -161,13 +171,13 @@ export default function GraphFilters({
         <div className="graph-filters-section">
           <div className="graph-filters-section-title">{t("graph.filterByCategory")}</div>
           {categories.map((cat) => (
-            <label key={cat} className="graph-filters-item">
+            <label key={cat.path} className="graph-filters-item">
               <input
                 type="checkbox"
-                checked={activeFilters.categories.includes(cat)}
-                onChange={() => toggleCategory(cat)}
+                checked={activeFilters.categories.includes(cat.path)}
+                onChange={() => toggleCategory(cat.path)}
               />
-              <span>{cat}</span>
+              <span style={{ paddingLeft: `${Math.max(0, cat.depth - 1) * 12}px` }}>{cat.label}</span>
             </label>
           ))}
         </div>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 import json
 import re
 
@@ -7,7 +8,8 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Memory, MemoryEdge, Project
+from app.models import Memory, MemoryEdge, MemoryFile, Project
+from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.dashscope_client import chat_completion
 from app.services.embedding import embed_and_store
 from app.services.memory_metadata import (
@@ -19,8 +21,11 @@ from app.services.memory_metadata import (
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
+    is_category_path_memory,
+    is_concept_memory,
     is_pinned_memory,
     is_summary_memory,
+    normalize_category_path,
     shorten_text,
 )
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
@@ -49,17 +54,37 @@ SUMMARY_PROMPT = """你是记忆压缩器。请把同一主题的多条记忆压
 {{"skip": false, "summary": "...", "category": "{category}"}}"""
 
 
-def _normalized_category(memory: Memory) -> str:
-    parts = [segment.strip() for segment in str(memory.category or "").split(".") if segment.strip()]
-    if not parts:
-        return "uncategorized"
-    return ".".join(parts[:2])
+@dataclass(slots=True)
+class MemoryCompactionSummary:
+    created_summaries: int = 0
+    updated_summaries: int = 0
+    deleted_summaries: int = 0
+    updated_summary_ids: list[str] | None = None
+
+    def as_dict(self) -> dict[str, int | list[str]]:
+        return asdict(self)
+
+
+def _summary_category(memory: Memory, memories_by_id: dict[str, Memory]) -> str:
+    parent = memories_by_id.get(memory.parent_memory_id or "")
+    if parent is not None and (is_concept_memory(parent) or is_category_path_memory(parent)):
+        category = normalize_category_path(parent.category)
+        if category:
+            return category
+    category = normalize_category_path(memory.category)
+    return category or "uncategorized"
 
 
 def _eligible_for_compaction(memory: Memory) -> bool:
     if memory.type != "permanent":
         return False
-    if is_assistant_root_memory(memory) or is_summary_memory(memory) or is_pinned_memory(memory):
+    if (
+        is_assistant_root_memory(memory)
+        or is_summary_memory(memory)
+        or is_concept_memory(memory)
+        or is_category_path_memory(memory)
+        or is_pinned_memory(memory)
+    ):
         return False
     if get_memory_kind(memory) == MEMORY_KIND_EPISODIC:
         return False
@@ -68,6 +93,7 @@ def _eligible_for_compaction(memory: Memory) -> bool:
 
 def _group_memories(memories: list[Memory]) -> dict[str, list[Memory]]:
     groups: dict[str, list[Memory]] = {}
+    memories_by_id = {memory.id: memory for memory in memories}
     for memory in memories:
         if not _eligible_for_compaction(memory):
             continue
@@ -80,7 +106,7 @@ def _group_memories(memories: list[Memory]) -> dict[str, list[Memory]]:
         group_key = build_summary_group_key(
             owner_user_id=owner_user_id,
             parent_memory_id=memory.parent_memory_id,
-            category=_normalized_category(memory),
+            category=_summary_category(memory, memories_by_id),
             memory_kind=summary_family,
         )
         groups.setdefault(group_key, []).append(memory)
@@ -152,7 +178,7 @@ async def compact_project_memories(
     *,
     workspace_id: str,
     project_id: str,
-) -> list[str]:
+) -> MemoryCompactionSummary:
     project = (
         db.query(Project)
         .filter(
@@ -163,9 +189,16 @@ async def compact_project_memories(
         .first()
     )
     if project is None:
-        return []
+        return MemoryCompactionSummary(updated_summary_ids=[])
 
     root_memory, _changed = ensure_project_assistant_root(db, project, reparent_orphans=False)
+    tree_summary = ensure_project_category_tree(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    if any(tree_summary.as_dict().values()):
+        db.flush()
     memories = (
         db.query(Memory)
         .filter(
@@ -185,8 +218,9 @@ async def compact_project_memories(
         for memory in summary_memories
         if str(get_memory_metadata(memory).get("summary_group_key") or "")
     }
+    active_group_keys: set[str] = set()
 
-    updated_summary_ids: list[str] = []
+    summary = MemoryCompactionSummary(updated_summary_ids=[])
     for group_key, group_memories in grouped.items():
         if len(group_memories) < SUMMARY_MIN_GROUP_SIZE:
             continue
@@ -201,13 +235,15 @@ async def compact_project_memories(
             continue
 
         sample = ordered_group[0]
+        summary_category = _summary_category(sample, {memory.id: memory for memory in memories})
         summary_payload = await _generate_summary_for_group(
             memories=ordered_group,
-            category=_normalized_category(sample),
+            category=summary_category,
         )
         if summary_payload is None:
             continue
         summary_content, summary_category = summary_payload
+        active_group_keys.add(group_key)
         owner_user_id = get_memory_owner_user_id(sample) if is_private_memory(sample) else None
         source_memory_ids = [memory.id for memory in ordered_group]
         summary_metadata = build_summary_memory_metadata(
@@ -235,12 +271,13 @@ async def compact_project_memories(
             db.add(summary_memory)
             db.flush()
             summaries_by_group[group_key] = summary_memory
+            summary.created_summaries += 1
         else:
             summary_memory.content = summary_content
             summary_memory.category = summary_category
             summary_memory.metadata_json = summary_metadata
-            if summary_memory.parent_memory_id is None:
-                summary_memory.parent_memory_id = sample.parent_memory_id or root_memory.id
+            summary_memory.parent_memory_id = sample.parent_memory_id or root_memory.id
+            summary.updated_summaries += 1
 
         db.execute(
             sql_text(
@@ -274,6 +311,21 @@ async def compact_project_memories(
             )
         except Exception:
             pass
-        updated_summary_ids.append(summary_memory.id)
+        summary.updated_summary_ids.append(summary_memory.id)
 
-    return updated_summary_ids
+    stale_group_keys = sorted(set(summaries_by_group) - active_group_keys)
+    for group_key in stale_group_keys:
+        summary_memory = summaries_by_group[group_key]
+        db.query(MemoryEdge).filter(
+            (MemoryEdge.source_memory_id == summary_memory.id)
+            | (MemoryEdge.target_memory_id == summary_memory.id)
+        ).delete(synchronize_session=False)
+        db.query(MemoryFile).filter(MemoryFile.memory_id == summary_memory.id).delete(synchronize_session=False)
+        db.execute(
+            sql_text("DELETE FROM embeddings WHERE memory_id = :memory_id"),
+            {"memory_id": summary_memory.id},
+        )
+        db.query(Memory).filter(Memory.id == summary_memory.id).delete(synchronize_session=False)
+        summary.deleted_summaries += 1
+
+    return summary

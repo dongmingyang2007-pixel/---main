@@ -86,9 +86,13 @@ def upsert_pipeline_config(
     _ensure_pipeline_defaults(db, payload.project_id)
 
     # Validate that the model_id exists in the catalog
-    catalog_entry = db.query(ModelCatalog).filter(ModelCatalog.model_id == payload.model_id).first()
+    catalog_entry = (
+        db.query(ModelCatalog)
+        .filter(ModelCatalog.model_id == payload.model_id, ModelCatalog.is_active.is_(True))
+        .first()
+    )
     if not catalog_entry:
-        raise ApiError("invalid_model", "Model not found in catalog", status_code=400)
+        raise ApiError("invalid_model", "Model not found in active catalog", status_code=400)
     if not is_valid_catalog_model_for_slot(payload.model_type, catalog_entry):
         if payload.model_type == "realtime":
             raise ApiError(

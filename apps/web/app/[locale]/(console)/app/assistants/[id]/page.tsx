@@ -1045,7 +1045,7 @@ export default function AssistantDetailPage() {
                 {t("profile.stat.conversations")}: {conversationCount} &middot; {t("profile.card.knowledge")}: {knowledgeItems.length} &middot; {t("graph.createdAt")}: {formatDate(project?.created_at || "")}
               </div>
             </div>
-            <div className="assistant-detail-hero-actions">
+            <div className="assistant-detail-hero-actions assistant-profile-actions">
               <Link href={`/app/chat?project_id=${projectId}`} style={{ textDecoration: "none" }}>
                 <GlassButton variant="primary">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1189,7 +1189,11 @@ export default function AssistantDetailPage() {
                 ? syntheticModeRows
                 : standardModeRows
             ).map((row) => (
-              <div key={row.key} className="profile-model-row" data-testid={`assistant-model-row-${row.key}`}>
+              <div
+                key={row.key}
+                className="profile-model-row assistant-model-row"
+                data-testid={`assistant-model-row-${row.key}`}
+              >
                 <span className="dashboard-glass-slot-dot" style={{ background: SLOT_COLOR_MAP[row.key] || "#6366f1" }} />
                 <div className="profile-model-info">
                   <div className="profile-model-label">{row.shortLabel || row.label}</div>

@@ -61,6 +61,7 @@ export function ChatInterface({
   const [pipelineItems, setPipelineItems] = useState<PipelineConfigItem[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogModelItem[]>([]);
   const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
+  const [sessionModeOverride, setSessionModeOverride] = useState<ChatMode | null>(null);
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
   const [liveDictationText, setLiveDictationText] = useState("");
   const [isLiveDictating, setIsLiveDictating] = useState(false);
@@ -82,7 +83,9 @@ export function ChatInterface({
     }>
   >([]);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const streamAbortReasonRef = useRef<"user" | "no_first_event" | "idle" | null>(null);
   const runtimeMessageCounterRef = useRef(0);
+  const memoryExtractionSyncInFlightRef = useRef(false);
   const liveTurnIdsRef = useRef<{
     userId: string | null;
     assistantId: string | null;
@@ -324,6 +327,55 @@ export function ChatInterface({
     };
   }, [conversationId]);
 
+  const syncConversationMessages = useCallback(
+    async (targetConversationId: string) => {
+      try {
+        const data = await apiGet<ApiMessage[]>(
+          `/api/v1/chat/conversations/${targetConversationId}/messages`,
+        );
+        const list = Array.isArray(data) ? data : [];
+        setMessages(list.map(toMessage));
+        onConversationLoaded?.({
+          conversationId: targetConversationId,
+          messages: list,
+        });
+      } catch {
+        // Keep current optimistic UI if refresh fails.
+      }
+    },
+    [onConversationLoaded],
+  );
+
+  useEffect(() => {
+    if (!conversationId) {
+      return;
+    }
+
+    const hasPendingMemoryExtraction = messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        !message.isStreaming &&
+        message.memory_extraction_status === "pending",
+    );
+    if (!hasPendingMemoryExtraction) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (memoryExtractionSyncInFlightRef.current) {
+        return;
+      }
+      memoryExtractionSyncInFlightRef.current = true;
+      void syncConversationMessages(conversationId).finally(() => {
+        memoryExtractionSyncInFlightRef.current = false;
+      });
+    }, 2500);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [conversationId, messages, syncConversationMessages]);
+
   const handleSend = useCallback(
     async (
       content: string,
@@ -344,7 +396,7 @@ export function ChatInterface({
       if (imageFile) {
         const submittedText = content || t("imageDefaultPrompt");
         const userMessage: Message = {
-          id: `img-u-${Date.now()}`,
+          id: nextRuntimeMessageId("img-u"),
           role: "user",
           content: submittedText,
         };
@@ -381,7 +433,7 @@ export function ChatInterface({
 
           const assistantMessage: Message = {
             ...toMessage(response.message),
-            id: response.message?.id || `img-a-${Date.now()}`,
+            id: response.message?.id || nextRuntimeMessageId("img-a"),
             audioBase64: response.audio_response,
             animateOnMount: true,
             isStreaming: false,
@@ -397,7 +449,7 @@ export function ChatInterface({
           setMessages((prev) => [
             ...prev,
             {
-              id: `img-err-${Date.now()}`,
+              id: nextRuntimeMessageId("img-err"),
               role: "assistant",
               content: errorContent,
             },
@@ -413,7 +465,7 @@ export function ChatInterface({
       }
 
       const userMessage: Message = {
-        id: `u-${Date.now()}`,
+        id: nextRuntimeMessageId("u"),
         role: "user",
         content,
       };
@@ -442,9 +494,17 @@ export function ChatInterface({
               : undefined,
       };
 
-      const tempAssistantId = `stream-a-${Date.now()}`;
+      const tempAssistantId = nextRuntimeMessageId("stream-a");
       let streamStarted = false;
       let finalizedAssistantId: string | null = null;
+      let sawStreamEvent = false;
+      let watchdogTimeout: ReturnType<typeof setTimeout> | null = null;
+      const clearWatchdog = () => {
+        if (watchdogTimeout) {
+          clearTimeout(watchdogTimeout);
+          watchdogTimeout = null;
+        }
+      };
       const updateStreamingAssistant = (
         updater: (current: Message | null) => Message,
       ) => {
@@ -476,6 +536,12 @@ export function ChatInterface({
             audioBase64: final.audioBase64 ?? current?.audioBase64 ?? null,
             memories_extracted: final.memories_extracted,
             extracted_facts: final.extracted_facts,
+            memory_extraction_status:
+              final.memory_extraction_status ?? current?.memory_extraction_status ?? null,
+            memory_extraction_attempts:
+              final.memory_extraction_attempts ?? current?.memory_extraction_attempts ?? null,
+            memory_extraction_error:
+              final.memory_extraction_error ?? current?.memory_extraction_error ?? null,
             animateOnMount: final.animateOnMount ?? current?.animateOnMount ?? false,
             isStreaming: final.isStreaming,
           };
@@ -491,7 +557,15 @@ export function ChatInterface({
       try {
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
+        streamAbortReasonRef.current = null;
         setIsStreamingActive(true);
+        const armWatchdog = () => {
+          clearWatchdog();
+          watchdogTimeout = setTimeout(() => {
+            streamAbortReasonRef.current = sawStreamEvent ? "idle" : "no_first_event";
+            abortController.abort();
+          }, sawStreamEvent ? 45000 : 15000);
+        };
 
         const assistantPlaceholder: Message = {
           id: tempAssistantId,
@@ -502,12 +576,15 @@ export function ChatInterface({
         setMessages((prev) => [...prev, assistantPlaceholder]);
         setIsTyping(false);
         streamStarted = true;
+        armWatchdog();
 
         for await (const event of apiStream(
           `/api/v1/chat/conversations/${conversationId}/stream`,
           streamBody,
           abortController.signal,
         )) {
+          sawStreamEvent = true;
+          armWatchdog();
           if (event.event === "token") {
             const delta = (event.data.content as string) ?? "";
             updateStreamingAssistant((current) => ({
@@ -520,6 +597,9 @@ export function ChatInterface({
               audioBase64: current?.audioBase64 ?? null,
               memories_extracted: current?.memories_extracted,
               extracted_facts: current?.extracted_facts,
+              memory_extraction_status: current?.memory_extraction_status ?? null,
+              memory_extraction_attempts: current?.memory_extraction_attempts ?? null,
+              memory_extraction_error: current?.memory_extraction_error ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
             }));
@@ -535,6 +615,9 @@ export function ChatInterface({
               audioBase64: current?.audioBase64 ?? null,
               memories_extracted: current?.memories_extracted,
               extracted_facts: current?.extracted_facts,
+              memory_extraction_status: current?.memory_extraction_status ?? null,
+              memory_extraction_attempts: current?.memory_extraction_attempts ?? null,
+              memory_extraction_error: current?.memory_extraction_error ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
             }));
@@ -548,6 +631,18 @@ export function ChatInterface({
             const memoriesExtracted = event.data.memories_extracted as string | undefined;
             const sources = normalizeSearchSources(event.data.sources);
             const retrievalTrace = normalizeRetrievalTrace(event.data.retrieval_trace);
+            const memoryExtractionStatus =
+              typeof event.data.memory_extraction_status === "string"
+                ? event.data.memory_extraction_status
+                : null;
+            const memoryExtractionAttempts =
+              typeof event.data.memory_extraction_attempts === "number"
+                ? event.data.memory_extraction_attempts
+                : null;
+            const memoryExtractionError =
+              typeof event.data.memory_extraction_error === "string"
+                ? event.data.memory_extraction_error
+                : null;
             finalizedAssistantId = finalId;
             finalizeStreamingAssistant({
               id: finalId,
@@ -557,6 +652,9 @@ export function ChatInterface({
               memories_extracted: memoriesExtracted,
               sources,
               retrievalTrace,
+              memory_extraction_status: memoryExtractionStatus,
+              memory_extraction_attempts: memoryExtractionAttempts,
+              memory_extraction_error: memoryExtractionError,
             });
           } else if (event.event === "error") {
             const errorMsg =
@@ -571,6 +669,7 @@ export function ChatInterface({
             });
           }
         }
+        clearWatchdog();
 
         if (!finalizedAssistantId) {
           finalizedAssistantId = tempAssistantId;
@@ -596,16 +695,31 @@ export function ChatInterface({
             : null;
         const streamUnavailable =
           streamStatus === 404 || streamStatus === 405 || streamStatus === 501;
+        const abortReason = streamAbortReasonRef.current;
+        clearWatchdog();
 
         if (error instanceof DOMException && error.name === "AbortError") {
-          // User clicked stop — finalize whatever we have so far
-          finalizeStreamingAssistant({
-            id: tempAssistantId,
-            isStreaming: false,
-            content: messagesRef.current.find((message) => message.id === tempAssistantId)?.content ?? "",
-            reasoningContent:
-              messagesRef.current.find((message) => message.id === tempAssistantId)?.reasoningContent ?? null,
-          });
+          const currentStreamingMessage = messagesRef.current.find((message) => message.id === tempAssistantId);
+          if (abortReason === "user") {
+            finalizeStreamingAssistant({
+              id: tempAssistantId,
+              isStreaming: false,
+              content: currentStreamingMessage?.content ?? "",
+              reasoningContent: currentStreamingMessage?.reasoningContent ?? null,
+            });
+          } else {
+            finalizeStreamingAssistant({
+              id: tempAssistantId,
+              isStreaming: false,
+              content: currentStreamingMessage?.content?.trim() || t("errors.streamError"),
+              reasoningContent: currentStreamingMessage?.reasoningContent ?? null,
+            });
+            if (conversationId) {
+              window.setTimeout(() => {
+                void syncConversationMessages(conversationId);
+              }, 1500);
+            }
+          }
         } else if (streamUnavailable) {
           setMessages((prev) => prev.filter((message) => message.id !== tempAssistantId));
           try {
@@ -616,7 +730,7 @@ export function ChatInterface({
             );
             const aiMessage: Message = {
               ...toMessage(response),
-              id: response.id || `a-${Date.now()}`,
+              id: response.id || nextRuntimeMessageId("a"),
               animateOnMount: true,
               isStreaming: false,
             };
@@ -631,7 +745,7 @@ export function ChatInterface({
             setMessages((prev) => [
               ...prev,
               {
-                id: `err-${Date.now()}`,
+                id: nextRuntimeMessageId("err"),
                 role: "assistant",
                 content: errorContent,
               },
@@ -657,7 +771,7 @@ export function ChatInterface({
             );
             const aiMessage: Message = {
               ...toMessage(response),
-              id: response.id || `a-${Date.now()}`,
+              id: response.id || nextRuntimeMessageId("a"),
               animateOnMount: true,
               isStreaming: false,
             };
@@ -672,7 +786,7 @@ export function ChatInterface({
             setMessages((prev) => [
               ...prev,
               {
-                id: `err-${Date.now()}`,
+                id: nextRuntimeMessageId("err"),
                 role: "assistant",
                 content: errorContent,
               },
@@ -682,11 +796,22 @@ export function ChatInterface({
           }
         }
       } finally {
+        clearWatchdog();
         abortControllerRef.current = null;
+        streamAbortReasonRef.current = null;
         setIsStreamingActive(false);
       }
     },
-    [autoReadEnabled, conversationId, isStreamingActive, isTyping, onConversationActivity, queueAutoRead, t],
+    [
+      autoReadEnabled,
+      conversationId,
+      isStreamingActive,
+      isTyping,
+      onConversationActivity,
+      queueAutoRead,
+      syncConversationMessages,
+      t,
+    ],
   );
 
   const handleLiveTranscriptUpdate = useCallback(
@@ -922,7 +1047,22 @@ export function ChatInterface({
   const chatMode =
     conversationId && conversationModeOverrides[conversationId]
       ? conversationModeOverrides[conversationId]
-      : projectDefaultMode;
+      : sessionModeOverride ?? projectDefaultMode;
+
+  useEffect(() => {
+    if (!conversationId || !sessionModeOverride) {
+      return;
+    }
+    setConversationModeOverrides((prev) => {
+      if (prev[conversationId] === sessionModeOverride) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [conversationId]: sessionModeOverride,
+      };
+    });
+  }, [conversationId, sessionModeOverride]);
 
   useEffect(() => {
     liveTurnIdsRef.current = { userId: null, assistantId: null };
@@ -933,6 +1073,10 @@ export function ChatInterface({
     setLiveDictationText("");
     setIsLiveDictating(false);
   }, [conversationId, projectId]);
+
+  useEffect(() => {
+    setSessionModeOverride(null);
+  }, [projectId]);
 
   const handleLiveDictationDraftChange = useCallback((text: string) => {
     setVoiceNotice(null);
@@ -970,6 +1114,7 @@ export function ChatInterface({
 
   const handleModeChange = useCallback(
     (mode: ChatMode) => {
+      setSessionModeOverride(mode === projectDefaultMode ? null : mode);
       if (!conversationId) {
         return;
       }
@@ -992,6 +1137,7 @@ export function ChatInterface({
   );
 
   const handleStopGenerating = useCallback(() => {
+    streamAbortReasonRef.current = "user";
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsStreamingActive(false);
@@ -1097,7 +1243,6 @@ export function ChatInterface({
 
       {conversationId && projectId && (chatMode === "omni_realtime" || (chatMode === "synthetic_realtime" && syntheticModeAvailable)) && (
         <RealtimeVoicePanel
-          key={`voice:${projectId}:${conversationId}:${chatMode}`}
           chatMode={chatMode}
           conversationId={conversationId}
           projectId={projectId}

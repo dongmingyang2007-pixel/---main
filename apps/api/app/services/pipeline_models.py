@@ -28,6 +28,9 @@ DEFAULT_PIPELINE_MODELS: dict[PipelineModelType, str] = {
     "realtime_asr": "qwen3-asr-flash-realtime",
     "realtime_tts": "qwen3-tts-flash-realtime",
 }
+LEGACY_PIPELINE_MODEL_REPLACEMENTS: dict[str, str] = {
+    "qwen3-flash": "qwen3.5-flash",
+}
 
 
 def supports_full_duplex_realtime(capabilities: list[str] | None) -> bool:
@@ -81,6 +84,21 @@ def ensure_project_pipeline_defaults(db: Session, project_id: str) -> bool:
     }
     now = datetime.now(timezone.utc)
     changed = False
+
+    for config in existing.values():
+        replacement_model_id = LEGACY_PIPELINE_MODEL_REPLACEMENTS.get(config.model_id)
+        if not replacement_model_id:
+            continue
+        replacement_entry = (
+            db.query(ModelCatalog)
+            .filter(ModelCatalog.model_id == replacement_model_id, ModelCatalog.is_active.is_(True))
+            .first()
+        )
+        if not is_valid_catalog_model_for_slot(config.model_type, replacement_entry):
+            continue
+        config.model_id = replacement_model_id
+        config.updated_at = now
+        changed = True
 
     for model_type in PIPELINE_SLOT_ORDER:
         if model_type in existing:

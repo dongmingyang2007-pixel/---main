@@ -309,6 +309,7 @@ async def _post_turn_tasks(
         session.conversation_id,
         user_text,
         ai_text,
+        assistant_payload["id"] if assistant_payload else None,
     )
 
     # Refresh layered context after a few turns so the next turn sees the latest
@@ -417,6 +418,7 @@ async def _persist_composed_turn(
         session.conversation_id,
         user_text,
         ai_text,
+        assistant_payload["id"] if assistant_payload else None,
     )
 
 
@@ -1106,6 +1108,7 @@ async def composed_realtime_voice(ws: WebSocket) -> None:
                     msg_type = data.get("type")
 
                     if msg_type == "session.end":
+                        await ws.close(code=1000)
                         break
                     if msg_type == "audio.stop":
                         ignore_trailing_audio_until = 0.0

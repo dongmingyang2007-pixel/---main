@@ -48,7 +48,7 @@ def _build_responses_payload(
         payload["enable_thinking"] = enable_thinking
     if tools:
         payload["tools"] = tools
-    if tool_choice is not None:
+    if tools and tool_choice is not None:
         payload["tool_choice"] = tool_choice
     if stream:
         payload["stream"] = True
@@ -238,7 +238,28 @@ def _parse_response_tool_call(item: dict[str, Any]) -> ToolCall | None:
     )
 
 
+def _extract_responses_error_message(data: dict[str, Any]) -> str | None:
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = _coerce_nonempty_text(error.get("code"))
+        message = _coerce_nonempty_text(error.get("message"))
+        if code and message:
+            return f"{code}: {message}"
+        if message:
+            return message
+        if code:
+            return code
+    status = _coerce_nonempty_text(data.get("status"))
+    if status == "failed":
+        return "Responses API request failed"
+    return None
+
+
 def _parse_responses_result(data: dict[str, Any]) -> ChatCompletionResult:
+    error_message = _extract_responses_error_message(data)
+    if error_message:
+        raise UpstreamServiceError(error_message)
+
     output_items = data.get("output")
     if not isinstance(output_items, list):
         output_items = []
@@ -461,7 +482,9 @@ async def responses_completion_stream(
                         yield ResponsesStreamChunk(finish_reason="completed")
                         continue
                     if parsed_event == "response.failed":
-                        raise UpstreamServiceError("Responses API stream failed")
+                        raise UpstreamServiceError(
+                            _extract_responses_error_message(payload_data) or "Responses API stream failed",
+                        )
                     continue
 
                 if line.startswith("event:"):

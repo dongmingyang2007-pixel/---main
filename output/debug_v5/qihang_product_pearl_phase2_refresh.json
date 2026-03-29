@@ -1,6 +1,6 @@
 {
-  "modelGlbPath": "output/debug_v5/qihang_product_pearl_phase2.glb",
-  "modelGlbSha256": "2011112cdb09278d2967cabc8e1b123a65417dc3614a3eeab704f88cd7d3ef58",
+  "modelGlbPath": "/Users/dog/Desktop/铭润/output/debug_v5/qihang_product_pearl_phase2_refresh.glb",
+  "modelGlbSha256": "82c4d39b1411d2a378fcb60921873a240156eb38dc1b9a09b79c84d83d7c30ad",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
@@ -10,10 +10,10 @@
     "nodes": 85,
     "meshes": 38,
     "materials": 21,
-    "bufferViews": 151,
-    "accessors": 151,
+    "bufferViews": 145,
+    "accessors": 145,
     "animations": 0,
-    "binBytes": 3626092
+    "binBytes": 3090124
   },
   "sceneRoots": [
     "QIHANG_Product"
@@ -486,9 +486,9 @@
   },
   "sourceInputPath": "output/debug_v4/qihang_product_pearl_phase3.glb",
   "sourceInputSha256": "fd274c48530a893621ae236262aa8a3a31ff7e00bd1ed8a6014eb834dcb1d900",
-  "outputSha256": "2011112cdb09278d2967cabc8e1b123a65417dc3614a3eeab704f88cd7d3ef58",
+  "outputSha256": "82c4d39b1411d2a378fcb60921873a240156eb38dc1b9a09b79c84d83d7c30ad",
   "phase": 2,
-  "phaseName": "open_front_window_and_rebuild_sidewalls",
+  "phaseName": "remove_ramp_blocking_sidewall",
   "phaseLogs": [
     {
       "phase": 1,
@@ -584,343 +584,154 @@
     },
     {
       "phase": 2,
-      "name": "open_front_window_and_rebuild_sidewalls",
+      "name": "remove_ramp_blocking_sidewall",
       "geometryModified": true,
-      "diagnosticSheetPath": "output/debug_v5/qihang_product_pearl_phase2_six_views.png",
-      "rebuildChangeLog": {
+      "diagnosticSheetPath": "/Users/dog/Desktop/铭润/output/debug_v5/qihang_product_pearl_phase2_refresh_six_views.png",
+      "deleteChangeLog": {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_and_rebuild_front_window_with_structured_patch",
-        "blockerRemovedTriangleCount": 86,
-        "afterBlockerTriangleCount": 2474,
-        "frontFaceRemovedTriangleCount": 2,
-        "afterFrontFaceTriangleCount": 2472,
-        "sidewallRemovedTriangleCount": 2,
-        "afterSidewallTriangleCount": 2470,
-        "fillPatchTriangleCount": 34,
-        "finalTriangleCount": 2504,
-        "boundaryVertexCountBeforeFill": 36,
-        "boundaryEdgeCountAfterFill": 0,
-        "blockerComponent": {
+        "operation": "delete_ramp_blocking_sidewall_component",
+        "removedTriangleCount": 84,
+        "keptTriangleCount": 2476,
+        "removedComponent": {
           "triangleIndices": [
-            608,
-            609,
-            610,
-            611,
-            626,
-            627,
-            628,
-            629,
-            644,
-            645,
-            646,
-            647,
-            662,
-            663,
-            664,
-            665,
-            680,
-            681,
-            682,
-            683,
-            698,
-            699,
-            700,
-            701,
-            716,
-            717,
-            718,
-            719,
-            734,
-            735,
-            736,
-            737,
-            752,
-            753,
-            754,
-            755,
-            770,
-            771,
-            772,
-            773,
-            788,
-            789,
-            790,
-            791,
-            806,
-            807,
-            808,
-            809,
-            824,
-            825,
-            826,
-            827,
-            842,
-            843,
-            844,
-            845,
-            2370,
-            2371,
-            2372,
-            2373,
-            2374,
-            2375,
-            2376,
-            2377,
-            2378,
-            2379,
-            2380,
-            2381,
-            2382,
-            2383,
-            2384,
-            2385,
-            2386,
-            2387,
-            2388,
-            2389,
-            2390,
-            2391,
-            2392,
-            2393,
-            2394,
-            2395,
-            2396,
-            2397,
-            2398,
-            2399
+            914,
+            915,
+            916,
+            917,
+            932,
+            933,
+            934,
+            935,
+            950,
+            951,
+            952,
+            953,
+            968,
+            969,
+            970,
+            971,
+            986,
+            987,
+            988,
+            989,
+            1004,
+            1005,
+            1006,
+            1007,
+            1022,
+            1023,
+            1024,
+            1025,
+            1040,
+            1041,
+            1042,
+            1043,
+            1058,
+            1059,
+            1060,
+            1061,
+            1076,
+            1077,
+            1078,
+            1079,
+            1094,
+            1095,
+            1096,
+            1097,
+            1112,
+            1113,
+            1114,
+            1115,
+            1130,
+            1131,
+            1132,
+            1133,
+            1148,
+            1149,
+            1150,
+            1151,
+            2404,
+            2405,
+            2406,
+            2407,
+            2408,
+            2409,
+            2410,
+            2411,
+            2412,
+            2413,
+            2414,
+            2415,
+            2416,
+            2417,
+            2418,
+            2419,
+            2420,
+            2421,
+            2422,
+            2423,
+            2424,
+            2425,
+            2426,
+            2427,
+            2428,
+            2429,
+            2430,
+            2431
           ],
-          "triangleCount": 86,
+          "triangleCount": 84,
           "bboxMinProductMm": [
-            -29.3323,
-            -0.458,
-            -17.0
+            -43.744,
+            -0.4586,
+            -15.5973
           ],
           "bboxMaxProductMm": [
-            -1.9367,
-            9.3501,
-            -14.8097
+            -31.8683,
+            9.3969,
+            0.0099
           ],
           "bboxSizeProductMm": [
-            27.3956,
-            9.8081,
-            2.1903
+            11.8757,
+            9.8556,
+            15.6072
           ],
           "averageNormal": [
-            0.0015,
-            0.3474,
-            0.0301
+            0.0445,
+            0.3284,
+            0.0272
           ],
-          "seedRangesMm": {
+          "selectionRangesMm": {
             "x": [
-              -29.0,
-              -1.8
+              -43.8,
+              -31.8
             ],
             "y": [
-              -0.6,
-              9.5
+              -0.5,
+              9.45
             ],
             "z": [
-              -17.1,
-              -15.0
-            ]
-          },
-          "allowedRangesMm": {
-            "x": [
-              -30.0,
-              -1.0
-            ],
-            "y": [
-              -1.0,
-              10.0
-            ],
-            "z": [
-              -17.5,
-              -14.5
+              -15.65,
+              0.7
             ]
           }
         },
-        "frontFaceComponent": {
-          "triangleIndices": [
-            592,
-            593
-          ],
-          "triangleCount": 2,
-          "bboxMinProductMm": [
-            -2.1072,
-            -0.95,
-            -16.9958
-          ],
-          "bboxMaxProductMm": [
-            0.2643,
-            9.3025,
-            -15.5505
-          ],
-          "bboxSizeProductMm": [
-            2.3715,
-            10.2525,
-            1.4453
-          ],
-          "selectionCenterRangesMm": {
-            "x": [
-              -1.6,
-              -1.0
-            ],
-            "y": [
-              -1.0,
-              10.0
-            ],
-            "z": [
-              -16.7,
-              -15.5
-            ]
-          },
-          "normalZAbsMin": 0.9,
-          "aspectRatioMin": 4.0
-        },
-        "sidewallComponent": {
-          "triangleIndices": [
-            2310,
-            2311
-          ],
-          "triangleCount": 2,
-          "bboxMinProductMm": [
-            -2.0229,
-            -0.95,
-            -16.3441
-          ],
-          "bboxMaxProductMm": [
-            0.2643,
-            9.3025,
-            -15.5505
-          ],
-          "bboxSizeProductMm": [
-            2.2872,
-            10.2525,
-            0.7936
-          ],
-          "selectionCenterRangesMm": {
-            "x": [
-              -2.5,
-              0.5
-            ],
-            "y": [
-              -1.0,
-              10.0
-            ],
-            "z": [
-              -16.6,
-              -15.3
-            ]
-          },
-          "normalXMin": 0.8,
-          "areaMm2Min": 1.0
-        },
-        "fillPatchDebug": {
-          "boundaryVertexCount": 36,
-          "outerStripVertexCount": 16,
-          "innerStripVertexCount": 15,
-          "stripTriangleCount": 29,
-          "leftCapTriangleCount": 4,
-          "rightCapTriangleCount": 1,
-          "outerStripSlice": [
-            2,
-            18
-          ],
-          "innerStripSlice": [
-            19,
-            34
-          ],
-          "leftCapLoopIndices": [
-            35,
-            0,
-            1,
-            2,
-            33,
-            34
-          ],
-          "rightCapLoopIndices": [
-            17,
-            18,
-            19
-          ],
-          "patchBboxMinProductMm": [
-            -29.3323,
-            -0.95,
-            -17.0
-          ],
-          "patchBboxMaxProductMm": [
-            0.2643,
-            9.3501,
-            -14.8097
-          ],
-          "patchBboxSizeProductMm": [
-            29.5966,
-            10.3001,
-            2.1903
-          ],
-          "stripBboxMinProductMm": [
-            -28.9333,
-            -0.7904,
-            -17.0
-          ],
-          "stripBboxMaxProductMm": [
-            0.2643,
-            -0.4561,
-            -16.0639
-          ],
-          "stripBboxSizeProductMm": [
-            29.1977,
-            0.3343,
-            0.9361
-          ],
-          "leftCapBboxMinProductMm": [
-            -29.3323,
-            -0.4564,
-            -16.8584
-          ],
-          "leftCapBboxMaxProductMm": [
-            -27.6859,
-            9.3501,
-            -14.8097
-          ],
-          "leftCapBboxSizeProductMm": [
-            1.6465,
-            9.8065,
-            2.0486
-          ],
-          "rightCapBboxMinProductMm": [
-            -2.1072,
-            -0.95,
-            -16.29
-          ],
-          "rightCapBboxMaxProductMm": [
-            0.2643,
-            -0.4561,
-            -15.552
-          ],
-          "rightCapBboxSizeProductMm": [
-            2.3715,
-            0.4939,
-            0.738
-          ]
-        },
-        "fillPatchBboxMinProductMm": [
-          -29.3323,
-          -0.95,
-          -17.0
+        "removedBboxMinProductMm": [
+          -43.744,
+          -0.4586,
+          -15.5973
         ],
-        "fillPatchBboxMaxProductMm": [
-          0.2643,
-          9.3501,
-          -14.8097
+        "removedBboxMaxProductMm": [
+          -31.8683,
+          9.3969,
+          0.0099
         ],
-        "fillPatchBboxSizeProductMm": [
-          29.5966,
-          10.3001,
-          2.1903
+        "removedBboxSizeProductMm": [
+          11.8757,
+          9.8556,
+          15.6072
         ]
       },
-      "postRebuildCandidateSummary": {
+      "postDeleteCandidateSummary": {
         "heuristicName": "vertical_inner_wall_strip",
         "xRangeMm": [
           6.0,
@@ -942,39 +753,39 @@
           "components": [
             {
               "triangleIndices": [
-                1739,
                 1741,
-                1757,
+                1743,
                 1759,
-                1775,
+                1761,
                 1777,
-                1793,
+                1779,
                 1795,
-                1811,
+                1797,
                 1813,
-                1829,
+                1815,
                 1831,
-                1847,
+                1833,
                 1849,
-                1865,
+                1851,
                 1867,
-                1883,
+                1869,
                 1885,
-                1901,
+                1887,
                 1903,
-                1919,
+                1905,
                 1921,
-                1937,
+                1923,
                 1939,
-                1955,
+                1941,
                 1957,
-                1973,
+                1959,
                 1975,
-                1991,
+                1977,
                 1993,
-                2009,
+                1995,
                 2011,
-                2027
+                2013,
+                2029
               ],
               "triangleCount": 33,
               "bboxMinProductMm": [
@@ -1008,6 +819,6 @@
       }
     }
   ],
-  "diagnosticSheetPath": "output/debug_v5/qihang_product_pearl_phase2_six_views.png",
+  "diagnosticSheetPath": "/Users/dog/Desktop/铭润/output/debug_v5/qihang_product_pearl_phase2_refresh_six_views.png",
   "phase1DiagnosticSheetPath": "output/debug_v5/qihang_product_pearl_phase1_six_views.png"
 }
