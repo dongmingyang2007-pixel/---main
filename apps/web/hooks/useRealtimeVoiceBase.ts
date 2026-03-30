@@ -43,7 +43,10 @@ export interface RealtimeVoiceBaseConfig {
   blockCaptureWhileAiSpeaking?: boolean;
   enableInterrupt: boolean;
   onError?: (msg: string) => void;
-  onTurnComplete?: (payload: { userText: string; assistantText: string }) => void;
+  onTurnComplete?: (payload: {
+    userText: string;
+    assistantText: string;
+  }) => void;
   onTranscriptUpdate?: (payload: {
     role: "user" | "assistant";
     text: string;
@@ -91,8 +94,10 @@ const CALIBRATION_MIN_THRESHOLD = 0.008;
 const CALIBRATION_P75_MULTIPLIER = 2.5;
 const SILENT_AUDIO_DATA_URL =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-const AUTOPLAY_BLOCKED_MESSAGE = "浏览器阻止了合成语音自动播放，请再次点击合成实时或检查静音设置";
-const MICROPHONE_PERMISSION_REQUIRED_MESSAGE = "Microphone permission is required";
+const AUTOPLAY_BLOCKED_MESSAGE =
+  "浏览器阻止了合成语音自动播放，请再次点击合成实时或检查静音设置";
+const MICROPHONE_PERMISSION_REQUIRED_MESSAGE =
+  "Microphone permission is required";
 const WEBSOCKET_CONNECTION_FAILED_MESSAGE = "WebSocket connection failed";
 
 // ---------------------------------------------------------------------------
@@ -110,16 +115,14 @@ function useBlobPlayback(wsPath: string): boolean {
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeVoiceBaseReturn {
+export function useRealtimeVoiceBase(
+  config: RealtimeVoiceBaseConfig,
+): RealtimeVoiceBaseReturn {
   // -- Keep a ref so WS callbacks always read the latest config ---------------
   const configRef = useRef(config);
   configRef.current = config;
 
-  const {
-    conversationId,
-    projectId,
-    wsPath,
-  } = config;
+  const { conversationId, projectId, wsPath } = config;
 
   const blobPlayback = useBlobPlayback(wsPath);
 
@@ -162,14 +165,18 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
   const autoplayBlockedNoticeShownRef = useRef(false);
 
   // Reconnect / session
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const reconnectAttemptsRef = useRef(0);
   const manualDisconnectRef = useRef(false);
   const terminalErrorMessageRef = useRef<string | null>(null);
   const sessionEndReasonRef = useRef<string | null>(null);
   const currentUserTextRef = useRef("");
   const currentAssistantTextRef = useRef("");
-  const openConnectionRef = useRef<(mode: "connect" | "reconnect") => void>(() => undefined);
+  const openConnectionRef = useRef<(mode: "connect" | "reconnect") => void>(
+    () => undefined,
+  );
   const sessionContextRef = useRef(`${projectId}:${conversationId}`);
 
   const getMessage = useCallback(
@@ -243,7 +250,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     setTranscript((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.role === "assistant" && !last.final) {
-        return [...prev.slice(0, -1), { ...last, text: finalText, final: true }];
+        return [
+          ...prev.slice(0, -1),
+          { ...last, text: finalText, final: true },
+        ];
       }
       return prev;
     });
@@ -335,8 +345,16 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     const activeSources = playbackSourcesRef.current.splice(0);
     for (const source of activeSources) {
       source.onended = null;
-      try { source.stop(); } catch { /* already ended */ }
-      try { source.disconnect(); } catch { /* race */ }
+      try {
+        source.stop();
+      } catch {
+        /* already ended */
+      }
+      try {
+        source.disconnect();
+      } catch {
+        /* race */
+      }
     }
     if (playbackCtxRef.current) {
       nextPlayTimeRef.current = playbackCtxRef.current.currentTime;
@@ -382,8 +400,14 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     source.buffer = buffer;
     playbackSourcesRef.current.push(source);
     source.onended = () => {
-      playbackSourcesRef.current = playbackSourcesRef.current.filter((entry) => entry !== source);
-      try { source.disconnect(); } catch { /* race */ }
+      playbackSourcesRef.current = playbackSourcesRef.current.filter(
+        (entry) => entry !== source,
+      );
+      try {
+        source.disconnect();
+      } catch {
+        /* race */
+      }
     };
 
     let sum = 0;
@@ -458,7 +482,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     if (audioPlayerRef.current) return audioPlayerRef.current;
     const player = new Audio();
     player.preload = "auto";
-    (player as any).playsInline = true;
+    player.setAttribute("playsinline", "true");
     player.muted = isSpeakerMutedRef.current;
     player.onended = () => {
       if (playbackTimeoutRef.current) {
@@ -513,7 +537,9 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     } catch {
       if (!autoplayBlockedNoticeShownRef.current) {
         autoplayBlockedNoticeShownRef.current = true;
-        configRef.current.onError?.(getMessage("autoplayBlocked", AUTOPLAY_BLOCKED_MESSAGE));
+        configRef.current.onError?.(
+          getMessage("autoplayBlocked", AUTOPLAY_BLOCKED_MESSAGE),
+        );
       }
     } finally {
       try {
@@ -548,7 +574,8 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       isPlaybackActiveRef.current = false;
       pumpPlaybackQueueRef.current();
     }, 15_000);
-    void player.play()
+    void player
+      .play()
       .then(() => {
         autoplayBlockedNoticeShownRef.current = false;
       })
@@ -566,7 +593,9 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         isPlaybackActiveRef.current = false;
         if (!autoplayBlockedNoticeShownRef.current) {
           autoplayBlockedNoticeShownRef.current = true;
-          configRef.current.onError?.(getMessage("autoplayBlocked", AUTOPLAY_BLOCKED_MESSAGE));
+          configRef.current.onError?.(
+            getMessage("autoplayBlocked", AUTOPLAY_BLOCKED_MESSAGE),
+          );
         }
         pumpPlaybackQueueRef.current();
       });
@@ -651,7 +680,11 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
-      processor = audioCtx.createScriptProcessor(configRef.current.audioChunkSamples ?? 4096, 1, 1);
+      processor = audioCtx.createScriptProcessor(
+        configRef.current.audioChunkSamples ?? 4096,
+        1,
+        1,
+      );
       processorRef.current = processor;
       monitorGain = audioCtx.createGain();
       monitorGain.gain.value = 0;
@@ -664,7 +697,8 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       interruptStartRef.current = 0;
 
       // Reset calibration state
-      const needsCalibration = configRef.current.vadConfig.speechThreshold === "auto";
+      const needsCalibration =
+        configRef.current.vadConfig.speechThreshold === "auto";
       calibratingRef.current = needsCalibration;
       calibrationSamplesRef.current = [];
       calibrationStartRef.current = needsCalibration ? performance.now() : 0;
@@ -710,7 +744,9 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           const elapsed = performance.now() - calibrationStartRef.current;
           if (elapsed >= CALIBRATION_DURATION_MS) {
             // Compute P75 of noise floor
-            const sorted = [...calibrationSamplesRef.current].sort((a, b) => a - b);
+            const sorted = [...calibrationSamplesRef.current].sort(
+              (a, b) => a - b,
+            );
             const p75Index = Math.floor(sorted.length * 0.75);
             const p75 = sorted[p75Index] ?? 0;
             calibratedThresholdRef.current = Math.max(
@@ -747,13 +783,19 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
                 interruptStartRef.current = performance.now();
               }
               const interruptMs = vad.interruptThresholdMs ?? 400;
-              if (performance.now() - interruptStartRef.current >= interruptMs) {
+              if (
+                performance.now() - interruptStartRef.current >=
+                interruptMs
+              ) {
                 ws.send(JSON.stringify({ type: "input.interrupt" }));
                 interruptStartRef.current = 0;
               }
             } else {
               const cooldown = vad.speechCooldownMs ?? 200;
-              if (interruptStartRef.current && performance.now() - interruptStartRef.current > cooldown) {
+              if (
+                interruptStartRef.current &&
+                performance.now() - interruptStartRef.current > cooldown
+              ) {
                 interruptStartRef.current = 0;
               }
             }
@@ -772,7 +814,8 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         const silenceCommitMs = vad.silenceCommitMs ?? 420;
         const shouldSendChunk =
           isSpeech ||
-          (speechActiveRef.current && now - lastSpeechAtRef.current < silenceCommitMs);
+          (speechActiveRef.current &&
+            now - lastSpeechAtRef.current < silenceCommitMs);
 
         if (!shouldSendChunk) {
           if (speechActiveRef.current && hasSegmentAudioRef.current) {
@@ -785,7 +828,11 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
         }
 
         // Interrupt detection during ai_speaking (vad-gated)
-        if (cfg.enableInterrupt && stateRef.current === "ai_speaking" && isSpeech) {
+        if (
+          cfg.enableInterrupt &&
+          stateRef.current === "ai_speaking" &&
+          isSpeech
+        ) {
           if (!interruptStartRef.current) {
             interruptStartRef.current = now;
           }
@@ -869,7 +916,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
   );
 
   const finalizeConnection = useCallback(
-    (nextState: RealtimeState, options?: { clearTranscript?: boolean; message?: string }) => {
+    (
+      nextState: RealtimeState,
+      options?: { clearTranscript?: boolean; message?: string },
+    ) => {
       clearReconnectTimer();
       teardownMedia();
       clearTurnBuffers();
@@ -888,7 +938,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
   const scheduleReconnect = useCallback(() => {
     if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       finalizeConnection("error", {
-        message: getMessage("websocketConnectionFailed", WEBSOCKET_CONNECTION_FAILED_MESSAGE),
+        message: getMessage(
+          "websocketConnectionFailed",
+          WEBSOCKET_CONNECTION_FAILED_MESSAGE,
+        ),
       });
       return;
     }
@@ -949,7 +1002,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           setTranscript((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.role === "user" && !last.final) {
-              return [...prev.slice(0, -1), { role: "user", text: msg.text, final: false }];
+              return [
+                ...prev.slice(0, -1),
+                { role: "user", text: msg.text, final: false },
+              ];
             }
             return [...prev, { role: "user", text: msg.text, final: false }];
           });
@@ -968,7 +1024,10 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           setTranscript((prev) => {
             const last = prev[prev.length - 1];
             if (last && last.role === "user" && !last.final) {
-              return [...prev.slice(0, -1), { role: "user", text: msg.text, final: true }];
+              return [
+                ...prev.slice(0, -1),
+                { role: "user", text: msg.text, final: true },
+              ];
             }
             return [...prev, { role: "user", text: msg.text, final: true }];
           });
@@ -976,7 +1035,7 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
 
         case "response.text":
           currentAssistantTextRef.current = msg.replace
-            ? (msg.text || "")
+            ? msg.text || ""
             : currentAssistantTextRef.current + (msg.text || "");
           cfg.onTranscriptUpdate?.({
             role: "assistant",
@@ -990,12 +1049,17 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
                 ...prev.slice(0, -1),
                 {
                   role: "assistant",
-                  text: msg.replace ? (msg.text || "") : last.text + (msg.text || ""),
+                  text: msg.replace
+                    ? msg.text || ""
+                    : last.text + (msg.text || ""),
                   final: false,
                 },
               ];
             }
-            return [...prev, { role: "assistant", text: msg.text, final: false }];
+            return [
+              ...prev,
+              { role: "assistant", text: msg.text, final: false },
+            ];
           });
           break;
 
@@ -1044,7 +1108,8 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           break;
 
         case "session.end":
-          sessionEndReasonRef.current = typeof msg.reason === "string" ? msg.reason : "";
+          sessionEndReasonRef.current =
+            typeof msg.reason === "string" ? msg.reason : "";
           ws.close();
           break;
 
@@ -1060,11 +1125,15 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
           finalizeAssistantPartial();
           clearTurnBuffers();
           setState("listening");
-          cfg.onError?.(msg.message || getMessage("turnError", "本轮处理失败，请重试"));
+          cfg.onError?.(
+            msg.message || getMessage("turnError", "本轮处理失败，请重试"),
+          );
           break;
 
         case "turn.notice":
-          cfg.onError?.(msg.message || getMessage("turnNotice", "语音输出暂时不可用"));
+          cfg.onError?.(
+            msg.message || getMessage("turnNotice", "语音输出暂时不可用"),
+          );
           break;
 
         default:
@@ -1075,7 +1144,6 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     },
     [
       clearTurnBuffers,
-      discardAssistantPartial,
       finalizeAssistantPartial,
       getMessage,
       playAudioChunk,
@@ -1231,7 +1299,13 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
       clearTranscript: true,
       message: "Conversation changed. Please restart voice.",
     });
-  }, [clearReconnectTimer, conversationId, finalizeConnection, projectId, state]);
+  }, [
+    clearReconnectTimer,
+    conversationId,
+    finalizeConnection,
+    projectId,
+    state,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -1269,8 +1343,14 @@ export function useRealtimeVoiceBase(config: RealtimeVoiceBaseConfig): RealtimeV
     }
     window.setTimeout(() => {
       openConnection("connect");
-    }, 0);
-  }, [blobPlayback, ensurePlaybackContext, openConnection, primeBlobPlayback, state]);
+    }, 80);
+  }, [
+    blobPlayback,
+    ensurePlaybackContext,
+    openConnection,
+    primeBlobPlayback,
+    state,
+  ]);
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {

@@ -37,6 +37,9 @@ def upgrade() -> None:
         create index if not exists idx_model_catalog_category on model_catalog(category);
         create index if not exists idx_model_catalog_provider on model_catalog(provider);
 
+        alter table model_catalog alter column created_at set default now();
+        alter table model_catalog alter column updated_at set default now();
+
         create table if not exists pipeline_configs (
           id varchar(36) primary key,
           project_id uuid not null references projects(id) on delete cascade,
@@ -50,8 +53,27 @@ def upgrade() -> None:
 
         create index if not exists idx_pipeline_configs_project on pipeline_configs(project_id);
 
+        alter table pipeline_configs alter column created_at set default now();
+        alter table pipeline_configs alter column updated_at set default now();
+
         -- Seed data: LLM models
-        insert into model_catalog (id, model_id, display_name, provider, category, description, capabilities, context_window, max_output, input_price, output_price, is_active, sort_order) values
+        insert into model_catalog (
+          id,
+          model_id,
+          display_name,
+          provider,
+          category,
+          description,
+          capabilities,
+          context_window,
+          max_output,
+          input_price,
+          output_price,
+          is_active,
+          sort_order,
+          created_at,
+          updated_at
+        ) values
         (
           '00000000-0000-0000-0000-000000000001',
           'qwen3.5-flash',
@@ -60,7 +82,7 @@ def upgrade() -> None:
           'llm',
           '通义千问3.5 Flash，超快速推理，适合日常对话与简单任务',
           '["chat", "function_calling", "streaming"]'::jsonb,
-          131072, 8192, 0.3, 0.6, true, 10
+          131072, 8192, 0.3, 0.6, true, 10, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000002',
@@ -70,7 +92,7 @@ def upgrade() -> None:
           'llm',
           '通义千问3.5 Plus，均衡的智能与速度，适合复杂对话与内容生成',
           '["chat", "function_calling", "streaming", "reasoning"]'::jsonb,
-          131072, 8192, 2.0, 6.0, true, 20
+          131072, 8192, 2.0, 6.0, true, 20, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000003',
@@ -80,7 +102,7 @@ def upgrade() -> None:
           'llm',
           '通义千问3 Max，旗舰级推理能力，适合高难度分析与创作任务',
           '["chat", "function_calling", "streaming", "reasoning", "long_context"]'::jsonb,
-          131072, 8192, 6.0, 24.0, true, 30
+          131072, 8192, 6.0, 24.0, true, 30, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000004',
@@ -90,7 +112,7 @@ def upgrade() -> None:
           'llm',
           'DeepSeek V3.2，强大的开源大模型，性价比极高，适合多种场景',
           '["chat", "function_calling", "streaming", "reasoning"]'::jsonb,
-          65536, 8192, 1.0, 2.0, true, 40
+          65536, 8192, 1.0, 2.0, true, 40, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000005',
@@ -100,7 +122,7 @@ def upgrade() -> None:
           'llm',
           'DeepSeek R1，专注深度推理，适合数学、编程与逻辑分析任务',
           '["chat", "streaming", "reasoning", "chain_of_thought"]'::jsonb,
-          65536, 8192, 4.0, 16.0, true, 50
+          65536, 8192, 4.0, 16.0, true, 50, now(), now()
         ),
 
         -- Seed data: ASR models
@@ -112,7 +134,7 @@ def upgrade() -> None:
           'asr',
           '高精度语音识别模型，支持中英文混合识别，适合实时转写场景',
           '["realtime", "chinese", "english", "punctuation"]'::jsonb,
-          0, 0, 0.0, 0.0, true, 10
+          0, 0, 0.0, 0.0, true, 10, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000007',
@@ -122,7 +144,7 @@ def upgrade() -> None:
           'asr',
           '多语种语音理解模型，支持情感识别与语种检测',
           '["multilingual", "emotion", "language_detection", "punctuation"]'::jsonb,
-          0, 0, 0.0, 0.0, true, 20
+          0, 0, 0.0, 0.0, true, 20, now(), now()
         ),
 
         -- Seed data: TTS models
@@ -134,7 +156,7 @@ def upgrade() -> None:
           'tts',
           '自然流畅的语音合成模型，支持多种音色和情感表达',
           '["chinese", "english", "multi_speaker", "emotion"]'::jsonb,
-          0, 0, 0.0, 0.0, true, 10
+          0, 0, 0.0, 0.0, true, 10, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000009',
@@ -144,7 +166,7 @@ def upgrade() -> None:
           'tts',
           '高品质语音合成模型，发音清晰自然，适合客服与播报场景',
           '["chinese", "high_quality", "multi_speaker"]'::jsonb,
-          0, 0, 0.0, 0.0, true, 20
+          0, 0, 0.0, 0.0, true, 20, now(), now()
         ),
 
         -- Seed data: Vision models
@@ -156,7 +178,7 @@ def upgrade() -> None:
           'vision',
           '通义千问视觉理解模型 Plus，支持图片理解、OCR与视觉问答',
           '["vision", "ocr", "image_understanding", "visual_qa"]'::jsonb,
-          8192, 2048, 2.0, 6.0, true, 10
+          8192, 2048, 2.0, 6.0, true, 10, now(), now()
         ),
         (
           '00000000-0000-0000-0000-000000000011',
@@ -166,8 +188,9 @@ def upgrade() -> None:
           'vision',
           '通义千问视觉理解旗舰模型，最强图像与文档分析能力',
           '["vision", "ocr", "image_understanding", "visual_qa", "document_analysis"]'::jsonb,
-          8192, 2048, 6.0, 24.0, true, 20
-        );
+          8192, 2048, 6.0, 24.0, true, 20, now(), now()
+        )
+        on conflict (model_id) do nothing;
         """
     )
 

@@ -16,8 +16,8 @@ from app.schemas.project import PaginatedProjects, ProjectCreate, ProjectOut, Pr
 from app.services.audit import write_audit_log
 from app.services.chat_modes import normalize_chat_mode
 from app.services.memory_roots import ensure_project_assistant_root
+from app.services.project_cleanup import ProjectDeletionError, delete_project_permanently
 from app.services.pipeline_models import DEFAULT_PIPELINE_MODELS, PIPELINE_SLOT_ORDER
-from app.tasks.worker_tasks import cleanup_deleted_project
 
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -155,19 +155,22 @@ def delete_project(
     if not project:
         raise ApiError("not_found", "Project not found", status_code=404)
 
-    project.deleted_at = datetime.now(timezone.utc)
-    project.cleanup_status = "pending"
     write_audit_log(
         db,
         workspace_id=workspace_id,
         actor_user_id=current_user.id,
-        action="project.delete_requested",
+        action="project.delete",
         target_type="project",
         target_id=project.id,
     )
-    db.commit()
     try:
-        cleanup_deleted_project.delay(project.id)
-    except Exception:  # noqa: BLE001
-        cleanup_deleted_project(project.id)
-    return {"ok": True, "status": "accepted"}
+        delete_project_permanently(db, project=project)
+        db.commit()
+    except ProjectDeletionError as exc:
+        db.rollback()
+        raise ApiError(
+            "storage_delete_failed",
+            f"Project deletion failed while removing {len(exc.failed_object_keys)} stored objects",
+            status_code=500,
+        ) from exc
+    return {"ok": True, "status": "deleted"}

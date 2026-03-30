@@ -1,23 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { apiGet } from "@/lib/api";
 import {
+  canPrimaryParentChildren,
   type MemoryNode,
+  getGraphNodeDisplayType,
   getMemoryCategoryLabel,
   getMemoryCategorySegments,
   getMemoryKind,
   getMemoryLastUsedAt,
   getMemoryLastUsedSource,
+  getMemoryNodeRole,
   getMemoryParentBinding,
   getMemoryRetrievalCount,
   getMemorySalience,
   getSummarySourceCount,
   isAssistantRootMemoryNode,
-  isCategoryPathMemoryNode,
   isPinnedMemoryNode,
-  isSummaryMemoryNode,
+  isSyntheticGraphNode,
 } from "@/hooks/useGraphData";
 import { useDeveloperMode } from "@/lib/developer-mode";
 import { useModal } from "@/components/ui/modal-dialog";
@@ -95,6 +97,22 @@ function formatMemoryKindLabel(kind: string | null, t: (key: string) => string):
   return labels[kind] || kind;
 }
 
+function formatMemoryRoleLabel(
+  role: ReturnType<typeof getMemoryNodeRole>,
+  t: (key: string) => string,
+): string {
+  const labels: Record<NonNullable<ReturnType<typeof getMemoryNodeRole>>, string> = {
+    fact: t("graph.roleFact"),
+    structure: t("graph.roleStructure"),
+    theme: t("graph.roleTheme"),
+    summary: t("graph.roleSummary"),
+  };
+  if (!role) {
+    return t("graph.memoryNode");
+  }
+  return labels[role];
+}
+
 function formatEdgeTypeLabel(edgeType: MemoryDetailEdge["edge_type"], t: (key: string) => string): string {
   const labels: Record<MemoryDetailEdge["edge_type"], string> = {
     auto: t("graph.autoEdge"),
@@ -166,7 +184,8 @@ export default function NodeDetail({
   const t = useTranslations("console-assistants");
   const { isDeveloperMode } = useDeveloperMode();
   const modal = useModal();
-  const fileNode = isFileNode(node);
+  const fileNode = getGraphNodeDisplayType(node) === "file";
+  const memoryRole = getMemoryNodeRole(node);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(node.content);
   const [editCategory, setEditCategory] = useState(node.category);
@@ -175,6 +194,10 @@ export default function NodeDetail({
   const [availableFiles, setAvailableFiles] = useState<MemoryFileCandidate[]>([]);
   const [loadingAvailableFiles, setLoadingAvailableFiles] = useState(!fileNode);
   const [selectedFileId, setSelectedFileId] = useState("");
+  const detailRequestSeqRef = useRef(0);
+  const detailAbortControllerRef = useRef<AbortController | null>(null);
+  const availableFilesRequestSeqRef = useRef(0);
+  const availableFilesAbortControllerRef = useRef<AbortController | null>(null);
 
   const fileMetadata = (node.metadata_json || {}) as Record<string, unknown>;
   const memoryKind = getMemoryKind(node);
@@ -183,10 +206,16 @@ export default function NodeDetail({
   const lastUsedAt = getMemoryLastUsedAt(node);
   const lastUsedSource = getMemoryLastUsedSource(node);
   const summarySourceCount = getSummarySourceCount(node);
-  const summaryNode = isSummaryMemoryNode(node);
-  const categoryPathNode = isCategoryPathMemoryNode(node);
+  const summaryNode = memoryRole === "summary";
+  const structureNode = memoryRole === "structure";
+  const themeNode = memoryRole === "theme";
+  const syntheticGraphNode = isSyntheticGraphNode(node);
   const pinned = isPinnedMemoryNode(node);
   const categorySegments = getMemoryCategorySegments(node);
+  const canOwnChildren = canPrimaryParentChildren(node) && !syntheticGraphNode;
+  const canEditMemory = !fileNode && !syntheticGraphNode && !structureNode;
+  const canManageStructure = !fileNode && !syntheticGraphNode;
+  const canManageFiles = !fileNode && !syntheticGraphNode && !structureNode;
   const parentBinding = getMemoryParentBinding(node);
   const visibility =
     typeof node.metadata_json?.visibility === "string"
@@ -204,7 +233,20 @@ export default function NodeDetail({
     }
     return resolveNodeById(node.parent_memory_id);
   }, [node.parent_memory_id, resolveNodeById]);
-  const currentParentIsTopLevel = !currentParentNode || isAssistantRootMemoryNode(currentParentNode);
+  const graphParentNode = useMemo(() => {
+    const graphParentId =
+      typeof node.metadata_json?.graph_parent_memory_id === "string" &&
+      node.metadata_json.graph_parent_memory_id
+        ? node.metadata_json.graph_parent_memory_id
+        : null;
+    if (!graphParentId) {
+      return null;
+    }
+    return resolveNodeById(graphParentId);
+  }, [node.metadata_json?.graph_parent_memory_id, resolveNodeById]);
+  const displayedParentNode = graphParentNode ?? currentParentNode;
+  const currentParentIsTopLevel =
+    !displayedParentNode || isAssistantRootMemoryNode(displayedParentNode);
 
   const connectedEdges = useMemo(() => detail?.edges ?? [], [detail?.edges]);
   const attachedFiles = useMemo(() => detail?.files ?? [], [detail?.files]);
@@ -213,10 +255,22 @@ export default function NodeDetail({
     [fileNode, node.parent_memory_id, resolveNodeById],
   );
   const childNodes = useMemo(
-    () =>
-      allNodes
-        .filter((candidate) => !isFileNode(candidate) && candidate.parent_memory_id === node.id)
-        .sort((left, right) => formatNodeLabel(left).localeCompare(formatNodeLabel(right), "zh-CN")),
+    () => {
+      const candidates = allNodes.filter(
+        (candidate) => !isFileNode(candidate) && candidate.id !== node.id,
+      );
+      const branchChildren = candidates.filter((candidate) => {
+        const graphParentId =
+          typeof candidate.metadata_json?.graph_parent_memory_id === "string" &&
+          candidate.metadata_json.graph_parent_memory_id
+            ? candidate.metadata_json.graph_parent_memory_id
+            : null;
+        return graphParentId === node.id || candidate.parent_memory_id === node.id;
+      });
+      return branchChildren.sort((left, right) =>
+        formatNodeLabel(left).localeCompare(formatNodeLabel(right), "zh-CN"),
+      );
+    },
     [allNodes, node.id],
   );
   const manualEdges = useMemo(
@@ -233,13 +287,11 @@ export default function NodeDetail({
     : formatNodeLabel(node);
   const nodeTone = fileNode
     ? t("graph.fileNode")
-    : categoryPathNode
-      ? t("graph.structure")
-      : t("graph.nodeDetail");
+    : t("graph.memoryNode");
   const nodeDescriptor = currentParentIsTopLevel
     ? t("graph.parentTopLevel")
-    : currentParentNode
-      ? `${t("graph.parentNode")} · ${formatNodeLabel(currentParentNode)}`
+    : displayedParentNode
+      ? `${t("graph.parentNode")} · ${formatNodeLabel(displayedParentNode)}`
       : t("graph.parentUnavailable");
   const selectionPreviewItems = useMemo(() => {
     if (!editMode) {
@@ -275,47 +327,101 @@ export default function NodeDetail({
   }, [node.category, node.content, node.id]);
 
   const loadDetail = useCallback(async () => {
-    if (fileNode) {
+    detailAbortControllerRef.current?.abort();
+    detailAbortControllerRef.current = null;
+    if (fileNode || syntheticGraphNode) {
+      detailRequestSeqRef.current += 1;
       setDetail(null);
       setLoadingDetail(false);
       return;
     }
+    const requestSeq = ++detailRequestSeqRef.current;
+    const controller = new AbortController();
+    detailAbortControllerRef.current = controller;
     setLoadingDetail(true);
     try {
-      const result = await apiGet<MemoryDetailData>(`/api/v1/memory/${node.id}`);
+      const result = await apiGet<MemoryDetailData>(`/api/v1/memory/${node.id}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || detailRequestSeqRef.current !== requestSeq) {
+        return;
+      }
       setDetail(result);
-    } catch {
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        detailRequestSeqRef.current !== requestSeq ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
       setDetail(null);
     } finally {
-      setLoadingDetail(false);
+      if (detailAbortControllerRef.current === controller) {
+        detailAbortControllerRef.current = null;
+      }
+      if (detailRequestSeqRef.current === requestSeq) {
+        setLoadingDetail(false);
+      }
     }
-  }, [fileNode, node.id]);
+  }, [fileNode, node.id, syntheticGraphNode]);
 
   const loadAvailableFiles = useCallback(async () => {
-    if (fileNode) {
+    availableFilesAbortControllerRef.current?.abort();
+    availableFilesAbortControllerRef.current = null;
+    if (fileNode || syntheticGraphNode) {
+      availableFilesRequestSeqRef.current += 1;
       setAvailableFiles([]);
       setSelectedFileId("");
       setLoadingAvailableFiles(false);
       return;
     }
+    const requestSeq = ++availableFilesRequestSeqRef.current;
+    const controller = new AbortController();
+    availableFilesAbortControllerRef.current = controller;
     setLoadingAvailableFiles(true);
     try {
-      const result = await apiGet<MemoryFileCandidate[]>(`/api/v1/memory/${node.id}/available-files`);
+      const result = await apiGet<MemoryFileCandidate[]>(`/api/v1/memory/${node.id}/available-files`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || availableFilesRequestSeqRef.current !== requestSeq) {
+        return;
+      }
       const files = Array.isArray(result) ? result : [];
       setAvailableFiles(files);
       setSelectedFileId((current) =>
         current && files.some((file) => file.id === current) ? current : (files[0]?.id || ""),
       );
-    } catch {
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        availableFilesRequestSeqRef.current !== requestSeq ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
       setAvailableFiles([]);
       setSelectedFileId("");
     } finally {
-      setLoadingAvailableFiles(false);
+      if (availableFilesAbortControllerRef.current === controller) {
+        availableFilesAbortControllerRef.current = null;
+      }
+      if (availableFilesRequestSeqRef.current === requestSeq) {
+        setLoadingAvailableFiles(false);
+      }
     }
-  }, [fileNode, node.id]);
+  }, [fileNode, node.id, syntheticGraphNode]);
+
+  useEffect(
+    () => () => {
+      detailAbortControllerRef.current?.abort();
+      availableFilesAbortControllerRef.current?.abort();
+    },
+    [node.id],
+  );
 
   useEffect(() => {
-    if (fileNode) {
+    if (fileNode || syntheticGraphNode) {
       setDetail(null);
       setLoadingDetail(false);
       setAvailableFiles([]);
@@ -325,7 +431,7 @@ export default function NodeDetail({
     }
     void loadDetail();
     void loadAvailableFiles();
-  }, [allNodes, fileNode, loadAvailableFiles, loadDetail]);
+  }, [allNodes, fileNode, loadAvailableFiles, loadDetail, syntheticGraphNode]);
 
   const handleSave = async () => {
     await onUpdate(node.id, {
@@ -451,7 +557,7 @@ export default function NodeDetail({
       </div>
 
       <div className="graph-detail-body">
-        {editing && !fileNode && !categoryPathNode ? (
+        {editing && canEditMemory ? (
           <>
             <label className="graph-detail-label">{t("graph.contentLabel")}</label>
             <textarea
@@ -495,8 +601,10 @@ export default function NodeDetail({
                   className={`graph-detail-dot ${
                     fileNode
                       ? "is-file"
-                      : categoryPathNode
+                      : structureNode
                         ? "is-structural"
+                        : themeNode
+                          ? "is-memory"
                         : summaryNode
                           ? "is-summary"
                           : node.type === "temporary"
@@ -522,11 +630,16 @@ export default function NodeDetail({
                 ))}
                 {!fileNode ? (
                   <span className="graph-detail-badge is-neutral">
+                    {formatMemoryRoleLabel(memoryRole, t)}
+                  </span>
+                ) : null}
+                {!fileNode && !summaryNode ? (
+                  <span className="graph-detail-badge is-neutral">
                     {formatMemoryKindLabel(memoryKind, t)}
                   </span>
                 ) : null}
                 {summaryNode ? (
-                  <span className="graph-detail-badge is-summary">{t("graph.summaryNode")}</span>
+                  <span className="graph-detail-badge is-summary">{formatMemoryRoleLabel(memoryRole, t)}</span>
                 ) : null}
                 {pinned ? (
                   <span className="graph-detail-badge is-pinned">{t("graph.pinned")}</span>
@@ -648,13 +761,13 @@ export default function NodeDetail({
                   <div className="graph-detail-structure-grid">
                     <div className="graph-detail-structure-card">
                       <span className="graph-detail-label">{t("graph.parentNode")}</span>
-                      {currentParentNode && !isAssistantRootMemoryNode(currentParentNode) ? (
+                      {displayedParentNode && !isAssistantRootMemoryNode(displayedParentNode) ? (
                         <button
                           type="button"
                           className="graph-detail-link-button"
-                          onClick={() => onFocusNode(currentParentNode)}
+                          onClick={() => onFocusNode(displayedParentNode)}
                         >
-                          {formatNodeLabel(currentParentNode)}
+                          {formatNodeLabel(displayedParentNode)}
                         </button>
                       ) : (
                         <span className="graph-detail-value">{t("graph.parentTopLevel")}</span>
@@ -682,7 +795,7 @@ export default function NodeDetail({
                     </div>
                   </div>
 
-                  {!categoryPathNode ? (
+                  {canManageStructure ? (
                     <>
                       <div className="graph-detail-mode-grid">
                         <button
@@ -692,13 +805,15 @@ export default function NodeDetail({
                         >
                           {t("graph.selectParent")}
                         </button>
-                        <button
-                          type="button"
-                          className={`graph-detail-mode-btn${editMode === "children" ? " is-active" : ""}`}
-                          onClick={() => onBeginEditMode("children")}
-                        >
-                          {t("graph.selectChildren")}
-                        </button>
+                        {canOwnChildren ? (
+                          <button
+                            type="button"
+                            className={`graph-detail-mode-btn${editMode === "children" ? " is-active" : ""}`}
+                            onClick={() => onBeginEditMode("children")}
+                          >
+                            {t("graph.selectChildren")}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className={`graph-detail-mode-btn${editMode === "related" ? " is-active" : ""}`}
@@ -766,7 +881,13 @@ export default function NodeDetail({
                           </div>
                         </div>
                       ) : (
-                        <div className="graph-detail-caption">{t("graph.parentHintVisual")}</div>
+                        <div className="graph-detail-caption">
+                          {structureNode
+                            ? t("graph.structureNodeHint")
+                            : canOwnChildren
+                              ? t("graph.parentHintVisual")
+                              : t("graph.leafNodePrimaryHint")}
+                        </div>
                       )}
                     </>
                   ) : null}
@@ -809,7 +930,7 @@ export default function NodeDetail({
                   </div>
                 </section>
 
-                {!categoryPathNode ? (
+                {canManageFiles ? (
                   <section className="graph-detail-section">
                     <div className="graph-detail-section-header">
                       <span className="graph-detail-section-title">{t("graph.relatedFiles")}</span>
@@ -862,7 +983,7 @@ export default function NodeDetail({
 
                 <section className="graph-detail-section">
                   <div className="graph-detail-actions">
-                    {!categoryPathNode ? (
+                    {canEditMemory ? (
                       <button
                         className="graph-detail-btn is-primary"
                         onClick={() => setEditing(true)}
@@ -881,7 +1002,7 @@ export default function NodeDetail({
                         {t("graph.promote")}
                       </button>
                     ) : null}
-                    {!categoryPathNode ? (
+                    {canEditMemory ? (
                       <button className="graph-detail-btn is-danger" onClick={handleDelete}>
                         {t("graph.delete")}
                       </button>

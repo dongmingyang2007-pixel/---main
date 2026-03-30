@@ -206,6 +206,18 @@ def _extract_live_message_metadata(message: Message) -> dict[str, object] | None
     return payload or None
 
 
+def _refresh_chat_sse_session(db: Session) -> None:
+    """Reset ORM/session state before each SSE poll.
+
+    The chat events stream stays open for a long time while background tasks
+    continue to update message metadata. Rolling back any open transaction and
+    expiring the identity map keeps each poll from reusing stale ORM state.
+    """
+    if db.in_transaction():
+        db.rollback()
+    db.expire_all()
+
+
 @router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
     project_id: str = Query(...),
@@ -319,6 +331,7 @@ async def stream_conversation_events(
             if await request.is_disconnected():
                 break
 
+            _refresh_chat_sse_session(db)
             assistant_messages = (
                 db.query(Message)
                 .filter(

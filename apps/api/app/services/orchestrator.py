@@ -110,7 +110,6 @@ _LOCAL_ONLY_HINTS = (
     "what's the date",
     "current time",
 )
-_SEARCH_CLASSIFIER_ROUTES = {"local_only", "web_only", "local_then_web", "no_search"}
 _THINKING_SOCIAL_MESSAGES = {
     "hi",
     "hello",
@@ -254,15 +253,6 @@ class WebSearchDecision:
     route: WebSearchRoute
     source: str
     confidence: float | None = None
-    reason: str | None = None
-
-
-@dataclass(slots=True)
-class WebSearchClassification:
-    route: WebSearchRoute
-    needs_fresh_facts: bool
-    can_answer_from_project_context: bool
-    confidence: float
     reason: str | None = None
 
 
@@ -465,28 +455,14 @@ async def _resolve_search_options(
     if rule_decision is not None:
         return rule_decision
 
-    classification = await _classify_web_search_need(
-        db,
-        llm_model_id=llm_model_id,
-        user_message=user_message,
-        recent_messages=recent_messages,
-    )
-    if classification and classification.confidence >= settings.web_search_classifier_min_confidence:
-        return WebSearchDecision(
-            enable_search=classification.route in {"web_only", "local_then_web"},
-            search_options=None,
-            route=classification.route,
-            source="classifier",
-            confidence=classification.confidence,
-            reason=classification.reason,
-        )
+    del db, llm_model_id, recent_messages
 
     return WebSearchDecision(
         enable_search=False,
         search_options=None,
         route="no_search",
         source="fallback",
-        reason="rules and classifier did not require fresh external facts",
+        reason="no explicit web-search rule matched, so stay offline by default",
     )
 
 
@@ -694,33 +670,6 @@ def _fallback_context_route(
     )
 
 
-def _pick_search_classifier_model(
-    db: Session,
-    *,
-    llm_model_id: str,
-) -> str:
-    candidates = [
-        settings.web_search_classifier_model,
-        "qwen3.5-flash",
-        llm_model_id,
-        settings.dashscope_model,
-    ]
-    seen: set[str] = set()
-    for candidate in candidates:
-        normalized = (candidate or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        model_info = (
-            db.query(ModelCatalog)
-            .filter(ModelCatalog.model_id == normalized, ModelCatalog.is_active.is_(True))
-            .first()
-        )
-        if model_info is not None or normalized in {settings.dashscope_model, llm_model_id}:
-            return normalized
-    return llm_model_id
-
-
 def _has_rag_context_signal(lowered: str) -> bool:
     if any(hint in lowered for hint in _CONTEXT_ROUTE_HINTS_RAG):
         return True
@@ -766,30 +715,6 @@ def _extract_json_object(raw: str) -> dict[str, object] | None:
         if isinstance(parsed, dict):
             return parsed
     return None
-
-
-def _parse_search_classifier_result(raw: str) -> WebSearchClassification | None:
-    payload = _extract_json_object(raw)
-    if not payload:
-        return None
-
-    route_value = str(payload.get("route") or "").strip().lower()
-    if route_value not in _SEARCH_CLASSIFIER_ROUTES:
-        return None
-
-    confidence_value = payload.get("confidence", 0.0)
-    try:
-        confidence = max(0.0, min(1.0, float(confidence_value)))
-    except (TypeError, ValueError):
-        confidence = 0.0
-
-    return WebSearchClassification(
-        route=route_value,
-        needs_fresh_facts=bool(payload.get("needs_fresh_facts")),
-        can_answer_from_project_context=bool(payload.get("can_answer_from_project_context")),
-        confidence=confidence,
-        reason=str(payload.get("reason") or "").strip() or None,
-    )
 
 
 def _parse_thinking_classifier_result(raw: str) -> ThinkingClassification | None:
@@ -844,61 +769,6 @@ def _parse_context_classifier_result(raw: str) -> ContextRouteClassification | N
         confidence=confidence,
         reason=str(payload.get("reason") or "").strip() or None,
     )
-
-
-async def _classify_web_search_need(
-    db: Session,
-    *,
-    llm_model_id: str,
-    user_message: str,
-    recent_messages: list[dict[str, str]],
-) -> WebSearchClassification | None:
-    classifier_model_id = _pick_search_classifier_model(db, llm_model_id=llm_model_id)
-    recent_excerpt = "\n".join(
-        f"{message.get('role', 'user')}: {message.get('content', '').strip()}"
-        for message in recent_messages[-4:]
-        if (message.get("content") or "").strip()
-    )
-    classifier_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You route user questions for web search. "
-                "Decide whether the latest user turn needs fresh public facts from the web, "
-                "project-local context (uploaded documents, memories, earlier conversation), both, or neither. "
-                "Return JSON only with keys route, needs_fresh_facts, can_answer_from_project_context, confidence, reason. "
-                "Valid route values: local_only, web_only, local_then_web, no_search."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Recent conversation:\n{recent_excerpt or '(none)'}\n\n"
-                f"Latest user turn:\n{user_message.strip()}\n\n"
-                "Use web_only for live or recent public facts. "
-                "Use local_only for uploaded docs, memories, or prior-turn questions. "
-                "Use local_then_web when both are needed. "
-                "Use no_search for timeless/general answers."
-            ),
-        },
-    ]
-
-    try:
-        result = await chat_completion_detailed(
-            classifier_messages,
-            model=classifier_model_id,
-            temperature=0.0,
-            max_tokens=220,
-            enable_search=False,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Web search classifier failed")
-        return None
-
-    classification = _parse_search_classifier_result(result.content)
-    if classification is None:
-        logger.warning("Web search classifier returned unparsable content: %s", result.content)
-    return classification
 
 
 async def _classify_thinking_need(

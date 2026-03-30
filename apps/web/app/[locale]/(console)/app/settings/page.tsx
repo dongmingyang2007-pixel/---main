@@ -21,8 +21,6 @@ export default function SettingsPage() {
   const [user, setUser] = useState<UserMe | null>(null);
   const [deleteMsg, setDeleteMsg] = useState("");
 
-  const targetLocale = locale === "zh" ? "en" : "zh";
-
   useEffect(() => {
     void apiGet<UserMe>("/api/v1/auth/me")
       .then((data) => setUser(data))

@@ -39,6 +39,39 @@ type LoadedMessage = {
   created_at?: string;
 };
 
+const CHAT_SIDEBAR_STYLE = {
+  width: 260,
+  flexShrink: 0,
+  overflow: "hidden",
+  padding: 16,
+  borderRadius: 20,
+  boxSizing: "border-box",
+  background: "rgba(255, 255, 255, 0.72)",
+  border: "1px solid rgba(15, 23, 42, 0.08)",
+  boxShadow: "0 18px 50px rgba(15, 23, 42, 0.08)",
+  backdropFilter: "blur(18px)",
+} as const;
+
+const CHAT_SIDEBAR_BODY_STYLE = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+  minHeight: 0,
+  flex: 1,
+} as const;
+
+const CHAT_SIDEBAR_SEARCH_BUTTON_STYLE = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  margin: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+  color: "inherit",
+} as const;
+
 const GENERIC_CONVERSATION_TITLES = new Set([
   "",
   "new conversation",
@@ -62,10 +95,13 @@ function isGenericConversationTitle(title: string): boolean {
   return GENERIC_CONVERSATION_TITLES.has(title.trim().toLowerCase());
 }
 
-function sortConversationsByUpdatedAt(items: ConversationItem[]): ConversationItem[] {
+function sortConversationsByUpdatedAt(
+  items: ConversationItem[],
+): ConversationItem[] {
   return [...items].sort(
     (left, right) =>
-      new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+      new Date(right.updated_at).getTime() -
+      new Date(left.updated_at).getTime(),
   );
 }
 
@@ -81,8 +117,12 @@ function ChatPageContent() {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [conversationSummaries, setConversationSummaries] = useState<Record<string, string>>({});
+  const [activeConversationId, setActiveConversationId] = useState<
+    string | null
+  >(null);
+  const [conversationSummaries, setConversationSummaries] = useState<
+    Record<string, string>
+  >({});
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [conversationLoadState, setConversationLoadState] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -91,11 +131,18 @@ function ChatPageContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; conversationId: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    conversationId: string;
+  } | null>(null);
 
   const selectedProjectIdRef = useRef("");
   const conversationRequestSeqRef = useRef(0);
+  const createConversationRequestSeqRef = useRef(0);
+  const createConversationInFlightRef = useRef(0);
   const autoCreateProjectRef = useRef<string | null>(null);
+  const pendingConversationUrlSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;
@@ -106,11 +153,8 @@ function ChatPageContent() {
     [projects],
   );
   const settledConversationId = useMemo(() => {
-    if (!activeConversationId || isCreatingConversation) {
-      return null;
-    }
-    return requestedConversationId === activeConversationId ? activeConversationId : null;
-  }, [activeConversationId, isCreatingConversation, requestedConversationId]);
+    return activeConversationId ?? null;
+  }, [activeConversationId]);
 
   const deferredSearch = useDeferredValue(searchQuery);
 
@@ -131,7 +175,9 @@ function ChatPageContent() {
       const nextQuery = params.toString();
       const nextHref = nextQuery ? `${pathname}?${nextQuery}` : pathname;
       const currentQuery = searchParams.toString();
-      const currentHref = currentQuery ? `${pathname}?${currentQuery}` : pathname;
+      const currentHref = currentQuery
+        ? `${pathname}?${currentQuery}`
+        : pathname;
       if (nextHref !== currentHref) {
         router.replace(nextHref);
       }
@@ -157,7 +203,9 @@ function ChatPageContent() {
       if (conversationRequestSeqRef.current !== requestId) {
         return [];
       }
-      const list = sortConversationsByUpdatedAt(Array.isArray(data) ? data : []);
+      const list = sortConversationsByUpdatedAt(
+        Array.isArray(data) ? data : [],
+      );
       setConversations(list);
       setConversationLoadState("ready");
       return list;
@@ -176,12 +224,19 @@ function ChatPageContent() {
         return null;
       }
 
+      const requestId = createConversationRequestSeqRef.current + 1;
+      createConversationRequestSeqRef.current = requestId;
+      conversationRequestSeqRef.current += 1;
+      createConversationInFlightRef.current += 1;
       setIsCreatingConversation(true);
       try {
-        const created = await apiPost<ConversationItem>("/api/v1/chat/conversations", {
-          project_id: projectId,
-          title: "",
-        });
+        const created = await apiPost<ConversationItem>(
+          "/api/v1/chat/conversations",
+          {
+            project_id: projectId,
+            title: "",
+          },
+        );
         if (!created || selectedProjectIdRef.current !== projectId) {
           return created;
         }
@@ -192,15 +247,25 @@ function ChatPageContent() {
             ...prev.filter((item) => item.id !== created.id),
           ]),
         );
-        setActiveConversationId(created.id);
-        replaceChatUrl(projectId, created.id);
-        autoCreateProjectRef.current = projectId;
+        if (requestId === createConversationRequestSeqRef.current) {
+          setActiveConversationId(created.id);
+          pendingConversationUrlSyncRef.current = created.id;
+          replaceChatUrl(projectId, created.id);
+          autoCreateProjectRef.current = projectId;
+        }
         return created;
       } catch {
         autoCreateProjectRef.current = null;
         return null;
       } finally {
-        if (selectedProjectIdRef.current === projectId) {
+        createConversationInFlightRef.current = Math.max(
+          0,
+          createConversationInFlightRef.current - 1,
+        );
+        if (
+          selectedProjectIdRef.current === projectId &&
+          createConversationInFlightRef.current === 0
+        ) {
           setIsCreatingConversation(false);
         }
       }
@@ -245,7 +310,7 @@ function ChatPageContent() {
     const availableProjectIds = new Set(projects.map((project) => project.id));
     const nextProjectId = availableProjectIds.has(requestedProjectId)
       ? requestedProjectId
-      : projects[0]?.id ?? "";
+      : (projects[0]?.id ?? "");
 
     if (!nextProjectId) {
       setSelectedProjectId("");
@@ -292,6 +357,23 @@ function ChatPageContent() {
     const availableConversationIds = new Set(
       conversations.map((conversation) => conversation.id),
     );
+    const pendingConversationId = pendingConversationUrlSyncRef.current;
+
+    if (
+      pendingConversationId &&
+      requestedConversationId === pendingConversationId
+    ) {
+      pendingConversationUrlSyncRef.current = null;
+    }
+
+    if (
+      pendingConversationId &&
+      requestedConversationId !== pendingConversationId &&
+      activeConversationId &&
+      availableConversationIds.has(activeConversationId)
+    ) {
+      return;
+    }
 
     if (
       requestedConversationId &&
@@ -316,11 +398,15 @@ function ChatPageContent() {
     if (conversations.length > 0) {
       const nextConversationId = conversations[0]?.id ?? null;
       setActiveConversationId(nextConversationId);
+      pendingConversationUrlSyncRef.current = nextConversationId;
       replaceChatUrl(selectedProjectId, nextConversationId);
       return;
     }
 
-    if (!isCreatingConversation && autoCreateProjectRef.current !== selectedProjectId) {
+    if (
+      !isCreatingConversation &&
+      autoCreateProjectRef.current !== selectedProjectId
+    ) {
       autoCreateProjectRef.current = selectedProjectId;
       void createConversation(selectedProjectId);
     }
@@ -353,6 +439,7 @@ function ChatPageContent() {
       setConversationLoadState("idle");
       setIsCreatingConversation(false);
       autoCreateProjectRef.current = null;
+      pendingConversationUrlSyncRef.current = null;
       replaceChatUrl(nextProjectId, null);
     },
     [loadConversations, replaceChatUrl, selectedProjectId],
@@ -361,6 +448,7 @@ function ChatPageContent() {
   const handleConversationSelect = useCallback(
     (conversationId: string) => {
       setActiveConversationId(conversationId);
+      pendingConversationUrlSyncRef.current = conversationId;
       replaceChatUrl(selectedProjectId, conversationId);
     },
     [replaceChatUrl, selectedProjectId],
@@ -439,10 +527,7 @@ function ChatPageContent() {
       if (!isGenericConversationTitle(conversation.title)) {
         return conversation.title;
       }
-      return (
-        conversationSummaries[conversation.id] ||
-        t("newConversation")
-      );
+      return conversationSummaries[conversation.id] || t("newConversation");
     },
     [conversationSummaries, t],
   );
@@ -462,12 +547,17 @@ function ChatPageContent() {
         await apiDelete(`/api/v1/chat/conversations/${conversationId}`);
         setConversations((prev) => prev.filter((c) => c.id !== conversationId));
         if (activeConversationId === conversationId) {
-          const remaining = conversations.filter((c) => c.id !== conversationId);
+          const remaining = conversations.filter(
+            (c) => c.id !== conversationId,
+          );
           const next = remaining[0]?.id ?? null;
           setActiveConversationId(next);
+          pendingConversationUrlSyncRef.current = next;
           replaceChatUrl(selectedProjectId, next);
         }
-      } catch { /* silent */ }
+      } catch {
+        /* silent */
+      }
       setContextMenu(null);
     },
     [activeConversationId, conversations, replaceChatUrl, selectedProjectId],
@@ -489,200 +579,210 @@ function ChatPageContent() {
   }, [contextMenu]);
 
   return (
-    <PageTransition>
-      {/* Drawer backdrop — mobile only, outside grid */}
-      <div
-        className={`chat-sidebar-drawer-backdrop${drawerOpen ? " is-open" : ""}`}
-        onClick={() => setDrawerOpen(false)}
-      />
+    <div className="chat-page-root">
+      <PageTransition>
+        <div className="chat-page-layout chat-page">
+          <div
+            className={`chat-sidebar-drawer-backdrop${drawerOpen ? " is-open" : ""}`}
+            onClick={() => setDrawerOpen(false)}
+          />
 
-      {/* Context menu — outside grid, position:fixed */}
-      {contextMenu && (
-        <div
-          className="chat-sidebar-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            type="button"
-            className="chat-sidebar-context-item is-danger"
-            onClick={() => handleDeleteConversation(contextMenu.conversationId)}
+          {contextMenu && (
+            <div
+              className="chat-sidebar-context-menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+            >
+              <button
+                type="button"
+                className="chat-sidebar-context-item is-danger"
+                onClick={() =>
+                  handleDeleteConversation(contextMenu.conversationId)
+                }
+              >
+                {t("deleteConversation")}
+              </button>
+            </div>
+          )}
+
+          <aside
+            className={`chat-sidebar${drawerOpen ? " is-open" : ""}`}
+            aria-label="Conversation sidebar"
+            style={CHAT_SIDEBAR_STYLE}
           >
-            {t("deleteConversation")}
-          </button>
-        </div>
-      )}
+            <div className="chat-sidebar-header">
+              <div className="chat-sidebar-header-copy">
+                <div className="chat-sidebar-kicker">会话</div>
+                <div className="chat-sidebar-project">
+                  {projectLabels.get(selectedProjectId) ||
+                    projects.find((project) => project.id === selectedProjectId)
+                      ?.name ||
+                    t("selectAssistant")}
+                </div>
+              </div>
+              <div
+                className="chat-sidebar-count"
+                aria-label="Conversation count"
+              >
+                {filteredConversations.length}
+              </div>
+            </div>
 
-      <div
-        className="chat-page"
-        style={{
-          height: "calc(100vh - 48px - 28px)",
-          display: "flex",
-          gap: 16,
-          overflow: "hidden",
-        }}
-      >
-        <aside
-          className={`chat-sidebar${drawerOpen ? " is-open" : ""}`}
-          style={{
-            width: 260,
-            flexShrink: 0,
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-            overflow: "hidden",
-            padding: 16,
-            borderRadius: 20,
-            boxSizing: "border-box",
-            background: "rgba(255, 255, 255, 0.72)",
-            border: "1px solid rgba(15, 23, 42, 0.08)",
-            boxShadow: "0 18px 50px rgba(15, 23, 42, 0.08)",
-            backdropFilter: "blur(18px)",
-          }}
-        >
-          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-            {/* Search bar */}
-            <div className="chat-sidebar-search">
+            <div className="chat-sidebar-body" style={CHAT_SIDEBAR_BODY_STYLE}>
+              <div
+                className="chat-sidebar-search"
+                aria-label={t("searchPlaceholder")}
+              >
+                <button
+                  type="button"
+                  className="chat-sidebar-search-toggle"
+                  onClick={() => setSearchExpanded((p) => !p)}
+                  aria-expanded={searchExpanded}
+                  aria-label={t("searchPlaceholder")}
+                  style={CHAT_SIDEBAR_SEARCH_BUTTON_STYLE}
+                >
+                  <svg
+                    className="chat-sidebar-search-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                </button>
+                {searchExpanded && (
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={t("searchPlaceholder")}
+                    autoFocus
+                  />
+                )}
+              </div>
+
+              <div className="chat-sidebar-header-row">
+                <select
+                  className="inline-topbar-project-select"
+                  value={selectedProjectId}
+                  onChange={handleProjectChange}
+                  disabled={loadingProjects || projects.length === 0}
+                  aria-label={t("selectAssistant")}
+                >
+                  {projects.length === 0 ? (
+                    <option value="">{t("selectAssistant")}</option>
+                  ) : null}
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {projectLabels.get(project.id) || project.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="chat-sidebar-new-btn chat-sidebar-new"
+                  onClick={handleConversationCreate}
+                  disabled={
+                    !selectedProjectId ||
+                    isCreatingConversation ||
+                    loadingProjects
+                  }
+                  title={t("newConversation")}
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="chat-sidebar-list">
+                {conversationLoadState === "loading" ? (
+                  <div className="chat-sidebar-empty">...</div>
+                ) : filteredConversations.length === 0 ? (
+                  <div className="chat-sidebar-empty">
+                    {searchQuery
+                      ? t("searchPlaceholder")
+                      : t("noConversations")}
+                  </div>
+                ) : (
+                  filteredConversations.map((conversation) => {
+                    const isActive = conversation.id === activeConversationId;
+                    return (
+                      <button
+                        key={conversation.id}
+                        type="button"
+                        className={`chat-sidebar-item${isActive ? " is-active" : ""}`}
+                        onClick={() => {
+                          handleConversationSelect(conversation.id);
+                          setDrawerOpen(false);
+                        }}
+                        onContextMenu={(e) =>
+                          handleContextMenu(e, conversation.id)
+                        }
+                      >
+                        <div className="chat-sidebar-item-row1">
+                          <div className="chat-sidebar-item-avatar">
+                            {renderConversationTitle(
+                              conversation,
+                            )[0]?.toUpperCase() || "?"}
+                          </div>
+                          <div className="chat-sidebar-item-title">
+                            {renderConversationTitle(conversation)}
+                          </div>
+                        </div>
+                        <div className="chat-sidebar-item-row2">
+                          <span className="chat-sidebar-item-preview">
+                            {(() => {
+                              const preview =
+                                conversationSummaries[conversation.id] || "";
+                              const title =
+                                renderConversationTitle(conversation);
+                              return preview && preview !== title
+                                ? preview
+                                : t("noPreview");
+                            })()}
+                          </span>
+                          <span className="chat-sidebar-item-time">
+                            {formatRelativeTime(conversation.updated_at, t)}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </aside>
+
+          <main className="chat-main" aria-label={t("title")}>
+            <button
+              type="button"
+              className="chat-sidebar-hamburger"
+              onClick={() => setDrawerOpen(true)}
+              title={t("drawerOpen")}
+            >
               <svg
-                className="chat-sidebar-search-icon"
                 viewBox="0 0 24 24"
+                width={20}
+                height={20}
                 fill="none"
                 stroke="currentColor"
                 strokeWidth={2}
-                onClick={() => setSearchExpanded((p) => !p)}
               >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
-              {searchExpanded && (
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={t("searchPlaceholder")}
-                  autoFocus
-                />
-              )}
-            </div>
-
-            {/* Project selector + New button */}
-            <div className="chat-sidebar-header-row">
-              <select
-                className="inline-topbar-project-select"
-                value={selectedProjectId}
-                onChange={handleProjectChange}
-                disabled={loadingProjects || projects.length === 0}
-              >
-                {projects.length === 0 ? (
-                  <option value="">{t("selectAssistant")}</option>
-                ) : null}
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {projectLabels.get(project.id) || project.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="chat-sidebar-new-btn chat-sidebar-new"
-                onClick={handleConversationCreate}
-                disabled={!selectedProjectId || isCreatingConversation || loadingProjects}
-                title={t("newConversation")}
-              >
-                +
-              </button>
-            </div>
-          </div>
-
-          {/* Conversation list */}
-          <div
-            className="chat-sidebar-list"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              minHeight: 0,
-              overflowY: "auto",
-              flex: 1,
-            }}
-          >
-            {conversationLoadState === "loading" ? (
-              <div className="chat-sidebar-empty">...</div>
-            ) : filteredConversations.length === 0 ? (
-              <div className="chat-sidebar-empty">
-                {searchQuery ? t("searchPlaceholder") : t("noConversations")}
-              </div>
-            ) : (
-              filteredConversations.map((conversation) => {
-                const isActive = conversation.id === activeConversationId;
-                return (
-                  <button
-                    key={conversation.id}
-                    type="button"
-                    className={`chat-sidebar-item${isActive ? " is-active" : ""}`}
-                    onClick={() => {
-                      handleConversationSelect(conversation.id);
-                      setDrawerOpen(false);
-                    }}
-                    onContextMenu={(e) => handleContextMenu(e, conversation.id)}
-                  >
-                    <div className="chat-sidebar-item-row1">
-                      <div className="chat-sidebar-item-avatar">
-                        {(renderConversationTitle(conversation))[0]?.toUpperCase() || "?"}
-                      </div>
-                      <div className="chat-sidebar-item-title">
-                        {renderConversationTitle(conversation)}
-                      </div>
-                    </div>
-                    <div className="chat-sidebar-item-row2">
-                      <span className="chat-sidebar-item-preview">
-                        {(() => {
-                          const preview = conversationSummaries[conversation.id] || "";
-                          const title = renderConversationTitle(conversation);
-                          return preview && preview !== title ? preview : t("noPreview");
-                        })()}
-                      </span>
-                      <span className="chat-sidebar-item-time">
-                        {formatRelativeTime(conversation.updated_at, t)}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </aside>
-
-        <div
-          className="chat-main"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <button
-            type="button"
-            className="chat-sidebar-hamburger"
-            onClick={() => setDrawerOpen(true)}
-            title={t("drawerOpen")}
-          >
-            <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-          <ChatInterface
-            conversationId={settledConversationId}
-            projectId={selectedProjectId}
-            onConversationActivity={handleConversationActivity}
-            onConversationLoaded={handleConversationLoaded}
-          />
+            </button>
+            <ChatInterface
+              conversationId={settledConversationId}
+              projectId={selectedProjectId}
+              isConversationPending={isCreatingConversation}
+              onConversationActivity={handleConversationActivity}
+              onConversationLoaded={handleConversationLoaded}
+            />
+          </main>
         </div>
-      </div>
-    </PageTransition>
+      </PageTransition>
+    </div>
   );
 }
 

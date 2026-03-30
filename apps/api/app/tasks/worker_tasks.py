@@ -43,10 +43,12 @@ from app.services.memory_metadata import (
     is_concept_memory,
     is_summary_memory,
     normalize_memory_metadata,
+    set_manual_parent_binding,
 )
 from app.services.memory_related_edges import ensure_project_related_edges
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 from app.services.memory_visibility import build_private_memory_metadata
+from app.services.project_cleanup import ProjectDeletionError, delete_project_permanently
 from app.services.runtime_state import runtime_state
 from app.services.storage import delete_object
 from app.services import dashscope_client
@@ -286,68 +288,15 @@ def cleanup_deleted_project(project_id: str) -> None:
         project = db.get(Project, project_id)
         if not project:
             return
-        project.cleanup_status = "running"
-        db.flush()
-
-        object_keys: set[str] = set()
-        datasets = db.query(Dataset).filter(Dataset.project_id == project_id).all()
-        for dataset in datasets:
-            if dataset.deleted_at is None:
-                dataset.deleted_at = datetime.now(timezone.utc)
-            dataset.cleanup_status = "pending"
-            items = db.query(DataItem).filter(DataItem.dataset_id == dataset.id).all()
-            for item in items:
-                object_keys.add(item.object_key)
-                if item.deleted_at is None:
-                    item.deleted_at = datetime.now(timezone.utc)
-                item.meta_json = {**(item.meta_json or {}), "cleanup_marked": True}
-
-        models = db.query(Model).filter(Model.project_id == project_id).all()
-        for model in models:
-            versions = db.query(ModelVersion).filter(ModelVersion.model_id == model.id).all()
-            for version in versions:
-                object_keys.add(version.artifact_object_key)
-
-        artifacts = (
-            db.query(Artifact)
-            .join(TrainingRun, TrainingRun.id == Artifact.run_id)
-            .join(TrainingJob, TrainingJob.id == TrainingRun.training_job_id)
-            .filter(TrainingJob.project_id == project_id)
-            .all()
-        )
-        for artifact in artifacts:
-            object_keys.add(artifact.object_key)
-        runs = (
-            db.query(TrainingRun)
-            .join(TrainingJob, TrainingJob.id == TrainingRun.training_job_id)
-            .filter(TrainingJob.project_id == project_id)
-            .all()
-        )
-        for run in runs:
-            if run.logs_object_key:
-                object_keys.add(run.logs_object_key)
-
-        conversation_ids = [
-            conversation_id
-            for conversation_id, in db.query(Conversation.id).filter(Conversation.project_id == project_id).all()
-        ]
-        memory_ids = [
-            memory_id for memory_id, in db.query(Memory.id).filter(Memory.project_id == project_id).all()
-        ]
-        if memory_ids:
-            db.query(MemoryEdge).filter(
-                (MemoryEdge.source_memory_id.in_(memory_ids)) | (MemoryEdge.target_memory_id.in_(memory_ids))
-            ).delete(synchronize_session=False)
-            db.query(MemoryFile).filter(MemoryFile.memory_id.in_(memory_ids)).delete(synchronize_session=False)
-        db.query(Embedding).filter(Embedding.project_id == project_id).delete(synchronize_session=False)
-        db.query(Memory).filter(Memory.project_id == project_id).delete(synchronize_session=False)
-        if conversation_ids:
-            db.query(Message).filter(Message.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
-        db.query(Conversation).filter(Conversation.project_id == project_id).delete(synchronize_session=False)
-        db.query(PipelineConfig).filter(PipelineConfig.project_id == project_id).delete(synchronize_session=False)
-
-        project.cleanup_status = "done" if _delete_object_keys(object_keys) else "failed"
-        db.commit()
+        try:
+            delete_project_permanently(db, project=project)
+            db.commit()
+        except ProjectDeletionError:
+            db.rollback()
+            project = db.get(Project, project_id)
+            if project:
+                project.cleanup_status = "failed"
+                db.commit()
     finally:
         db.close()
 
@@ -553,6 +502,19 @@ def _shared_category_prefix_length(left: str, right: str) -> int:
 def _normalize_text_key(value: str) -> str:
     normalized = re.sub(r"\s+", "", str(value or "").strip().lower())
     return re.sub(r"[，。、“”‘’\"'`()（）,.!?！？:：;；\-_/\\]+", "", normalized)
+
+
+def _rebind_memory_under_parent(memory: Memory, parent_memory_id: str) -> None:
+    memory.parent_memory_id = parent_memory_id
+    memory.metadata_json = normalize_memory_metadata(
+        content=memory.content,
+        category=memory.category,
+        memory_type=memory.type,
+        metadata=set_manual_parent_binding(
+            dict(memory.metadata_json or {}),
+            parent_memory_id=parent_memory_id,
+        ),
+    )
 
 
 def _is_structural_parent_memory(memory: Memory | dict[str, object] | None) -> bool:
@@ -1748,8 +1710,9 @@ def run_memory_extraction(
                             parent_memory = concept_parent
                             anchor_strength = 0.84 if concept_created else 0.8
                             if append_candidate_memory and append_candidate_memory.id != concept_parent.id:
-                                if append_candidate_memory.parent_memory_id != concept_parent.id:
-                                    append_candidate_memory.parent_memory_id = concept_parent.id
+                                _rebind_memory_under_parent(append_candidate_memory, concept_parent.id)
+                                triage_action = "append"
+                                triage_target_memory_id = append_candidate_memory.id
                                 try:
                                     _upsert_auto_memory_edge(
                                         db,
@@ -1784,6 +1747,17 @@ def run_memory_extraction(
                             )
                             parent_memory_id = root_memory.id
                             parent_memory = root_memory
+
+                    if append_candidate_memory and parent_memory and not is_assistant_root_memory(parent_memory):
+                        metadata = normalize_memory_metadata(
+                            content=fact_text,
+                            category=fact.get("category", ""),
+                            memory_type=memory_type,
+                            metadata=set_manual_parent_binding(
+                                metadata,
+                                parent_memory_id=parent_memory.id,
+                            ),
+                        )
 
                     memory = Memory(
                         workspace_id=workspace_id,

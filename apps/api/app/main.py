@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,16 +31,34 @@ from app.services.dashscope_http import close_client
 from app.services.runtime_state import runtime_state
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    settings.validate_runtime_configuration()
-    runtime_state.ensure_available()
+def _should_use_direct_schema_bootstrap() -> bool:
+    return settings.env == "test" or engine.dialect.name == "sqlite"
+
+
+def _run_direct_schema_bootstrap() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_project_chat_mode_schema(engine)
     ensure_embedding_schema(engine)
     ensure_column(engine, "messages", "reasoning_content", "TEXT")
     ensure_column(engine, "messages", "metadata_json", "JSON", nullable=False, default="'{}'")
     ensure_project_memory_root_schema(engine)
+
+
+def _run_alembic_upgrades() -> None:
+    alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_config, "head")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings.validate_runtime_configuration()
+    runtime_state.ensure_available()
+    if _should_use_direct_schema_bootstrap():
+        _run_direct_schema_bootstrap()
+    else:
+        _run_alembic_upgrades()
     db = SessionLocal()
     try:
         seed_model_catalog(db)

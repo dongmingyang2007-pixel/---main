@@ -56,8 +56,6 @@ class Settings(BaseSettings):
     dashscope_embedding_model: str = "text-embedding-v3"
     thinking_classifier_model: str = "qwen3.5-flash"
     thinking_classifier_min_confidence: float = 0.65
-    web_search_classifier_model: str = "qwen3.5-flash"
-    web_search_classifier_min_confidence: float = 0.65
 
     # ── Memory Triage ──
     memory_triage_model: str = "qwen-turbo"

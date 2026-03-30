@@ -10,18 +10,21 @@ import {
 import { useTranslations } from "next-intl";
 import * as d3 from "d3";
 import {
+  canPrimaryParentChildren,
   type MemoryNode,
   type MemoryEdge,
+  getGraphNodeDisplayType,
+  getMemoryCategoryPath,
   getMemoryCategoryLabel,
   getMemoryCategoryPrefixes,
   getMemoryKind,
+  getMemoryNodeRole,
   getMemoryRetrievalCount,
+  isFactMemoryNode,
   isAssistantRootMemoryNode,
-  isCategoryPathMemoryNode,
   isFileMemoryNode,
+  isStructureMemoryNode,
   isPinnedMemoryNode,
-  isOrdinaryMemoryNode,
-  isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { apiPost } from "@/lib/api";
 import { useModal } from "@/components/ui/modal-dialog";
@@ -99,6 +102,8 @@ const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
   core: "#dd8a62",
+  structure: "#d59863",
+  theme: "#c46e58",
   summary: "#b68a2f",
   file: "#8a7a6a",
   centerGradStart: "#c8734a",
@@ -124,7 +129,10 @@ function getNodeSourceKinds(node: MemoryNode): string[] {
 function nodeRadius(node: MemoryNode, isCenter: boolean): number {
   if (isCenter) return CENTER_NODE_RADIUS;
   if (isFileMemoryNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
-  if (isSummaryMemoryNode(node)) return MEMORY_NODE_RADIUS + 4;
+  const role = getMemoryNodeRole(node);
+  if (role === "summary") return MEMORY_NODE_RADIUS + 4;
+  if (role === "theme") return MEMORY_NODE_RADIUS + 2;
+  if (role === "structure") return MEMORY_NODE_RADIUS - 1;
   if (isPinnedMemoryNode(node)) return MEMORY_NODE_RADIUS + 2;
   return MEMORY_NODE_RADIUS;
 }
@@ -137,7 +145,7 @@ function getLabel(node: MemoryNode): string {
         : node.content;
     return filename.length > 16 ? `${filename.slice(0, 16)}...` : filename;
   }
-  if (isCategoryPathMemoryNode(node)) {
+  if (getMemoryNodeRole(node) === "structure") {
     return getMemoryCategoryLabel(node) || node.content;
   }
   const content = node.content.trim();
@@ -156,9 +164,19 @@ function getLabel(node: MemoryNode): string {
 
 function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string {
   const kind = getMemoryKind(node);
+  const role = getMemoryNodeRole(node);
   const baseColor = (() => {
-    if (isSummaryMemoryNode(node)) {
+    if (node.type === "temporary") {
+      return COLORS.temporary;
+    }
+    if (role === "summary") {
       return COLORS.summary;
+    }
+    if (role === "structure") {
+      return COLORS.structure;
+    }
+    if (role === "theme") {
+      return COLORS.theme;
     }
     if (isPinnedMemoryNode(node)) {
       return COLORS.core;
@@ -166,7 +184,7 @@ function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string
     if (kind === "profile" || kind === "preference" || kind === "goal") {
       return COLORS.core;
     }
-    return node.type === "permanent" ? COLORS.permanent : COLORS.temporary;
+    return COLORS.permanent;
   })();
 
   const retrievalCount = getMemoryRetrievalCount(node);
@@ -175,8 +193,12 @@ function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string
     const targetColor =
       node.type === "temporary"
         ? "#215e99"
-        : isSummaryMemoryNode(node)
+        : role === "summary"
           ? "#8a6715"
+          : role === "structure"
+            ? "#b1713d"
+            : role === "theme"
+              ? "#a94b38"
           : isPinnedMemoryNode(node) || kind === "profile" || kind === "preference" || kind === "goal"
             ? "#b85d39"
             : "#a32020";
@@ -371,8 +393,23 @@ function buildEdgeKey(sourceId: string, targetId: string): string {
   return sourceId < targetId ? `${sourceId}::${targetId}` : `${targetId}::${sourceId}`;
 }
 
+function getGraphParentId(
+  node: Pick<MemoryNode, "parent_memory_id" | "metadata_json">,
+  nodeById?: Map<string, Pick<MemoryNode, "id">>,
+): string | null {
+  const graphParentId =
+    typeof node.metadata_json?.graph_parent_memory_id === "string" &&
+    node.metadata_json.graph_parent_memory_id
+      ? node.metadata_json.graph_parent_memory_id
+      : null;
+  if (graphParentId && (!nodeById || nodeById.has(graphParentId))) {
+    return graphParentId;
+  }
+  return node.parent_memory_id ?? null;
+}
+
 function isStructuralTreeEdgePair(
-  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id">>,
+  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id" | "metadata_json">>,
   sourceId: string,
   targetId: string,
   centerNodeId: string,
@@ -385,17 +422,17 @@ function isStructuralTreeEdgePair(
   if (!source || !target) {
     return false;
   }
-  if (target.parent_memory_id === sourceId) {
+  if (getGraphParentId(target, nodeById) === sourceId) {
     return target.id !== centerNodeId;
   }
-  if (source.parent_memory_id === targetId) {
+  if (getGraphParentId(source, nodeById) === targetId) {
     return source.id !== centerNodeId;
   }
   return false;
 }
 
 function isCenterStructuralTreeEdgePair(
-  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id">>,
+  nodeById: Map<string, Pick<MemoryNode, "id" | "parent_memory_id" | "metadata_json">>,
   sourceId: string,
   targetId: string,
   centerNodeId: string,
@@ -407,21 +444,24 @@ function isCenterStructuralTreeEdgePair(
 }
 
 function canGraphRepositionNode(node: Pick<MemoryNode, "id" | "metadata_json" | "category">, centerNodeId: string): boolean {
-  const nodeKind = node.metadata_json?.node_kind;
-  const isFile = node.category === "file" || node.category === "文件" || nodeKind === "file";
-  return node.id !== centerNodeId && !isFile && !isCategoryPathMemoryNode(node.metadata_json);
+  return (
+    node.id !== centerNodeId &&
+    getGraphNodeDisplayType(node as MemoryNode) !== "file" &&
+    getMemoryNodeRole(node as MemoryNode) !== "structure"
+  );
 }
 
 function sortTreeChildren(left: SimNode, right: SimNode): number {
-  const structuralBias =
-    Number(isCategoryPathMemoryNode(right)) - Number(isCategoryPathMemoryNode(left));
-  if (structuralBias !== 0) {
-    return structuralBias;
-  }
-  const summaryBias =
-    Number(isSummaryMemoryNode(right)) - Number(isSummaryMemoryNode(left));
-  if (summaryBias !== 0) {
-    return summaryBias;
+  const roleWeight = (node: SimNode) => {
+    const role = getMemoryNodeRole(node);
+    if (role === "structure") return 4;
+    if (role === "theme") return 3;
+    if (role === "summary") return 2;
+    return 1;
+  };
+  const roleBias = roleWeight(right) - roleWeight(left);
+  if (roleBias !== 0) {
+    return roleBias;
   }
   return getStableNodeSortKey(left).localeCompare(getStableNodeSortKey(right));
 }
@@ -433,11 +473,15 @@ function getTreeNodeDistance(node: SimNode, depth: number, centerNodeId: string)
   if (depth <= 1) {
     return CENTER_LINK_DISTANCE + 18;
   }
-  if (isCategoryPathMemoryNode(node)) {
+  const role = getMemoryNodeRole(node);
+  if (role === "structure") {
     return PARENT_LINK_DISTANCE + 4;
   }
-  if (isSummaryMemoryNode(node)) {
+  if (role === "summary") {
     return PARENT_LINK_DISTANCE + 14;
+  }
+  if (role === "theme") {
+    return PARENT_LINK_DISTANCE + 18;
   }
   return PARENT_LINK_DISTANCE + 22;
 }
@@ -472,10 +516,8 @@ function buildTreeLayoutTargets(nodes: SimNode[], centerNodeId: string): Map<str
     if (node.id === centerNodeId) {
       return;
     }
-    const parentId =
-      node.parent_memory_id && nodeById.has(node.parent_memory_id)
-        ? node.parent_memory_id
-        : centerNodeId;
+    const graphParentId = getGraphParentId(node, nodeById);
+    const parentId = graphParentId && nodeById.has(graphParentId) ? graphParentId : centerNodeId;
     const siblings = childrenByParent.get(parentId) ?? [];
     siblings.push(node);
     childrenByParent.set(parentId, siblings);
@@ -553,7 +595,7 @@ function createTreeScaffoldForce(centerNodeId: string): d3.Force<SimNode, SimLin
       const spring =
         typeof node.position_x === "number" && typeof node.position_y === "number"
           ? 0.05
-          : isCategoryPathMemoryNode(node)
+          : getMemoryNodeRole(node) === "structure"
             ? 0.22
             : 0.14;
       node.vx = (node.vx ?? 0) + (target.x - node.x) * spring * alpha;
@@ -744,6 +786,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   }, [editMode, selectedNode]);
 
   useEffect(() => {
+    if (editMode !== "children" || !selectedNode) {
+      return;
+    }
+    if (!canPrimaryParentChildren(selectedNode)) {
+      setEditMode(null);
+      setEditSelectionIds([]);
+    }
+  }, [editMode, selectedNode]);
+
+  useEffect(() => {
     editModeRef.current = editMode;
   }, [editMode]);
 
@@ -756,7 +808,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const { simNodes, simLinks, centerNodeId } = useMemo(() => {
     const rootNode = nodes.find((node) => isAssistantRootMemoryNode(node)) ?? null;
     const seedNode =
-      nodes.find((node) => isOrdinaryMemoryNode(node)) ?? rootNode ?? nodes[0] ?? null;
+      nodes.find((node) => isFactMemoryNode(node)) ?? rootNode ?? nodes[0] ?? null;
     const now = new Date().toISOString();
     const cId = rootNode?.id ?? ASSISTANT_CENTER_ID;
     const assistantNode: SimNode | null = rootNode
@@ -890,12 +942,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (node) =>
           !isFileMemoryNode(node) &&
           !isAssistantRootMemoryNode(node) &&
-          Boolean(node.parent_memory_id) &&
-          node.parent_memory_id !== cId &&
-          nodeIdSet.has(node.parent_memory_id || ""),
+          Boolean(getGraphParentId(node, simNodeById)) &&
+          getGraphParentId(node, simNodeById) !== cId &&
+          nodeIdSet.has(getGraphParentId(node, simNodeById) || ""),
       )
       .forEach((node) => {
-        const parentId = node.parent_memory_id;
+        const parentId = getGraphParentId(node, simNodeById);
         if (!parentId) {
           return;
         }
@@ -918,7 +970,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (node) =>
           !isFileMemoryNode(node) &&
           !isAssistantRootMemoryNode(node) &&
-          (node.parent_memory_id === cId || (rootNode === null && !node.parent_memory_id)),
+          (getGraphParentId(node, simNodeById) === cId ||
+            (rootNode === null && !getGraphParentId(node, simNodeById))),
       )
       .forEach((node) => {
         const edgeKey = buildEdgeKey(cId, node.id);
@@ -1009,8 +1062,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       nodes.forEach((candidate) => {
         if (
           isFileMemoryNode(candidate) ||
+          isAssistantRootMemoryNode(candidate) ||
           candidate.id === selectedNode.id ||
-          blockedIds.has(candidate.id)
+          blockedIds.has(candidate.id) ||
+          !canPrimaryParentChildren(candidate)
         ) {
           return;
         }
@@ -1037,6 +1092,48 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     selectableNodeIdsRef.current = selectableNodeIds;
   }, [selectableNodeIds]);
 
+  const expandStructuralSelectionIds = useCallback(
+    (selectionIds: string[], mode: Extract<GraphSelectionMode, "children" | "related">) => {
+      const expandedIds = new Set<string>();
+      const nodeById = new Map(nodes.map((candidate) => [candidate.id, candidate] as const));
+
+      selectionIds.forEach((selectionId) => {
+        const targetNode = nodeById.get(selectionId);
+        if (!targetNode) {
+          return;
+        }
+        if (!isStructureMemoryNode(targetNode)) {
+          expandedIds.add(selectionId);
+          return;
+        }
+        const categoryPath = getMemoryCategoryPath(targetNode);
+        if (!categoryPath) {
+          return;
+        }
+        nodes.forEach((candidate) => {
+          if (
+            candidate.id === selectedNode?.id ||
+            isFileMemoryNode(candidate) ||
+            isAssistantRootMemoryNode(candidate) ||
+            isStructureMemoryNode(candidate)
+          ) {
+            return;
+          }
+          if (!getMemoryCategoryPrefixes(candidate).includes(categoryPath)) {
+            return;
+          }
+          if (mode === "children" && currentAncestorIds.has(candidate.id)) {
+            return;
+          }
+          expandedIds.add(candidate.id);
+        });
+      });
+
+      return [...expandedIds];
+    },
+    [currentAncestorIds, nodes, selectedNode?.id],
+  );
+
   const beginEditMode = useCallback(
     (mode: Exclude<GraphSelectionMode, null>) => {
       if (!selectedNode) {
@@ -1044,20 +1141,27 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
       setEditMode(mode);
       if (mode === "parent") {
+        const currentGraphParentId = getGraphParentId(
+          selectedNode,
+          new Map(nodes.map((node) => [node.id, node] as const)),
+        );
         setEditSelectionIds([
-          selectedNode.parent_memory_id && selectedNode.parent_memory_id !== centerNodeId
-            ? selectedNode.parent_memory_id
+          currentGraphParentId && currentGraphParentId !== centerNodeId
+            ? currentGraphParentId
             : GRAPH_TOP_LEVEL_TARGET_ID,
         ]);
         return;
       }
       if (mode === "children") {
+        if (!canPrimaryParentChildren(selectedNode)) {
+          return;
+        }
         setEditSelectionIds(currentChildIds);
         return;
       }
       setEditSelectionIds(currentManualRelatedIds);
     },
-    [centerNodeId, currentChildIds, currentManualRelatedIds, selectedNode],
+    [centerNodeId, currentChildIds, currentManualRelatedIds, nodes, selectedNode],
   );
 
   const cancelEditMode = useCallback(() => {
@@ -1081,12 +1185,25 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     try {
       if (editMode === "parent") {
         const nextParentId = editSelectionIds[0];
-        await onUpdateMemory(selectedNode.id, {
-          parent_memory_id:
-            !nextParentId || nextParentId === GRAPH_TOP_LEVEL_TARGET_ID ? null : nextParentId,
-        });
+        if (!nextParentId || nextParentId === GRAPH_TOP_LEVEL_TARGET_ID) {
+          await onUpdateMemory(selectedNode.id, { parent_memory_id: null });
+        } else {
+          const nextParentNode = nodes.find((candidate) => candidate.id === nextParentId) ?? null;
+          if (nextParentNode && isStructureMemoryNode(nextParentNode)) {
+            await onUpdateMemory(selectedNode.id, {
+              category: getMemoryCategoryPath(nextParentNode),
+              parent_memory_id: null,
+            });
+          } else {
+            await onUpdateMemory(selectedNode.id, { parent_memory_id: nextParentId });
+          }
+        }
       } else if (editMode === "children") {
-        const nextChildIds = new Set(editSelectionIds);
+        if (!canPrimaryParentChildren(selectedNode)) {
+          await modal.alert(t("graph.leafNodeChildrenUnsupported"));
+          return;
+        }
+        const nextChildIds = new Set(expandStructuralSelectionIds(editSelectionIds, "children"));
         const currentChildIdSet = new Set(currentChildIds);
         for (const currentChildId of currentChildIds) {
           if (nextChildIds.has(currentChildId)) {
@@ -1094,14 +1211,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           }
           await onUpdateMemory(currentChildId, { parent_memory_id: null });
         }
-        for (const childId of editSelectionIds) {
+        for (const childId of nextChildIds) {
           if (currentChildIdSet.has(childId)) {
             continue;
           }
           await onUpdateMemory(childId, { parent_memory_id: selectedNode.id });
         }
       } else if (editMode === "related") {
-        const nextRelatedIds = new Set(editSelectionIds);
+        const nextRelatedIds = new Set(expandStructuralSelectionIds(editSelectionIds, "related"));
         const currentEdgeByRelatedId = new Map(
           currentManualEdges.map((edge) => [
             edge.source_memory_id === selectedNode.id ? edge.target_memory_id : edge.source_memory_id,
@@ -1116,7 +1233,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           }
           await onDeleteEdge(edge.id);
         }
-        for (const relatedId of editSelectionIds) {
+        for (const relatedId of nextRelatedIds) {
           if (currentEdgeByRelatedId.has(relatedId)) {
             continue;
           }
@@ -1125,6 +1242,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       }
       setEditMode(null);
       setEditSelectionIds([]);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message ? error.message : t("graph.applySelectionFailed");
+      await modal.alert(message);
     } finally {
       setEditPending(false);
     }
@@ -1134,10 +1255,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     editMode,
     editPending,
     editSelectionIds,
+    expandStructuralSelectionIds,
+    modal,
     onCreateEdge,
     onDeleteEdge,
     onUpdateMemory,
+    nodes,
     selectedNode,
+    t,
   ]);
 
   /* ── Filtering ──────────────────────────────── */
@@ -1150,6 +1275,17 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const visibleNodeIds = useMemo(() => {
     const ids = new Set<string>();
     const nodeById = new Map(simNodes.map((node) => [node.id, node]));
+    const categoryNodeIdByPath = new Map<string, string>();
+    simNodes.forEach((node) => {
+      if (!isStructureMemoryNode(node)) {
+        return;
+      }
+      const prefixes = getMemoryCategoryPrefixes(node);
+      const categoryPath = prefixes[prefixes.length - 1];
+      if (categoryPath) {
+        categoryNodeIdByPath.set(categoryPath, node.id);
+      }
+    });
     simNodes.forEach((n) => {
       if (n.id === centerNodeId) {
         ids.add(n.id);
@@ -1186,10 +1322,24 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const matchedIds = Array.from(ids);
     matchedIds.forEach((nodeId) => {
       let current = nodeById.get(nodeId);
-      while (current?.parent_memory_id && nodeById.has(current.parent_memory_id)) {
-        ids.add(current.parent_memory_id);
-        current = nodeById.get(current.parent_memory_id);
+      while (current) {
+        const graphParentId = getGraphParentId(current, nodeById);
+        if (!graphParentId || !nodeById.has(graphParentId)) {
+          break;
+        }
+        ids.add(graphParentId);
+        current = nodeById.get(graphParentId);
       }
+      const node = nodeById.get(nodeId);
+      if (!node || isStructureMemoryNode(node)) {
+        return;
+      }
+      getMemoryCategoryPrefixes(node).forEach((prefix) => {
+        const categoryNodeId = categoryNodeIdByPath.get(prefix);
+        if (categoryNodeId) {
+          ids.add(categoryNodeId);
+        }
+      });
     });
     return ids;
   }, [activeCategories, activeSources, activeTimeRange, activeTypes, centerNodeId, simNodes]);
@@ -1221,7 +1371,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       Math.max(
         0,
         ...simNodes
-          .filter((node) => isOrdinaryMemoryNode(node))
+          .filter((node) => isFactMemoryNode(node))
           .map((node) => getMemoryRetrievalCount(node)),
       ),
     [simNodes],
@@ -1257,6 +1407,54 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const hasSearch = searchMatchIds !== null;
     const isEditActive = Boolean(editMode && selectedNode);
     const activeNodeId = selectedNode?.id || null;
+    const centerNode = simNodeById.get(centerNodeId) ?? null;
+
+    if (isOrbitMode && centerNode) {
+      const orbitBands = [220, 360, 520];
+      orbitBands.forEach((band, index) => {
+        ctx.beginPath();
+        ctx.ellipse(
+          centerNode.x,
+          centerNode.y,
+          band,
+          band * 0.72,
+          0,
+          0,
+          Math.PI * 2,
+        );
+        ctx.strokeStyle =
+          index === 0
+            ? "rgba(222, 181, 142, 0.26)"
+            : index === 1
+              ? "rgba(144, 139, 255, 0.14)"
+              : "rgba(214, 196, 244, 0.12)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+
+      simNodes.forEach((node) => {
+        if (
+          node.id === centerNodeId ||
+          !visibleNodeIds.has(node.id) ||
+          isFileMemoryNode(node)
+        ) {
+          return;
+        }
+        const isRootBranch =
+          !getGraphParentId(node, simNodeById) || getGraphParentId(node, simNodeById) === centerNodeId;
+        if (!isRootBranch) {
+          return;
+        }
+        const halo = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, 84);
+        halo.addColorStop(0, "rgba(235, 173, 132, 0.18)");
+        halo.addColorStop(0.45, "rgba(235, 173, 132, 0.08)");
+        halo.addColorStop(1, "rgba(235, 173, 132, 0)");
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 84, 0, Math.PI * 2);
+        ctx.fillStyle = halo;
+        ctx.fill();
+      });
+    }
 
     /* ── Draw edges ── */
     simLinks.forEach((link) => {
@@ -1553,7 +1751,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           ctx.setLineDash([4, 3]);
         }
         ctx.strokeStyle = "#fff";
-        ctx.lineWidth = isSummaryMemoryNode(node) ? 2.4 : 1.5;
+        ctx.lineWidth = getMemoryNodeRole(node) === "summary" ? 2.4 : 1.5;
         ctx.stroke();
         ctx.setLineDash([]);
 
@@ -1573,7 +1771,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           ctx.stroke();
         }
 
-        if (isSummaryMemoryNode(node)) {
+        if (getMemoryNodeRole(node) === "summary") {
           ctx.beginPath();
           ctx.arc(node.x, node.y, Math.max(radius - 6, 6), 0, Math.PI * 2);
           ctx.strokeStyle = "rgba(255, 246, 221, 0.95)";
@@ -1714,9 +1912,11 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           if (isFileMemoryNode(node)) {
             return -12;
           }
-          return isCategoryPathMemoryNode(node)
+          return getMemoryNodeRole(node) === "structure"
             ? (isOrbitMode ? -178 : -140)
-            : (isOrbitMode ? -196 : -160);
+            : getMemoryNodeRole(node) === "theme"
+              ? (isOrbitMode ? -188 : -150)
+              : (isOrbitMode ? -196 : -160);
         }),
       )
       .force("collide", d3.forceCollide<SimNode>((d) => nodeRadius(d, d.id === centerNodeId) + 8))
@@ -1896,9 +2096,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           } else if (
             targetNode &&
             sourceNode.id !== targetNode.id &&
-            !isFileMemoryNode(targetNode)
+            !isFileMemoryNode(targetNode) &&
+            canPrimaryParentChildren(targetNode)
           ) {
             onUpdateMemory(sourceNode.id, { parent_memory_id: targetNode.id }).catch(() => {});
+          } else if (targetNode && !isFileMemoryNode(targetNode)) {
+            void modal.alert(t("graph.invalidParentTarget"));
           }
         } else if (
           targetNode &&
@@ -2167,7 +2370,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (node) =>
           visibleNodeIds.has(node.id) &&
           (!searchMatchIds || searchMatchIds.has(node.id)) &&
-          isOrdinaryMemoryNode(node),
+          getGraphNodeDisplayType(node) === "memory",
       ).length,
     [nodes, searchMatchIds, visibleNodeIds],
   );
@@ -2264,12 +2467,6 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           <span className="graph-mode-hud-kicker">
             {isOrbitMode ? t("graph.modeOrbit") : t("graph.modeWorkbench")}
           </span>
-          <h3 className="graph-mode-hud-title">
-            {isOrbitMode ? t("graph.modeOrbitTitle") : t("graph.modeWorkbenchTitle")}
-          </h3>
-          <p className="graph-mode-hud-copy">
-            {isOrbitMode ? t("graph.modeOrbitBody") : t("graph.modeWorkbenchBody")}
-          </p>
         </div>
 
         <canvas

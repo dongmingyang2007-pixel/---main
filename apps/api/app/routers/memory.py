@@ -39,8 +39,10 @@ from app.services.memory_graph_events import bump_project_memory_graph_revision
 from app.services.memory_metadata import (
     add_related_edge_exclusion,
     has_manual_parent_binding,
+    is_concept_memory,
     is_category_path_memory,
     is_structural_only_memory,
+    is_summary_memory,
     normalize_memory_metadata,
     remove_related_edge_exclusion,
     set_manual_parent_binding,
@@ -55,6 +57,9 @@ from app.services.memory_visibility import (
 )
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
+ORDINARY_PARENT_FORBIDDEN_MESSAGE = (
+    "Ordinary memories must stay as leaf nodes. Use a structure, concept, or summary node as the primary parent instead."
+)
 
 
 def _is_completed_data_item(item: DataItem) -> bool:
@@ -124,6 +129,25 @@ def _verify_parent_memory(
     if parent.project_id != project_id:
         raise ApiError("not_found", "Parent memory not found", status_code=404)
     return parent
+
+
+def _can_hold_primary_children(parent: Memory) -> bool:
+    return (
+        is_assistant_root_memory(parent)
+        or is_category_path_memory(parent)
+        or is_concept_memory(parent)
+        or is_summary_memory(parent)
+    )
+
+
+def _assert_supported_primary_parent(parent: Memory) -> None:
+    if _can_hold_primary_children(parent):
+        return
+    raise ApiError(
+        "bad_request",
+        ORDINARY_PARENT_FORBIDDEN_MESSAGE,
+        status_code=400,
+    )
 
 
 def _strip_parent_binding_fields(metadata: dict[str, object] | None) -> dict[str, object]:
@@ -516,10 +540,10 @@ def create_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
-    root_memory, root_changed = ensure_project_assistant_root(db, project, reparent_orphans=True)
+    root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=True)
     requested_parent_id = payload.parent_memory_id
     if requested_parent_id:
-        _verify_parent_memory(
+        requested_parent = _verify_parent_memory(
             db,
             parent_memory_id=requested_parent_id,
             project_id=payload.project_id,
@@ -527,6 +551,7 @@ def create_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+        _assert_supported_primary_parent(requested_parent)
     resolved_parent_id = requested_parent_id or root_memory.id
     metadata_input = _strip_parent_binding_fields(payload.metadata_json)
     if parent_field_present:
@@ -536,6 +561,10 @@ def create_memory(
                 None if resolved_parent_id == root_memory.id else resolved_parent_id
             ),
         )
+
+    # Materialize the current tree before inserting the new memory so the
+    # category-tree sync cannot immediately rewrite the fresh row's parent.
+    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=payload.project_id)
 
     memory = Memory(
         workspace_id=workspace_id,
@@ -556,7 +585,6 @@ def create_memory(
     )
     db.add(memory)
     db.flush()
-    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=payload.project_id)
     db.commit()
     _bump_graph_revision(workspace_id=workspace_id, project_id=payload.project_id)
     db.refresh(memory)
@@ -859,6 +887,7 @@ def update_memory(
                 current_user_id=current_user.id,
                 workspace_role=workspace_role,
             )
+            _assert_supported_primary_parent(parent_memory)
             _assert_valid_parent_assignment(
                 db,
                 memory_id=memory.id,

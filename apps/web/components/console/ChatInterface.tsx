@@ -35,6 +35,7 @@ import {
 interface ChatInterfaceProps {
   conversationId?: string | null;
   projectId?: string | null;
+  isConversationPending?: boolean;
   onConversationActivity?: (payload: {
     conversationId: string;
     previewText: string;
@@ -48,6 +49,7 @@ interface ChatInterfaceProps {
 export function ChatInterface({
   conversationId,
   projectId,
+  isConversationPending = false,
   onConversationActivity,
   onConversationLoaded,
 }: ChatInterfaceProps) {
@@ -57,11 +59,15 @@ export function ChatInterface({
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
-  const [projectDefaultMode, setProjectDefaultMode] = useState<ChatMode>("standard");
+  const [projectDefaultMode, setProjectDefaultMode] =
+    useState<ChatMode>("standard");
   const [pipelineItems, setPipelineItems] = useState<PipelineConfigItem[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogModelItem[]>([]);
-  const [conversationModeOverrides, setConversationModeOverrides] = useState<Record<string, ChatMode>>({});
-  const [sessionModeOverride, setSessionModeOverride] = useState<ChatMode | null>(null);
+  const [conversationModeOverrides, setConversationModeOverrides] = useState<
+    Record<string, ChatMode>
+  >({});
+  const [sessionModeOverride, setSessionModeOverride] =
+    useState<ChatMode | null>(null);
   const [voiceSessionState, setVoiceSessionState] = useState("idle");
   const [liveDictationText, setLiveDictationText] = useState("");
   const [isLiveDictating, setIsLiveDictating] = useState(false);
@@ -78,12 +84,13 @@ export function ChatInterface({
     Array<{
       userRuntimeId: string | null;
       assistantRuntimeId: string | null;
-      userText: string;
-      assistantText: string;
     }>
   >([]);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const streamAbortReasonRef = useRef<"user" | "no_first_event" | "idle" | null>(null);
+  const streamAbortReasonRef = useRef<
+    "user" | "no_first_event" | "idle" | null
+  >(null);
+  const requestGenerationRef = useRef(0);
   const runtimeMessageCounterRef = useRef(0);
   const memoryExtractionSyncInFlightRef = useRef(false);
   const liveTurnIdsRef = useRef<{
@@ -107,8 +114,21 @@ export function ChatInterface({
     runtimeMessageCounterRef.current += 1;
     return `${prefix}-${Date.now()}-${runtimeMessageCounterRef.current}`;
   }, []);
-  const queueAutoRead = useCallback((messageId: string, audioBase64?: string | null) => {
-    setPendingAutoRead({ messageId, audioBase64 });
+  const queueAutoRead = useCallback(
+    (messageId: string, audioBase64?: string | null) => {
+      setPendingAutoRead({ messageId, audioBase64 });
+    },
+    [],
+  );
+  const invalidateActiveRequest = useCallback(() => {
+    requestGenerationRef.current += 1;
+    streamAbortReasonRef.current = "user";
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsTyping(false);
+    setIsStreamingActive(false);
+    setPendingAutoRead(null);
+    messageListRef.current?.stopPlayback();
   }, []);
 
   useEffect(() => {
@@ -139,17 +159,27 @@ export function ChatInterface({
   }, [messages]);
 
   useEffect(() => {
+    invalidateActiveRequest();
+    liveTurnIdsRef.current = { userId: null, assistantId: null };
+    pendingRealtimeTurnPersistenceRef.current = [];
+  }, [conversationId, invalidateActiveRequest, projectId]);
+
+  useEffect(() => {
     if (!pendingAutoRead) {
       return;
     }
 
-    const targetMessage = messages.find((message) => message.id === pendingAutoRead.messageId);
+    const targetMessage = messages.find(
+      (message) => message.id === pendingAutoRead.messageId,
+    );
     if (!targetMessage || targetMessage.isStreaming) {
       return;
     }
 
     const hasPlayableContent = Boolean(
-      targetMessage.content.trim() || targetMessage.audioBase64 || pendingAutoRead.audioBase64,
+      targetMessage.content.trim() ||
+      targetMessage.audioBase64 ||
+      pendingAutoRead.audioBase64,
     );
     if (!hasPlayableContent) {
       return;
@@ -187,12 +217,23 @@ export function ChatInterface({
         if (cancelled) {
           return;
         }
-        const nextPipeline = Array.isArray(pipelineData.items) ? pipelineData.items : [];
+        const nextPipeline = Array.isArray(pipelineData.items)
+          ? pipelineData.items
+          : [];
         const nextCatalog = Array.isArray(catalogData) ? catalogData : [];
-        const llmModelId = getPipelineModelId(nextPipeline, "llm", "qwen3.5-plus");
-        const syntheticSupported = modelSupportsCapability(nextCatalog, llmModelId, "vision");
+        const llmModelId = getPipelineModelId(
+          nextPipeline,
+          "llm",
+          "qwen3.5-plus",
+        );
+        const syntheticSupported = modelSupportsCapability(
+          nextCatalog,
+          llmModelId,
+          "vision",
+        );
         const nextDefault =
-          projectData.default_chat_mode === "synthetic_realtime" && !syntheticSupported
+          projectData.default_chat_mode === "synthetic_realtime" &&
+          !syntheticSupported
             ? "standard"
             : projectData.default_chat_mode || "standard";
         setPipelineItems(nextPipeline);
@@ -295,14 +336,18 @@ export function ChatInterface({
           if (!payload.id) {
             return;
           }
-          pendingAssistantMetadataRef.current[payload.id] = payload.metadata_json ?? {};
+          pendingAssistantMetadataRef.current[payload.id] =
+            payload.metadata_json ?? {};
           setMessages((prev) =>
             prev.map((message) => {
               if (message.id !== payload.id) {
                 return message;
               }
               delete pendingAssistantMetadataRef.current[payload.id];
-              return mergeAssistantMetadataPatch(message, payload.metadata_json);
+              return mergeAssistantMetadataPatch(
+                message,
+                payload.metadata_json,
+              );
             }),
           );
         } catch {
@@ -389,6 +434,10 @@ export function ChatInterface({
         return;
       }
 
+      const requestGeneration = ++requestGenerationRef.current;
+      const isCurrentRequest = () =>
+        requestGenerationRef.current === requestGeneration;
+
       const imageFile = options.imageFile ?? null;
       const enableThinking = options.enableThinking ?? null;
       const enableSearch = options.enableSearch ?? null;
@@ -430,6 +479,9 @@ export function ChatInterface({
             `/api/v1/chat/conversations/${conversationId}/image`,
             formData,
           );
+          if (!isCurrentRequest()) {
+            return;
+          }
 
           const assistantMessage: Message = {
             ...toMessage(response.message),
@@ -443,6 +495,9 @@ export function ChatInterface({
             queueAutoRead(assistantMessage.id, response.audio_response);
           }
         } catch (error) {
+          if (!isCurrentRequest()) {
+            return;
+          }
           const errorContent = isApiRequestError(error)
             ? getApiErrorMessage(error, t)
             : t("errors.imageUploadFailed");
@@ -455,7 +510,9 @@ export function ChatInterface({
             },
           ]);
         } finally {
-          setIsTyping(false);
+          if (isCurrentRequest()) {
+            setIsTyping(false);
+          }
         }
         return;
       }
@@ -509,7 +566,9 @@ export function ChatInterface({
         updater: (current: Message | null) => Message,
       ) => {
         setMessages((prev) => {
-          const index = prev.findIndex((message) => message.id === tempAssistantId);
+          const index = prev.findIndex(
+            (message) => message.id === tempAssistantId,
+          );
           const current = index >= 0 ? prev[index] : null;
           const nextMessage = updater(current);
           if (index === -1) {
@@ -524,7 +583,9 @@ export function ChatInterface({
         final: Omit<Message, "role"> & { role?: "assistant" },
       ) => {
         setMessages((prev) => {
-          const index = prev.findIndex((message) => message.id === tempAssistantId);
+          const index = prev.findIndex(
+            (message) => message.id === tempAssistantId,
+          );
           const current = index >= 0 ? prev[index] : null;
           const nextMessage: Message = {
             id: final.id,
@@ -537,12 +598,19 @@ export function ChatInterface({
             memories_extracted: final.memories_extracted,
             extracted_facts: final.extracted_facts,
             memory_extraction_status:
-              final.memory_extraction_status ?? current?.memory_extraction_status ?? null,
+              final.memory_extraction_status ??
+              current?.memory_extraction_status ??
+              null,
             memory_extraction_attempts:
-              final.memory_extraction_attempts ?? current?.memory_extraction_attempts ?? null,
+              final.memory_extraction_attempts ??
+              current?.memory_extraction_attempts ??
+              null,
             memory_extraction_error:
-              final.memory_extraction_error ?? current?.memory_extraction_error ?? null,
-            animateOnMount: final.animateOnMount ?? current?.animateOnMount ?? false,
+              final.memory_extraction_error ??
+              current?.memory_extraction_error ??
+              null,
+            animateOnMount:
+              final.animateOnMount ?? current?.animateOnMount ?? false,
             isStreaming: final.isStreaming,
           };
           if (index === -1) {
@@ -561,10 +629,15 @@ export function ChatInterface({
         setIsStreamingActive(true);
         const armWatchdog = () => {
           clearWatchdog();
-          watchdogTimeout = setTimeout(() => {
-            streamAbortReasonRef.current = sawStreamEvent ? "idle" : "no_first_event";
-            abortController.abort();
-          }, sawStreamEvent ? 45000 : 15000);
+          watchdogTimeout = setTimeout(
+            () => {
+              streamAbortReasonRef.current = sawStreamEvent
+                ? "idle"
+                : "no_first_event";
+              abortController.abort();
+            },
+            sawStreamEvent ? 45000 : 15000,
+          );
         };
 
         const assistantPlaceholder: Message = {
@@ -583,6 +656,9 @@ export function ChatInterface({
           streamBody,
           abortController.signal,
         )) {
+          if (!isCurrentRequest()) {
+            break;
+          }
           sawStreamEvent = true;
           armWatchdog();
           if (event.event === "token") {
@@ -597,8 +673,10 @@ export function ChatInterface({
               audioBase64: current?.audioBase64 ?? null,
               memories_extracted: current?.memories_extracted,
               extracted_facts: current?.extracted_facts,
-              memory_extraction_status: current?.memory_extraction_status ?? null,
-              memory_extraction_attempts: current?.memory_extraction_attempts ?? null,
+              memory_extraction_status:
+                current?.memory_extraction_status ?? null,
+              memory_extraction_attempts:
+                current?.memory_extraction_attempts ?? null,
               memory_extraction_error: current?.memory_extraction_error ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
@@ -615,22 +693,29 @@ export function ChatInterface({
               audioBase64: current?.audioBase64 ?? null,
               memories_extracted: current?.memories_extracted,
               extracted_facts: current?.extracted_facts,
-              memory_extraction_status: current?.memory_extraction_status ?? null,
-              memory_extraction_attempts: current?.memory_extraction_attempts ?? null,
+              memory_extraction_status:
+                current?.memory_extraction_status ?? null,
+              memory_extraction_attempts:
+                current?.memory_extraction_attempts ?? null,
               memory_extraction_error: current?.memory_extraction_error ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
             }));
           } else if (event.event === "message_done") {
             const finalId = (event.data.id as string) || tempAssistantId;
-            const finalContent = typeof event.data.content === "string" ? event.data.content : "";
+            const finalContent =
+              typeof event.data.content === "string" ? event.data.content : "";
             const finalReasoning =
               typeof event.data.reasoning_content === "string"
                 ? event.data.reasoning_content
                 : null;
-            const memoriesExtracted = event.data.memories_extracted as string | undefined;
+            const memoriesExtracted = event.data.memories_extracted as
+              | string
+              | undefined;
             const sources = normalizeSearchSources(event.data.sources);
-            const retrievalTrace = normalizeRetrievalTrace(event.data.retrieval_trace);
+            const retrievalTrace = normalizeRetrievalTrace(
+              event.data.retrieval_trace,
+            );
             const memoryExtractionStatus =
               typeof event.data.memory_extraction_status === "string"
                 ? event.data.memory_extraction_status
@@ -670,15 +755,23 @@ export function ChatInterface({
           }
         }
         clearWatchdog();
+        if (!isCurrentRequest()) {
+          return;
+        }
 
         if (!finalizedAssistantId) {
           finalizedAssistantId = tempAssistantId;
           finalizeStreamingAssistant({
             id: tempAssistantId,
             isStreaming: false,
-            content: messagesRef.current.find((message) => message.id === tempAssistantId)?.content ?? "",
+            content:
+              messagesRef.current.find(
+                (message) => message.id === tempAssistantId,
+              )?.content ?? "",
             reasoningContent:
-              messagesRef.current.find((message) => message.id === tempAssistantId)?.reasoningContent ?? null,
+              messagesRef.current.find(
+                (message) => message.id === tempAssistantId,
+              )?.reasoningContent ?? null,
           });
         }
 
@@ -697,37 +790,53 @@ export function ChatInterface({
           streamStatus === 404 || streamStatus === 405 || streamStatus === 501;
         const abortReason = streamAbortReasonRef.current;
         clearWatchdog();
+        if (!isCurrentRequest()) {
+          return;
+        }
 
         if (error instanceof DOMException && error.name === "AbortError") {
-          const currentStreamingMessage = messagesRef.current.find((message) => message.id === tempAssistantId);
+          const currentStreamingMessage = messagesRef.current.find(
+            (message) => message.id === tempAssistantId,
+          );
           if (abortReason === "user") {
             finalizeStreamingAssistant({
               id: tempAssistantId,
               isStreaming: false,
               content: currentStreamingMessage?.content ?? "",
-              reasoningContent: currentStreamingMessage?.reasoningContent ?? null,
+              reasoningContent:
+                currentStreamingMessage?.reasoningContent ?? null,
             });
           } else {
             finalizeStreamingAssistant({
               id: tempAssistantId,
               isStreaming: false,
-              content: currentStreamingMessage?.content?.trim() || t("errors.streamError"),
-              reasoningContent: currentStreamingMessage?.reasoningContent ?? null,
+              content:
+                currentStreamingMessage?.content?.trim() ||
+                t("errors.streamError"),
+              reasoningContent:
+                currentStreamingMessage?.reasoningContent ?? null,
             });
             if (conversationId) {
               window.setTimeout(() => {
-                void syncConversationMessages(conversationId);
+                if (isCurrentRequest()) {
+                  void syncConversationMessages(conversationId);
+                }
               }, 1500);
             }
           }
         } else if (streamUnavailable) {
-          setMessages((prev) => prev.filter((message) => message.id !== tempAssistantId));
+          setMessages((prev) =>
+            prev.filter((message) => message.id !== tempAssistantId),
+          );
           try {
             setIsTyping(true);
             const response = await apiPost<ApiMessage>(
               `/api/v1/chat/conversations/${conversationId}/messages`,
               streamBody,
             );
+            if (!isCurrentRequest()) {
+              return;
+            }
             const aiMessage: Message = {
               ...toMessage(response),
               id: response.id || nextRuntimeMessageId("a"),
@@ -739,6 +848,9 @@ export function ChatInterface({
               queueAutoRead(aiMessage.id);
             }
           } catch (fallbackError) {
+            if (!isCurrentRequest()) {
+              return;
+            }
             const errorContent = isApiRequestError(fallbackError)
               ? getApiErrorMessage(fallbackError, t)
               : t("errors.generic");
@@ -751,7 +863,9 @@ export function ChatInterface({
               },
             ]);
           } finally {
-            setIsTyping(false);
+            if (isCurrentRequest()) {
+              setIsTyping(false);
+            }
           }
         } else if (streamStarted) {
           // Stream failed after starting — show error in the existing placeholder
@@ -769,6 +883,9 @@ export function ChatInterface({
               `/api/v1/chat/conversations/${conversationId}/messages`,
               streamBody,
             );
+            if (!isCurrentRequest()) {
+              return;
+            }
             const aiMessage: Message = {
               ...toMessage(response),
               id: response.id || nextRuntimeMessageId("a"),
@@ -780,6 +897,9 @@ export function ChatInterface({
               queueAutoRead(aiMessage.id);
             }
           } catch (fallbackError) {
+            if (!isCurrentRequest()) {
+              return;
+            }
             const errorContent = isApiRequestError(fallbackError)
               ? getApiErrorMessage(fallbackError, t)
               : t("errors.generic");
@@ -792,14 +912,18 @@ export function ChatInterface({
               },
             ]);
           } finally {
-            setIsTyping(false);
+            if (isCurrentRequest()) {
+              setIsTyping(false);
+            }
           }
         }
       } finally {
         clearWatchdog();
-        abortControllerRef.current = null;
-        streamAbortReasonRef.current = null;
-        setIsStreamingActive(false);
+        if (isCurrentRequest()) {
+          abortControllerRef.current = null;
+          streamAbortReasonRef.current = null;
+          setIsStreamingActive(false);
+        }
       }
     },
     [
@@ -808,6 +932,7 @@ export function ChatInterface({
       isStreamingActive,
       isTyping,
       onConversationActivity,
+      nextRuntimeMessageId,
       queueAutoRead,
       syncConversationMessages,
       t,
@@ -826,7 +951,9 @@ export function ChatInterface({
         if (!currentId) {
           return;
         }
-        setMessages((prev) => prev.filter((message) => message.id !== currentId));
+        setMessages((prev) =>
+          prev.filter((message) => message.id !== currentId),
+        );
         liveTurnIdsRef.current[slot] = null;
         return;
       }
@@ -932,7 +1059,9 @@ export function ChatInterface({
         if (normalizedAssistantText) {
           const assistantId = liveTurnIdsRef.current.assistantId;
           if (assistantId) {
-            const index = next.findIndex((message) => message.id === assistantId);
+            const index = next.findIndex(
+              (message) => message.id === assistantId,
+            );
             if (index >= 0) {
               next[index] = {
                 ...next[index],
@@ -952,8 +1081,6 @@ export function ChatInterface({
         pendingRealtimeTurnPersistenceRef.current.push({
           userRuntimeId: liveTurnIdsRef.current.userId,
           assistantRuntimeId: liveTurnIdsRef.current.assistantId,
-          userText: normalizedUserText,
-          assistantText: normalizedAssistantText,
         });
       }
       liveTurnIdsRef.current = { userId: null, assistantId: null };
@@ -963,28 +1090,9 @@ export function ChatInterface({
 
   const handleRealtimeTurnPersisted = useCallback(
     ({ userMessage, assistantMessage }: PersistedRealtimeTurnPayload) => {
-      const normalizeText = (value?: string | null) => (typeof value === "string" ? value.trim() : "");
-      const persistedUserText = normalizeText(userMessage?.content);
-      const persistedAssistantText = normalizeText(assistantMessage?.content);
-
-      const queuedTurns = pendingRealtimeTurnPersistenceRef.current;
-      let queuedTurn:
-        | {
-            userRuntimeId: string | null;
-            assistantRuntimeId: string | null;
-            userText: string;
-            assistantText: string;
-          }
-        | undefined;
-      const queuedIndex = queuedTurns.findIndex(
-        (entry) =>
-          (!persistedUserText || entry.userText === persistedUserText) &&
-          (!persistedAssistantText || entry.assistantText === persistedAssistantText),
-      );
-      if (queuedIndex >= 0) {
-        queuedTurn = queuedTurns.splice(queuedIndex, 1)[0];
-      } else if (queuedTurns.length > 0) {
-        queuedTurn = queuedTurns.shift();
+      const queuedTurn = pendingRealtimeTurnPersistenceRef.current.shift();
+      if (!queuedTurn) {
+        return;
       }
 
       setMessages((prev) => {
@@ -1003,13 +1111,19 @@ export function ChatInterface({
             animateOnMount: false,
             isStreaming: false,
           };
-          const pendingMetadata = pendingAssistantMetadataRef.current[persistedMessage.id];
+          const pendingMetadata =
+            pendingAssistantMetadataRef.current[persistedMessage.id];
           if (pendingMetadata) {
             delete pendingAssistantMetadataRef.current[persistedMessage.id];
-            persistedMessage = mergeAssistantMetadataPatch(persistedMessage, pendingMetadata);
+            persistedMessage = mergeAssistantMetadataPatch(
+              persistedMessage,
+              pendingMetadata,
+            );
           }
 
-          const existingPersistentIndex = next.findIndex((message) => message.id === persistedMessage.id);
+          const existingPersistentIndex = next.findIndex(
+            (message) => message.id === persistedMessage.id,
+          );
           if (existingPersistentIndex >= 0) {
             next[existingPersistentIndex] = {
               ...next[existingPersistentIndex],
@@ -1021,7 +1135,9 @@ export function ChatInterface({
           }
 
           if (runtimeId) {
-            const runtimeIndex = next.findIndex((message) => message.id === runtimeId);
+            const runtimeIndex = next.findIndex(
+              (message) => message.id === runtimeId,
+            );
             if (runtimeIndex >= 0) {
               next[runtimeIndex] = {
                 ...next[runtimeIndex],
@@ -1036,8 +1152,14 @@ export function ChatInterface({
           next.push(persistedMessage);
         };
 
-        applyPersistedMessage(userMessage as ApiMessage | undefined, queuedTurn?.userRuntimeId);
-        applyPersistedMessage(assistantMessage as ApiMessage | undefined, queuedTurn?.assistantRuntimeId);
+        applyPersistedMessage(
+          userMessage as ApiMessage | undefined,
+          queuedTurn?.userRuntimeId,
+        );
+        applyPersistedMessage(
+          assistantMessage as ApiMessage | undefined,
+          queuedTurn?.assistantRuntimeId,
+        );
         return next;
       });
     },
@@ -1047,27 +1169,7 @@ export function ChatInterface({
   const chatMode =
     conversationId && conversationModeOverrides[conversationId]
       ? conversationModeOverrides[conversationId]
-      : sessionModeOverride ?? projectDefaultMode;
-
-  useEffect(() => {
-    if (!conversationId || !sessionModeOverride) {
-      return;
-    }
-    setConversationModeOverrides((prev) => {
-      if (prev[conversationId] === sessionModeOverride) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [conversationId]: sessionModeOverride,
-      };
-    });
-  }, [conversationId, sessionModeOverride]);
-
-  useEffect(() => {
-    liveTurnIdsRef.current = { userId: null, assistantId: null };
-    pendingRealtimeTurnPersistenceRef.current = [];
-  }, [conversationId]);
+      : (sessionModeOverride ?? projectDefaultMode);
 
   useEffect(() => {
     setLiveDictationText("");
@@ -1076,7 +1178,7 @@ export function ChatInterface({
 
   useEffect(() => {
     setSessionModeOverride(null);
-  }, [projectId]);
+  }, [conversationId, projectId]);
 
   const handleLiveDictationDraftChange = useCallback((text: string) => {
     setVoiceNotice(null);
@@ -1144,58 +1246,86 @@ export function ChatInterface({
   }, []);
 
   const llmModelId = getPipelineModelId(pipelineItems, "llm", "qwen3.5-plus");
-  const syntheticModeAvailable = modelSupportsCapability(catalogItems, llmModelId, "vision");
-  const syntheticVideoAvailable = modelSupportsCapability(catalogItems, llmModelId, "video");
-  const webSearchAvailable = modelSupportsCapability(catalogItems, llmModelId, "web_search");
+  const syntheticModeAvailable = modelSupportsCapability(
+    catalogItems,
+    llmModelId,
+    "vision",
+  );
+  const syntheticVideoAvailable = modelSupportsCapability(
+    catalogItems,
+    llmModelId,
+    "video",
+  );
+  const webSearchAvailable = modelSupportsCapability(
+    catalogItems,
+    llmModelId,
+    "web_search",
+  );
   const isStandardMode = chatMode === "standard";
   const noConversation = !conversationId;
+  const interactionDisabled = noConversation || isConversationPending;
   const workspaceHint = noConversation
     ? t("emptyHint")
     : messages.length === 0 && !loadingMessages
       ? t("emptyConversationHint")
       : t("description");
+  const currentModeLabel =
+    chatMode === "omni_realtime"
+      ? t("mode.omni")
+      : chatMode === "synthetic_realtime"
+        ? t("mode.synthetic")
+        : t("mode.standard");
 
   return (
     <div className="chat-interface">
-      <div className="chat-workspace-header" style={{ padding: "20px 24px 14px" }} data-testid="chat-workspace-header">
+      <header
+        className="chat-workspace-header"
+        data-testid="chat-workspace-header"
+      >
         <div className="chat-workspace-copy">
           <div className="chat-workspace-kicker">{t("title")}</div>
           <div className="chat-workspace-description">{workspaceHint}</div>
         </div>
 
-        <div className="chat-workspace-controls" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="chat-workspace-controls">
           <ChatModePanel
             chatMode={chatMode}
             projectDefaultMode={projectDefaultMode}
             syntheticModeAvailable={syntheticModeAvailable}
             onModeChange={handleModeChange}
-            disabled={noConversation}
+            disabled={interactionDisabled}
           />
           {conversationId ? (
-            <span className="chat-workspace-badge" data-testid="chat-toolbar-state">
+            <span
+              className="chat-workspace-badge"
+              data-testid="chat-toolbar-state"
+            >
+              {currentModeLabel} ·{" "}
               {t("toolbar.messages", { count: messages.length })}
             </span>
           ) : null}
         </div>
+      </header>
+
+      <div className="chat-interface-body">
+        {loadingMessages && (
+          <div className="chat-messages">
+            <div className="chat-empty">...</div>
+          </div>
+        )}
+
+        {!loadingMessages && (
+          <ChatMessageList
+            ref={messageListRef}
+            messages={messages}
+            onMessagesChange={setMessages}
+            isTyping={isTyping}
+            conversationId={conversationId}
+            noConversation={noConversation}
+            onError={setVoiceNotice}
+          />
+        )}
       </div>
-
-      {loadingMessages && (
-        <div className="chat-messages">
-          <div className="chat-empty">...</div>
-        </div>
-      )}
-
-      {!loadingMessages && (
-        <ChatMessageList
-          ref={messageListRef}
-          messages={messages}
-          onMessagesChange={setMessages}
-          isTyping={isTyping}
-          conversationId={conversationId}
-          noConversation={noConversation}
-          onError={setVoiceNotice}
-        />
-      )}
 
       {isStreamingActive && (
         <div className="chat-stop-generating">
@@ -1212,48 +1342,53 @@ export function ChatInterface({
         </div>
       )}
 
-      <div className="chat-input-bar-voice">
-        {isStandardMode && conversationId && projectId ? (
-          <StandardVoiceControls
-            conversationId={conversationId}
-            projectId={projectId}
-            isTyping={isTyping}
-            disabled={noConversation}
-            onDictationDraftChange={handleLiveDictationDraftChange}
-            onDictationStateChange={setIsLiveDictating}
-            onError={setVoiceNotice}
-          />
+      <div className="chat-composer-shell">
+        {voiceNotice ? (
+          <div className="chat-voice-indicator is-error">{voiceNotice}</div>
         ) : null}
-        <ChatInputBar
-          onSend={(content, options) => void handleSend(content, options)}
-          disabled={noConversation}
-          isTyping={isTyping || isStreamingActive}
-          isStandardMode={isStandardMode}
-          searchAvailable={webSearchAvailable}
-          autoReadEnabled={autoReadEnabled}
-          onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
-          liveExternalInputText={liveDictationText}
-          isLiveExternalInputActive={isLiveDictating}
-        />
+        <div className="chat-input-bar-voice">
+          {isStandardMode && conversationId && projectId ? (
+            <StandardVoiceControls
+              conversationId={conversationId}
+              projectId={projectId}
+              isTyping={isTyping}
+              disabled={interactionDisabled}
+              onDictationDraftChange={handleLiveDictationDraftChange}
+              onDictationStateChange={setIsLiveDictating}
+              onError={setVoiceNotice}
+            />
+          ) : null}
+          <ChatInputBar
+            onSend={(content, options) => void handleSend(content, options)}
+            disabled={interactionDisabled}
+            isTyping={isTyping || isStreamingActive}
+            isStandardMode={isStandardMode}
+            searchAvailable={webSearchAvailable}
+            autoReadEnabled={autoReadEnabled}
+            onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
+            liveExternalInputText={liveDictationText}
+            isLiveExternalInputActive={isLiveDictating}
+          />
+        </div>
       </div>
 
-      {voiceNotice && (
-        <div className="chat-voice-indicator is-error">{voiceNotice}</div>
-      )}
-
-      {conversationId && projectId && (chatMode === "omni_realtime" || (chatMode === "synthetic_realtime" && syntheticModeAvailable)) && (
-        <RealtimeVoicePanel
-          chatMode={chatMode}
-          conversationId={conversationId}
-          projectId={projectId}
-          allowVideoInput={syntheticVideoAvailable}
-          onTurnComplete={handleRealtimeTurnComplete}
-          onTurnPersisted={handleRealtimeTurnPersisted}
-          onTranscriptUpdate={handleLiveTranscriptUpdate}
-          onError={setVoiceNotice}
-          onStateChange={setVoiceSessionState}
-        />
-      )}
+      {conversationId &&
+        projectId &&
+        !isConversationPending &&
+        (chatMode === "omni_realtime" ||
+          (chatMode === "synthetic_realtime" && syntheticModeAvailable)) && (
+          <RealtimeVoicePanel
+            chatMode={chatMode}
+            conversationId={conversationId}
+            projectId={projectId}
+            allowVideoInput={syntheticVideoAvailable}
+            onTurnComplete={handleRealtimeTurnComplete}
+            onTurnPersisted={handleRealtimeTurnPersisted}
+            onTranscriptUpdate={handleLiveTranscriptUpdate}
+            onError={setVoiceNotice}
+            onStateChange={setVoiceSessionState}
+          />
+        )}
     </div>
   );
 }

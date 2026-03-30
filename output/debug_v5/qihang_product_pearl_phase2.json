@@ -1,6 +1,6 @@
 {
   "modelGlbPath": "output/debug_v5/qihang_product_pearl_phase2.glb",
-  "modelGlbSha256": "2011112cdb09278d2967cabc8e1b123a65417dc3614a3eeab704f88cd7d3ef58",
+  "modelGlbSha256": "c21dfc650217c7c482817a4e4e3111456fb144e2dc056e1e482e1ae4e3de35ed",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
@@ -10,10 +10,10 @@
     "nodes": 85,
     "meshes": 38,
     "materials": 21,
-    "bufferViews": 151,
-    "accessors": 151,
+    "bufferViews": 159,
+    "accessors": 159,
     "animations": 0,
-    "binBytes": 3626092
+    "binBytes": 4340476
   },
   "sceneRoots": [
     "QIHANG_Product"
@@ -486,7 +486,7 @@
   },
   "sourceInputPath": "output/debug_v4/qihang_product_pearl_phase3.glb",
   "sourceInputSha256": "fd274c48530a893621ae236262aa8a3a31ff7e00bd1ed8a6014eb834dcb1d900",
-  "outputSha256": "2011112cdb09278d2967cabc8e1b123a65417dc3614a3eeab704f88cd7d3ef58",
+  "outputSha256": "c21dfc650217c7c482817a4e4e3111456fb144e2dc056e1e482e1ae4e3de35ed",
   "phase": 2,
   "phaseName": "open_front_window_and_rebuild_sidewalls",
   "phaseLogs": [
@@ -589,16 +589,18 @@
       "diagnosticSheetPath": "output/debug_v5/qihang_product_pearl_phase2_six_views.png",
       "rebuildChangeLog": {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_and_rebuild_front_window_with_structured_patch",
+        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_and_mirror_positive_z_lip",
         "blockerRemovedTriangleCount": 86,
         "afterBlockerTriangleCount": 2474,
         "frontFaceRemovedTriangleCount": 2,
         "afterFrontFaceTriangleCount": 2472,
         "sidewallRemovedTriangleCount": 2,
         "afterSidewallTriangleCount": 2470,
-        "fillPatchTriangleCount": 34,
-        "finalTriangleCount": 2504,
-        "boundaryVertexCountBeforeFill": 36,
+        "slopedResidualRemovedTriangleCount": 20,
+        "afterSlopedResidualTriangleCount": 2450,
+        "fillPatchTriangleCount": 44,
+        "finalTriangleCount": 2494,
+        "boundaryVertexCountBeforeFill": 42,
         "boundaryEdgeCountAfterFill": 0,
         "blockerComponent": {
           "triangleIndices": [
@@ -815,109 +817,1207 @@
           "normalXMin": 0.8,
           "areaMm2Min": 1.0
         },
+        "slopedResidualComponent": {
+          "triangleIndices": [
+            802,
+            803,
+            804,
+            805,
+            820,
+            821,
+            822,
+            823,
+            838,
+            839,
+            840,
+            841,
+            856,
+            857,
+            858,
+            2310,
+            2311,
+            2312,
+            2313,
+            2314
+          ],
+          "triangleCount": 20,
+          "bboxMinShellLocalMm": [
+            15.8672,
+            -0.4961,
+            -39.622
+          ],
+          "bboxMaxShellLocalMm": [
+            19.1572,
+            10.1787,
+            -31.4612
+          ],
+          "bboxSizeShellLocalMm": [
+            3.29,
+            10.6748,
+            8.1609
+          ],
+          "selectionCenterRangesShellLocalMm": {
+            "x": [
+              16.0,
+              18.95
+            ],
+            "y": [
+              2.0,
+              10.8
+            ],
+            "z": [
+              -39.5,
+              -31.0
+            ]
+          }
+        },
+        "rimReference": {
+          "upperChainCount": 20,
+          "lowerChainCount": 20,
+          "xRangeMm": [
+            -35.5,
+            -1.5
+          ],
+          "yRangeMm": [
+            9.2,
+            9.4
+          ],
+          "zRangeMm": [
+            -16.5,
+            -12.5
+          ],
+          "upperChainEndpointsProductMm": [
+            [
+              -34.7195,
+              9.3684,
+              -13.3546
+            ],
+            [
+              -1.9367,
+              9.3025,
+              -16.3441
+            ]
+          ],
+          "lowerChainEndpointsProductMm": [
+            [
+              -34.2784,
+              9.25,
+              -12.6978
+            ],
+            [
+              -2.0229,
+              9.25,
+              -15.5505
+            ]
+          ]
+        },
         "fillPatchDebug": {
-          "boundaryVertexCount": 36,
-          "outerStripVertexCount": 16,
-          "innerStripVertexCount": 15,
-          "stripTriangleCount": 29,
-          "leftCapTriangleCount": 4,
-          "rightCapTriangleCount": 1,
+          "boundaryVertexCount": 42,
+          "outerStripVertexCount": 19,
+          "innerStripVertexCount": 19,
+          "stripTriangleCount": 36,
+          "localPatchTriangleCount": 8,
           "outerStripSlice": [
-            2,
-            18
+            1,
+            20
           ],
           "innerStripSlice": [
-            19,
-            34
+            20,
+            39
           ],
-          "leftCapLoopIndices": [
-            35,
-            0,
-            1,
-            2,
-            33,
-            34
+          "rimReferenceUpperChainCount": 20,
+          "rimReferenceLowerChainCount": 20,
+          "rimUpperMatchIndex": 1,
+          "rimLowerMatchIndex": 2,
+          "topUpperRightProductMm": [
+            -32.1873,
+            9.3601,
+            -14.6885
           ],
-          "rightCapLoopIndices": [
-            17,
-            18,
-            19
+          "topLowerLeftProductMm": [
+            -33.1132,
+            9.25,
+            -13.3779
           ],
           "patchBboxMinProductMm": [
-            -29.3323,
+            -34.8674,
             -0.95,
             -17.0
           ],
           "patchBboxMaxProductMm": [
             0.2643,
-            9.3501,
-            -14.8097
+            9.3644,
+            -13.3779
           ],
           "patchBboxSizeProductMm": [
-            29.5966,
-            10.3001,
-            2.1903
+            35.1317,
+            10.3144,
+            3.6221
           ],
           "stripBboxMinProductMm": [
-            -28.9333,
-            -0.7904,
+            -33.5059,
+            -0.95,
             -17.0
           ],
           "stripBboxMaxProductMm": [
             0.2643,
             -0.4561,
-            -16.0639
+            -14.8597
           ],
           "stripBboxSizeProductMm": [
-            29.1977,
-            0.3343,
-            0.9361
-          ],
-          "leftCapBboxMinProductMm": [
-            -29.3323,
-            -0.4564,
-            -16.8584
-          ],
-          "leftCapBboxMaxProductMm": [
-            -27.6859,
-            9.3501,
-            -14.8097
-          ],
-          "leftCapBboxSizeProductMm": [
-            1.6465,
-            9.8065,
-            2.0486
-          ],
-          "rightCapBboxMinProductMm": [
-            -2.1072,
-            -0.95,
-            -16.29
-          ],
-          "rightCapBboxMaxProductMm": [
-            0.2643,
-            -0.4561,
-            -15.552
-          ],
-          "rightCapBboxSizeProductMm": [
-            2.3715,
+            33.7702,
             0.4939,
-            0.738
+            2.1403
+          ],
+          "localPatchBboxMinProductMm": [
+            -34.8674,
+            -0.4563,
+            -15.5973
+          ],
+          "localPatchBboxMaxProductMm": [
+            -31.8683,
+            9.3644,
+            -13.3779
+          ],
+          "localPatchBboxSizeProductMm": [
+            2.9991,
+            9.8207,
+            2.2193
           ]
         },
+        "positiveLipSymmetry": {
+          "leftRegion": {
+            "triangleCount": 60,
+            "triangleIndices": [
+              1489,
+              1490,
+              1491,
+              1492,
+              1507,
+              1508,
+              1509,
+              1510,
+              1525,
+              1526,
+              1527,
+              1528,
+              1543,
+              1544,
+              1545,
+              1546,
+              1561,
+              1562,
+              1563,
+              1564,
+              1579,
+              1580,
+              1581,
+              1582,
+              1597,
+              1598,
+              1599,
+              1600,
+              1615,
+              1616,
+              1617,
+              1618,
+              1633,
+              1634,
+              1635,
+              1636,
+              1651,
+              1652,
+              1653,
+              1654,
+              2366,
+              2367,
+              2368,
+              2369,
+              2370,
+              2371,
+              2372,
+              2373,
+              2374,
+              2375,
+              2376,
+              2377,
+              2378,
+              2379,
+              2380,
+              2381,
+              2382,
+              2383,
+              2384,
+              2385
+            ],
+            "bboxMinProductMm": [
+              -20.2497,
+              -0.4561,
+              15.3807
+            ],
+            "bboxMaxProductMm": [
+              -0.0,
+              9.3172,
+              17.0
+            ],
+            "bboxSizeProductMm": [
+              20.2497,
+              9.7734,
+              1.6193
+            ]
+          },
+          "rightRegionRemoved": {
+            "triangleCount": 60,
+            "triangleIndices": [
+              1669,
+              1670,
+              1671,
+              1672,
+              1687,
+              1688,
+              1689,
+              1690,
+              1705,
+              1706,
+              1707,
+              1708,
+              1723,
+              1724,
+              1725,
+              1726,
+              1741,
+              1742,
+              1743,
+              1744,
+              1759,
+              1760,
+              1761,
+              1762,
+              1777,
+              1778,
+              1779,
+              1780,
+              1795,
+              1796,
+              1797,
+              1798,
+              1813,
+              1814,
+              1815,
+              1816,
+              1831,
+              1832,
+              1833,
+              1834,
+              2386,
+              2387,
+              2388,
+              2389,
+              2390,
+              2391,
+              2392,
+              2393,
+              2394,
+              2395,
+              2396,
+              2397,
+              2398,
+              2399,
+              2400,
+              2401,
+              2402,
+              2403,
+              2404,
+              2405
+            ],
+            "bboxMinProductMm": [
+              -0.0001,
+              -0.4574,
+              15.3807
+            ],
+            "bboxMaxProductMm": [
+              20.2493,
+              9.3195,
+              17.0
+            ],
+            "bboxSizeProductMm": [
+              20.2493,
+              9.7768,
+              1.6193
+            ]
+          },
+          "rebuiltRightRegionTriangleCount": 60,
+          "chainPointCount": 11,
+          "pointRemapCount": 44,
+          "referenceCenterProductMm": [
+            10.1049,
+            4.4115,
+            16.247
+          ],
+          "rebuiltRegionBboxMinProductMm": [
+            -0.0001,
+            -0.4574,
+            15.3807
+          ],
+          "rebuiltRegionBboxMaxProductMm": [
+            20.2493,
+            9.3195,
+            17.0
+          ],
+          "rebuiltRegionBboxSizeProductMm": [
+            20.2493,
+            9.7768,
+            1.6193
+          ],
+          "mappedChains": [
+            {
+              "chain": "bottom16",
+              "index": 0,
+              "fromLeftProductMm": [
+                -0.0,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                -0.0,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 1,
+              "fromLeftProductMm": [
+                -2.1072,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                2.1072,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 2,
+              "fromLeftProductMm": [
+                -4.2092,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                4.2092,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 3,
+              "fromLeftProductMm": [
+                -6.3012,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                6.3012,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 4,
+              "fromLeftProductMm": [
+                -8.378,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                8.378,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 5,
+              "fromLeftProductMm": [
+                -10.4345,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                10.4345,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 6,
+              "fromLeftProductMm": [
+                -12.466,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                12.466,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 7,
+              "fromLeftProductMm": [
+                -14.4674,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                14.4674,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 8,
+              "fromLeftProductMm": [
+                -16.434,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                16.434,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 9,
+              "fromLeftProductMm": [
+                -18.3609,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                18.3609,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "bottom16",
+              "index": 10,
+              "fromLeftProductMm": [
+                -20.2437,
+                -0.4561,
+                16.2
+              ],
+              "toRightProductMm": [
+                20.2437,
+                -0.4561,
+                16.2
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 0,
+              "fromLeftProductMm": [
+                -0.0001,
+                -0.4561,
+                17.0
+              ],
+              "toRightProductMm": [
+                -0.0001,
+                -0.4561,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 1,
+              "fromLeftProductMm": [
+                -2.1076,
+                -0.456,
+                17.0
+              ],
+              "toRightProductMm": [
+                2.1075,
+                -0.4562,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 2,
+              "fromLeftProductMm": [
+                -4.2101,
+                -0.456,
+                17.0
+              ],
+              "toRightProductMm": [
+                4.2099,
+                -0.4563,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 3,
+              "fromLeftProductMm": [
+                -6.3025,
+                -0.4559,
+                17.0
+              ],
+              "toRightProductMm": [
+                6.3023,
+                -0.4564,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 4,
+              "fromLeftProductMm": [
+                -8.3797,
+                -0.4558,
+                17.0
+              ],
+              "toRightProductMm": [
+                8.3795,
+                -0.4565,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 5,
+              "fromLeftProductMm": [
+                -10.4367,
+                -0.4557,
+                17.0
+              ],
+              "toRightProductMm": [
+                10.4365,
+                -0.4566,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 6,
+              "fromLeftProductMm": [
+                -12.4687,
+                -0.4555,
+                17.0
+              ],
+              "toRightProductMm": [
+                12.4685,
+                -0.4567,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 7,
+              "fromLeftProductMm": [
+                -14.4708,
+                -0.4554,
+                17.0
+              ],
+              "toRightProductMm": [
+                14.4705,
+                -0.4569,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 8,
+              "fromLeftProductMm": [
+                -16.4381,
+                -0.4553,
+                17.0
+              ],
+              "toRightProductMm": [
+                16.4378,
+                -0.457,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 9,
+              "fromLeftProductMm": [
+                -18.3659,
+                -0.4551,
+                17.0
+              ],
+              "toRightProductMm": [
+                18.3656,
+                -0.4572,
+                17.0
+              ]
+            },
+            {
+              "chain": "outer17",
+              "index": 10,
+              "fromLeftProductMm": [
+                -20.2497,
+                -0.4549,
+                17.0
+              ],
+              "toRightProductMm": [
+                20.2493,
+                -0.4574,
+                17.0
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 0,
+              "fromLeftProductMm": [
+                -0.0,
+                9.25,
+                15.552
+              ],
+              "toRightProductMm": [
+                -0.0,
+                9.25,
+                15.552
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 1,
+              "fromLeftProductMm": [
+                -2.0229,
+                9.25,
+                15.5505
+              ],
+              "toRightProductMm": [
+                2.0229,
+                9.25,
+                15.5505
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 2,
+              "fromLeftProductMm": [
+                -4.0409,
+                9.25,
+                15.5461
+              ],
+              "toRightProductMm": [
+                4.0409,
+                9.25,
+                15.5461
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 3,
+              "fromLeftProductMm": [
+                -6.0491,
+                9.25,
+                15.5386
+              ],
+              "toRightProductMm": [
+                6.0491,
+                9.25,
+                15.5386
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 4,
+              "fromLeftProductMm": [
+                -8.0428,
+                9.25,
+                15.5279
+              ],
+              "toRightProductMm": [
+                8.0428,
+                9.25,
+                15.5279
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 5,
+              "fromLeftProductMm": [
+                -10.0172,
+                9.25,
+                15.5139
+              ],
+              "toRightProductMm": [
+                10.0172,
+                9.25,
+                15.5139
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 6,
+              "fromLeftProductMm": [
+                -11.9673,
+                9.25,
+                15.4962
+              ],
+              "toRightProductMm": [
+                11.9673,
+                9.25,
+                15.4962
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 7,
+              "fromLeftProductMm": [
+                -13.8887,
+                9.25,
+                15.4745
+              ],
+              "toRightProductMm": [
+                13.8887,
+                9.25,
+                15.4745
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 8,
+              "fromLeftProductMm": [
+                -15.7766,
+                9.25,
+                15.4484
+              ],
+              "toRightProductMm": [
+                15.7766,
+                9.25,
+                15.4484
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 9,
+              "fromLeftProductMm": [
+                -17.6265,
+                9.25,
+                15.4174
+              ],
+              "toRightProductMm": [
+                17.6265,
+                9.25,
+                15.4174
+              ]
+            },
+            {
+              "chain": "mid15",
+              "index": 10,
+              "fromLeftProductMm": [
+                -19.4339,
+                9.25,
+                15.3807
+              ],
+              "toRightProductMm": [
+                19.4339,
+                9.25,
+                15.3807
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 0,
+              "fromLeftProductMm": [
+                -0.0,
+                9.3033,
+                16.3502
+              ],
+              "toRightProductMm": [
+                -0.0,
+                9.3033,
+                16.3502
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 1,
+              "fromLeftProductMm": [
+                -2.0236,
+                9.3034,
+                16.3487
+              ],
+              "toRightProductMm": [
+                2.0236,
+                9.3035,
+                16.3487
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 2,
+              "fromLeftProductMm": [
+                -4.0424,
+                9.3037,
+                16.3443
+              ],
+              "toRightProductMm": [
+                4.0424,
+                9.304,
+                16.3443
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 3,
+              "fromLeftProductMm": [
+                -6.0515,
+                9.3042,
+                16.3368
+              ],
+              "toRightProductMm": [
+                6.0515,
+                9.3047,
+                16.3367
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 4,
+              "fromLeftProductMm": [
+                -8.0461,
+                9.3051,
+                16.326
+              ],
+              "toRightProductMm": [
+                8.0461,
+                9.3058,
+                16.326
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 5,
+              "fromLeftProductMm": [
+                -10.0214,
+                9.3062,
+                16.3119
+              ],
+              "toRightProductMm": [
+                10.0214,
+                9.3071,
+                16.3118
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 6,
+              "fromLeftProductMm": [
+                -11.9727,
+                9.3076,
+                16.2941
+              ],
+              "toRightProductMm": [
+                11.9727,
+                9.3087,
+                16.294
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 7,
+              "fromLeftProductMm": [
+                -13.8953,
+                9.3094,
+                16.2723
+              ],
+              "toRightProductMm": [
+                13.8953,
+                9.3107,
+                16.2722
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 8,
+              "fromLeftProductMm": [
+                -15.7846,
+                9.3116,
+                16.246
+              ],
+              "toRightProductMm": [
+                15.7846,
+                9.3132,
+                16.2459
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 9,
+              "fromLeftProductMm": [
+                -17.6362,
+                9.3141,
+                16.2148
+              ],
+              "toRightProductMm": [
+                17.6362,
+                9.316,
+                16.2146
+              ]
+            },
+            {
+              "chain": "upper16",
+              "index": 10,
+              "fromLeftProductMm": [
+                -19.4456,
+                9.3172,
+                16.1778
+              ],
+              "toRightProductMm": [
+                19.4457,
+                9.3195,
+                16.1776
+              ]
+            }
+          ],
+          "finalBoundaryEdgeCount": 0
+        },
+        "positiveLipCenterRebuild": {
+          "removedTriangleCount": 18,
+          "removedTriangleIndices": [
+            1651,
+            1652,
+            1653,
+            1654,
+            2344,
+            2345,
+            2466,
+            2467,
+            2468,
+            2469,
+            2470,
+            2471,
+            2472,
+            2473,
+            2490,
+            2491,
+            2492,
+            2493
+          ],
+          "rebuiltTriangleCount": 18,
+          "rebuiltBboxMinProductMm": [
+            -2.1076,
+            -0.4563,
+            15.5461
+          ],
+          "rebuiltBboxMaxProductMm": [
+            4.2099,
+            9.304,
+            17.0
+          ],
+          "rebuiltBboxSizeProductMm": [
+            6.3176,
+            9.7603,
+            1.4539
+          ],
+          "boundaryEdgeCountAfterRebuild": 0,
+          "region": {
+            "triangleCount": 18,
+            "triangleIndices": [
+              1651,
+              1652,
+              1653,
+              1654,
+              2344,
+              2345,
+              2466,
+              2467,
+              2468,
+              2469,
+              2470,
+              2471,
+              2472,
+              2473,
+              2490,
+              2491,
+              2492,
+              2493
+            ],
+            "bboxMinProductMm": [
+              -2.1076,
+              -0.4563,
+              15.5461
+            ],
+            "bboxMaxProductMm": [
+              4.2099,
+              9.304,
+              17.0
+            ],
+            "bboxSizeProductMm": [
+              6.3176,
+              9.7603,
+              1.4539
+            ],
+            "selectionRangesProductMm": {
+              "x": [
+                -2.2,
+                4.3
+              ],
+              "y": [
+                -0.6,
+                9.4
+              ],
+              "z": [
+                15.45,
+                17.05
+              ]
+            }
+          },
+          "chainXCoordinatesProductMm": {
+            "outer17": [
+              -2.108,
+              -0.0,
+              2.107,
+              4.21
+            ],
+            "upper16": [
+              -2.024,
+              -0.0,
+              2.024,
+              4.042
+            ],
+            "mid15": [
+              -2.023,
+              -0.0,
+              2.023,
+              4.041
+            ],
+            "bottom16": [
+              -2.107,
+              -0.0,
+              2.107,
+              4.209
+            ]
+          }
+        },
+        "positiveLipUpperStripRebuild": {
+          "removedTriangleCount": 20,
+          "removedTriangleIndices": [
+            2460,
+            2461,
+            2462,
+            2463,
+            2464,
+            2465,
+            2466,
+            2467,
+            2468,
+            2469,
+            2470,
+            2471,
+            2472,
+            2473,
+            2474,
+            2475,
+            2484,
+            2485,
+            2486,
+            2487
+          ],
+          "rebuiltTriangleCount": 20,
+          "rebuiltBboxMinProductMm": [
+            -0.0,
+            9.25,
+            15.3807
+          ],
+          "rebuiltBboxMaxProductMm": [
+            19.4457,
+            9.3195,
+            16.3502
+          ],
+          "rebuiltBboxSizeProductMm": [
+            19.4457,
+            0.0695,
+            0.9695
+          ],
+          "boundaryEdgeCountAfterRebuild": 0,
+          "region": {
+            "triangleCount": 20,
+            "triangleIndices": [
+              2460,
+              2461,
+              2462,
+              2463,
+              2464,
+              2465,
+              2466,
+              2467,
+              2468,
+              2469,
+              2470,
+              2471,
+              2472,
+              2473,
+              2474,
+              2475,
+              2484,
+              2485,
+              2486,
+              2487
+            ],
+            "bboxMinProductMm": [
+              -0.0,
+              9.25,
+              15.3807
+            ],
+            "bboxMaxProductMm": [
+              19.4457,
+              9.3195,
+              16.3502
+            ],
+            "bboxSizeProductMm": [
+              19.4457,
+              0.0695,
+              0.9695
+            ],
+            "selectionRangesProductMm": {
+              "x": [
+                -0.1,
+                20.5
+              ],
+              "y": [
+                9.2,
+                9.33
+              ],
+              "z": [
+                15.35,
+                16.36
+              ]
+            }
+          },
+          "chainPointCount": 11
+        },
         "fillPatchBboxMinProductMm": [
-          -29.3323,
+          -34.8674,
           -0.95,
           -17.0
         ],
         "fillPatchBboxMaxProductMm": [
           0.2643,
-          9.3501,
-          -14.8097
+          9.3644,
+          -13.3779
         ],
         "fillPatchBboxSizeProductMm": [
-          29.5966,
-          10.3001,
-          2.1903
+          35.1317,
+          10.3144,
+          3.6221
         ]
       },
       "postRebuildCandidateSummary": {
@@ -942,39 +2042,39 @@
           "components": [
             {
               "triangleIndices": [
-                1739,
-                1741,
-                1757,
-                1759,
-                1775,
-                1777,
-                1793,
-                1795,
-                1811,
-                1813,
-                1829,
-                1831,
-                1847,
-                1849,
-                1865,
-                1867,
-                1883,
-                1885,
-                1901,
-                1903,
-                1919,
-                1921,
-                1937,
-                1939,
-                1955,
-                1957,
-                1973,
-                1975,
-                1991,
-                1993,
-                2009,
-                2011,
-                2027
+                1806,
+                1808,
+                1824,
+                1826,
+                1842,
+                1844,
+                1860,
+                1862,
+                1878,
+                1880,
+                1896,
+                1898,
+                1914,
+                1916,
+                1932,
+                1934,
+                1950,
+                1952,
+                1968,
+                2429,
+                2431,
+                2433,
+                2435,
+                2437,
+                2439,
+                2441,
+                2443,
+                2445,
+                2447,
+                2449,
+                2451,
+                2453,
+                2455
               ],
               "triangleCount": 33,
               "bboxMinProductMm": [
@@ -994,7 +2094,7 @@
               ],
               "averageNormal": [
                 -0.0995,
-                -0.098,
+                -0.0979,
                 -0.9777
               ]
             }

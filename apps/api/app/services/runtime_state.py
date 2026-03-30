@@ -101,6 +101,11 @@ class RuntimeStateStore:
             )
         return self._redis
 
+    def _should_fallback_to_memory(self) -> bool:
+        # Keep tests hermetic without requiring Redis, but never mask Redis
+        # failures in local/prod-style environments.
+        return settings.env == "test"
+
     def _run(self, redis_op, fallback_op):
         client = self._get_redis_client()
         if client is None:
@@ -108,7 +113,7 @@ class RuntimeStateStore:
         try:
             return redis_op(client)
         except RedisError:
-            if settings.env in {"local", "test"}:
+            if self._should_fallback_to_memory():
                 return fallback_op()
             raise
 
@@ -119,7 +124,7 @@ class RuntimeStateStore:
         try:
             client.ping()
         except RedisError:
-            if settings.env in {"local", "test"}:
+            if self._should_fallback_to_memory():
                 return
             raise
 

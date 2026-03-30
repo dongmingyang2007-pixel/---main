@@ -53,7 +53,9 @@ import app.services.memory_compaction as memory_compaction_service
 import app.services.memory_graph_events as memory_graph_events_service
 import app.services.memory_file_context as memory_file_context_service
 import app.services.memory_graph_repair as memory_graph_repair_service
+import app.services.memory_category_tree as memory_category_tree_service
 import app.services.memory_metadata as memory_metadata_service
+import app.services.project_cleanup as project_cleanup_service
 import app.services.orchestrator as orchestrator_service
 from app.core.config import settings
 from app.core.deps import revoke_user_tokens
@@ -1638,6 +1640,32 @@ def test_workspace_header_is_required_when_user_has_multiple_workspaces() -> Non
     assert ambiguous.json()["error"]["code"] == "workspace_required"
 
 
+def test_workspace_cookie_selects_membership_when_user_has_multiple_workspaces() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "multi-workspace-cookie@example.com", "Multi Workspace Cookie")
+    user_id = user_info["user"]["id"]
+
+    with SessionLocal() as db:
+        second_workspace = Workspace(name="Cookie Workspace", plan="free")
+        db.add(second_workspace)
+        db.flush()
+        db.add(Membership(workspace_id=second_workspace.id, user_id=user_id, role="owner"))
+        db.commit()
+        second_workspace_id = second_workspace.id
+
+    create_second = client.post(
+        "/api/v1/projects",
+        json={"name": "Cookie Workspace Project", "description": "demo"},
+        headers=csrf_headers(client, second_workspace_id),
+    )
+    assert create_second.status_code == 200
+
+    client.cookies.set("mingrun_workspace_id", second_workspace_id)
+    selected = client.get("/api/v1/projects", headers=public_headers())
+    assert selected.status_code == 200
+    assert [project["name"] for project in selected.json()["items"]] == ["Cookie Workspace Project"]
+
+
 def test_conversation_access_respects_role_and_creator_boundary(monkeypatch) -> None:
     monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
     async def fake_orchestrate_inference(*args, **kwargs):
@@ -2053,7 +2081,7 @@ def test_cleanup_pending_upload_session_removes_orphan_state(monkeypatch) -> Non
     def fake_delete_object(*, bucket_name: str, object_key: str) -> None:
         deleted.append((bucket_name, object_key))
 
-    monkeypatch.setattr(worker_tasks, "delete_object", fake_delete_object)
+    monkeypatch.setattr(project_cleanup_service, "delete_object", fake_delete_object)
 
     worker_tasks.cleanup_pending_upload_session(payload["upload_id"])
 
@@ -2078,7 +2106,7 @@ def test_cleanup_pending_demo_request_removes_orphan_state(monkeypatch) -> None:
     def fake_delete_object(*, bucket_name: str, object_key: str) -> None:
         deleted.append((bucket_name, object_key))
 
-    monkeypatch.setattr(worker_tasks, "delete_object", fake_delete_object)
+    monkeypatch.setattr(project_cleanup_service, "delete_object", fake_delete_object)
 
     worker_tasks.cleanup_pending_demo_request(payload["request_id"])
 
@@ -2104,7 +2132,7 @@ def test_cleanup_deleted_dataset_deletes_objects(monkeypatch) -> None:
     def fake_delete_object(*, bucket_name: str, object_key: str) -> None:
         deleted.append((bucket_name, object_key))
 
-    monkeypatch.setattr(worker_tasks, "delete_object", fake_delete_object)
+    monkeypatch.setattr(project_cleanup_service, "delete_object", fake_delete_object)
 
     worker_tasks.cleanup_deleted_dataset(dataset["id"])
 
@@ -2153,12 +2181,16 @@ def test_cleanup_deleted_project_deletes_project_objects(monkeypatch) -> None:
     def fake_delete_object(*, bucket_name: str, object_key: str) -> None:
         deleted.append((bucket_name, object_key))
 
-    monkeypatch.setattr(worker_tasks, "delete_object", fake_delete_object)
+    monkeypatch.setattr(project_cleanup_service, "delete_object", fake_delete_object)
 
     worker_tasks.cleanup_deleted_project(project["id"])
 
     assert (config_module.settings.s3_private_bucket, data_object_key) in deleted
     assert (config_module.settings.s3_private_bucket, model_object_key) in deleted
+    with SessionLocal() as db:
+        assert db.get(Project, project["id"]) is None
+        assert db.query(DataItem).filter(DataItem.id == data_item_id).first() is None
+        assert db.query(ModelVersion).filter(ModelVersion.id == model_version_id).first() is None
 
 
 def test_audit_log_redacts_object_keys() -> None:
@@ -3306,39 +3338,7 @@ def test_responses_completion_stream_emits_final_message_items_without_duplicati
     assert [chunk.finish_reason for chunk in chunks if chunk.finish_reason] == ["completed"]
 
 
-def test_web_search_classifier_handles_external_fact_queries(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_chat_completion_detailed(
-        messages,
-        model=None,
-        *,
-        temperature=0.7,
-        max_tokens=2048,
-        enable_thinking=None,
-        enable_search=None,
-        search_options=None,
-        tools=None,
-        tool_choice=None,
-        parallel_tool_calls=None,
-    ):
-        del messages, temperature, max_tokens, enable_thinking, enable_search
-        del search_options, tools, tool_choice, parallel_tool_calls
-        captured["model"] = model
-        return orchestrator_service.ChatCompletionResult(
-            content=json.dumps(
-                {
-                    "route": "web_only",
-                    "needs_fresh_facts": True,
-                    "can_answer_from_project_context": False,
-                    "confidence": 0.91,
-                    "reason": "The answer depends on current public-company facts.",
-                }
-            )
-        )
-
-    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
-
+def test_web_search_falls_back_offline_without_rule_hints() -> None:
     with SessionLocal() as db:
         decision = asyncio.run(
             orchestrator_service._resolve_search_options(
@@ -3351,10 +3351,9 @@ def test_web_search_classifier_handles_external_fact_queries(monkeypatch) -> Non
             )
         )
 
-    assert captured["model"] == "qwen3.5-flash"
-    assert decision.enable_search is True
-    assert decision.route == "web_only"
-    assert decision.source == "classifier"
+    assert decision.enable_search is False
+    assert decision.route == "no_search"
+    assert decision.source == "fallback"
     assert decision.search_options is None
 
 
@@ -3621,6 +3620,48 @@ def test_web_search_rules_keep_local_time_queries_offline(monkeypatch) -> None:
     assert classifier_called is False
     assert decision.enable_search is False
     assert decision.route == "local_only"
+    assert decision.source == "rules"
+
+
+def test_web_search_rules_enable_search_for_freshness_hints(monkeypatch) -> None:
+    classifier_called = False
+
+    async def fake_chat_completion_detailed(
+        messages,
+        model=None,
+        *,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        nonlocal classifier_called
+        del messages, model, temperature, max_tokens, enable_thinking, enable_search
+        del search_options, tools, tool_choice, parallel_tool_calls
+        classifier_called = True
+        return orchestrator_service.ChatCompletionResult(content="{}")
+
+    monkeypatch.setattr(orchestrator_service, "chat_completion_detailed", fake_chat_completion_detailed)
+
+    with SessionLocal() as db:
+        decision = asyncio.run(
+            orchestrator_service._resolve_search_options(
+                db,
+                llm_model_id="qwen3.5-plus",
+                llm_capabilities={"web_search"},
+                user_message="今天英伟达股价多少？",
+                recent_messages=[],
+                preference=None,
+            )
+        )
+
+    assert classifier_called is False
+    assert decision.enable_search is True
+    assert decision.route == "web_only"
     assert decision.source == "rules"
 
 
@@ -4079,16 +4120,10 @@ def test_memory_creation_defaults_to_project_root_and_root_is_protected() -> Non
 
 def test_memory_update_can_manually_rebind_and_disconnect_parent() -> None:
     client = TestClient(main_module.app)
-    register_user(client, "memory-manual-parent@example.com", "Memory Manual Parent")
+    user_info = register_user(client, "memory-manual-parent@example.com", "Memory Manual Parent")
+    workspace_id = user_info["workspace"]["id"]
     project = create_project(client, "手动父节点项目")
     root_id = project["assistant_root_memory_id"]
-
-    parent = client.post(
-        "/api/v1/memory",
-        json={"project_id": project["id"], "content": "用户正在准备主题分享", "category": "工作.项目", "type": "permanent"},
-        headers=csrf_headers(client),
-    )
-    assert parent.status_code == 200
 
     child = client.post(
         "/api/v1/memory",
@@ -4097,23 +4132,37 @@ def test_memory_update_can_manually_rebind_and_disconnect_parent() -> None:
     )
     assert child.status_code == 200
 
+    with SessionLocal() as db:
+        concept_parent = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户正在准备主题分享",
+            category="工作.项目",
+            type="permanent",
+            parent_memory_id=root_id,
+            metadata_json={"memory_kind": "goal", "node_kind": "concept", "auto_generated": True},
+        )
+        db.add(concept_parent)
+        db.commit()
+        concept_parent_id = concept_parent.id
+
     rebind = client.patch(
         f"/api/v1/memory/{child.json()['id']}",
-        json={"parent_memory_id": parent.json()["id"]},
+        json={"parent_memory_id": concept_parent_id},
         headers=csrf_headers(client),
     )
     assert rebind.status_code == 200
     rebound_body = rebind.json()
-    assert rebound_body["parent_memory_id"] == parent.json()["id"]
+    assert rebound_body["parent_memory_id"] == concept_parent_id
     assert rebound_body["metadata_json"]["parent_binding"] == "manual"
-    assert rebound_body["metadata_json"]["manual_parent_id"] == parent.json()["id"]
+    assert rebound_body["metadata_json"]["manual_parent_id"] == concept_parent_id
 
     graph_after_rebind = client.get(f"/api/v1/memory?project_id={project['id']}")
     assert graph_after_rebind.status_code == 200
     rebound_child = next(
         node for node in graph_after_rebind.json()["nodes"] if node["id"] == child.json()["id"]
     )
-    assert rebound_child["parent_memory_id"] == parent.json()["id"]
+    assert rebound_child["parent_memory_id"] == concept_parent_id
 
     detach = client.patch(
         f"/api/v1/memory/{child.json()['id']}",
@@ -4125,6 +4174,99 @@ def test_memory_update_can_manually_rebind_and_disconnect_parent() -> None:
     assert detached_body["parent_memory_id"] == root_id
     assert detached_body["metadata_json"]["parent_binding"] == "manual"
     assert detached_body["metadata_json"]["manual_parent_id"] is None
+
+
+def test_memory_rejects_ordinary_primary_parent_binding() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-leaf-parent@example.com", "Memory Leaf Parent")
+    project = create_project(client, "叶子父节点限制")
+
+    ordinary_parent = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "用户今年18岁", "category": "个人.年龄", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert ordinary_parent.status_code == 200
+
+    create_under_ordinary = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "用户在读大学",
+            "category": "教育.学校",
+            "type": "permanent",
+            "parent_memory_id": ordinary_parent.json()["id"],
+        },
+        headers=csrf_headers(client),
+    )
+    assert create_under_ordinary.status_code == 400
+    assert create_under_ordinary.json()["error"]["code"] == "bad_request"
+
+    child = client.post(
+        "/api/v1/memory",
+        json={"project_id": project["id"], "content": "用户来自中国", "category": "个人.籍贯", "type": "permanent"},
+        headers=csrf_headers(client),
+    )
+    assert child.status_code == 200
+
+    rebind = client.patch(
+        f"/api/v1/memory/{child.json()['id']}",
+        json={"parent_memory_id": ordinary_parent.json()["id"]},
+        headers=csrf_headers(client),
+    )
+    assert rebind.status_code == 400
+    assert rebind.json()["error"]["code"] == "bad_request"
+
+
+def test_category_tree_sync_drops_legacy_ordinary_memory_parenting() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-legacy-leaf@example.com", "Legacy Leaf")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "旧普通父节点")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        root_memory, _ = ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        parent = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="我今年18岁。",
+            category="个人.年龄",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={"memory_kind": "profile"},
+        )
+        child = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="我来自中国。",
+            category="个人.籍贯",
+            type="permanent",
+            parent_memory_id=None,
+            metadata_json={},
+        )
+        db.add_all([parent, child])
+        db.flush()
+        child.parent_memory_id = parent.id
+        child.metadata_json = memory_metadata_service.set_manual_parent_binding({}, parent_memory_id=parent.id)
+        db.commit()
+        child_id = child.id
+        root_id = root_memory.id
+
+        summary = memory_category_tree_service.ensure_project_category_tree(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        repaired_child = db.get(Memory, child_id)
+        assert repaired_child is not None
+        assert repaired_child.parent_memory_id == root_id
+        assert repaired_child.metadata_json.get("parent_binding") == "auto"
+        assert repaired_child.metadata_json.get("manual_parent_id") is None
+        assert summary.reparented_nodes >= 1
 
 
 def test_memory_update_rejects_manual_parent_cycles() -> None:
@@ -6642,6 +6784,7 @@ def test_deleted_project_invalidates_conversation_and_memory_handles() -> None:
         headers=csrf_headers(client),
     )
     assert deleted.status_code == 200
+    assert deleted.json()["status"] == "deleted"
 
     assert client.get(f"/api/v1/chat/conversations/{conversation_id}/messages").status_code == 404
     assert (
@@ -6655,6 +6798,10 @@ def test_deleted_project_invalidates_conversation_and_memory_handles() -> None:
     assert client.get(f"/api/v1/memory/{memory_id}").status_code == 404
     assert client.get(f"/api/v1/memory/{project['id']}/stream").status_code == 404
     assert client.get(f"/api/v1/chat/conversations/{conversation_id}/memory-stream").status_code == 404
+    with SessionLocal() as db:
+        assert db.get(Project, project["id"]) is None
+        assert db.get(Conversation, conversation_id) is None
+        assert db.get(Memory, memory_id) is None
 
 
 def test_promoted_private_memory_stays_hidden_from_other_members() -> None:

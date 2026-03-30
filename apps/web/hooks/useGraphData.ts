@@ -12,6 +12,9 @@ export type MemoryKind =
   | "fact"
   | "summary";
 
+export type GraphNodeDisplayType = "center" | "memory" | "file";
+export type MemoryNodeRole = "fact" | "structure" | "theme" | "summary";
+
 export interface MemoryMetadataJson extends Record<string, unknown> {
   memory_kind?: MemoryKind;
   node_kind?: string;
@@ -38,6 +41,8 @@ export interface MemoryMetadataJson extends Record<string, unknown> {
   category_segments?: string[];
   category_prefixes?: string[];
   category_depth?: number;
+  synthetic_graph_node?: boolean;
+  graph_parent_memory_id?: string | null;
 }
 
 export interface MemoryNode {
@@ -73,6 +78,29 @@ export function isAssistantRootMemoryNode(node: MemoryNode): boolean {
   return node.metadata_json?.node_kind === "assistant-root";
 }
 
+export function getGraphNodeDisplayType(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): GraphNodeDisplayType {
+  const metadata = getMemoryMetadata(node);
+  const nodeKind = metadata.node_kind;
+  if (nodeKind === "assistant-root" || nodeKind === "assistant-center") {
+    return "center";
+  }
+  if (
+    nodeKind === "file" ||
+    ("category" in (node || {}) &&
+      (node as MemoryNode).category &&
+      ((node as MemoryNode).category === "file" || (node as MemoryNode).category === "文件"))
+  ) {
+    return "file";
+  }
+  return "memory";
+}
+
+export function isConceptMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  return getMemoryMetadata(node).node_kind === "concept";
+}
+
 export function isCategoryPathMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
   const metadata = getMemoryMetadata(node);
   return metadata.node_kind === "category-path" || metadata.concept_source === "category_path";
@@ -83,8 +111,55 @@ export function isStructuralOnlyMemoryNode(node: MemoryNode | MemoryMetadataJson
   return metadata.structural_only === true || isCategoryPathMemoryNode(metadata);
 }
 
+export function isSyntheticGraphNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  return getMemoryMetadata(node).synthetic_graph_node === true;
+}
+
+export function getMemoryNodeRole(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): MemoryNodeRole | null {
+  if (getGraphNodeDisplayType(node) !== "memory") {
+    return null;
+  }
+  const metadata = getMemoryMetadata(node);
+  if (isCategoryPathMemoryNode(metadata) || metadata.structural_only === true) {
+    return "structure";
+  }
+  if (isConceptMemoryNode(metadata)) {
+    return "theme";
+  }
+  if (isSummaryMemoryNode(metadata)) {
+    return "summary";
+  }
+  return "fact";
+}
+
+export function isMemoryDisplayNode(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): boolean {
+  return getGraphNodeDisplayType(node) === "memory";
+}
+
+export function isStructureMemoryNode(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): boolean {
+  return getMemoryNodeRole(node) === "structure";
+}
+
+export function isThemeMemoryNode(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): boolean {
+  return getMemoryNodeRole(node) === "theme";
+}
+
+export function isFactMemoryNode(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): boolean {
+  return getMemoryNodeRole(node) === "fact";
+}
+
 export function isOrdinaryMemoryNode(node: MemoryNode): boolean {
-  return !isFileMemoryNode(node) && !isAssistantRootMemoryNode(node) && !isStructuralOnlyMemoryNode(node);
+  return isFactMemoryNode(node);
 }
 
 export function getMemoryMetadata(
@@ -117,6 +192,18 @@ export function hasManualParentBinding(node: MemoryNode | MemoryMetadataJson): b
 export function isSummaryMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
   const metadata = getMemoryMetadata(node);
   return metadata.node_kind === "summary" || metadata.memory_kind === "summary";
+}
+
+export function canPrimaryParentChildren(node: MemoryNode | MemoryMetadataJson): boolean {
+  const displayType = getGraphNodeDisplayType(node);
+  if (displayType === "center") {
+    return true;
+  }
+  if (displayType !== "memory") {
+    return false;
+  }
+  const role = getMemoryNodeRole(node);
+  return role === "structure" || role === "theme" || role === "summary";
 }
 
 export function isPinnedMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
@@ -170,6 +257,15 @@ export function getMemoryCategoryLabel(node: MemoryNode | MemoryMetadataJson): s
   return segments[segments.length - 1] || "";
 }
 
+export function getMemoryCategoryPath(node: MemoryNode | MemoryMetadataJson): string {
+  const metadata = getMemoryMetadata(node);
+  if (typeof metadata.category_path === "string" && metadata.category_path.trim()) {
+    return metadata.category_path.trim();
+  }
+  const prefixes = getMemoryCategoryPrefixes(node);
+  return prefixes[prefixes.length - 1] || "";
+}
+
 export function getMemoryLastUsedAt(node: MemoryNode | MemoryMetadataJson): string | null {
   const value = getMemoryMetadata(node).last_used_at;
   return typeof value === "string" && value ? value : null;
@@ -209,6 +305,166 @@ export interface MemoryFileAttachment {
 interface GraphData {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
+}
+
+function clearGraphOnlyMetadata(node: MemoryNode): MemoryNode {
+  if (!("graph_parent_memory_id" in node.metadata_json)) {
+    return node;
+  }
+  const metadata = { ...node.metadata_json };
+  delete metadata.graph_parent_memory_id;
+  return {
+    ...node,
+    metadata_json: metadata,
+  };
+}
+
+function buildSyntheticCategoryNodeId(projectId: string, categoryPath: string): string {
+  return `__graph_category__:${projectId}:${categoryPath}`;
+}
+
+function augmentGraphDataWithCategoryBranches(raw: GraphData): GraphData {
+  const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : [];
+  const rawEdges = Array.isArray(raw.edges) ? raw.edges : [];
+  const baseNodes = rawNodes
+    .filter((node) => !isSyntheticGraphNode(node))
+    .map(clearGraphOnlyMetadata);
+  const baseEdges = rawEdges.filter((edge) => !edge.id.startsWith("graph-category:"));
+  if (baseNodes.length === 0) {
+    return { nodes: baseNodes, edges: baseEdges };
+  }
+
+  const assistantRootNode = baseNodes.find((node) => isAssistantRootMemoryNode(node)) ?? null;
+  const seedNode = assistantRootNode ?? baseNodes[0];
+  const baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
+  const fallbackTimestamp =
+    baseNodes
+      .map((node) => node.updated_at || node.created_at)
+      .find((value) => typeof value === "string" && value.length > 0) || new Date().toISOString();
+
+  const categoryNodeByPath = new Map<string, MemoryNode>();
+  baseNodes.forEach((node) => {
+    if (!isCategoryPathMemoryNode(node)) {
+      return;
+    }
+    const categoryPath = getMemoryCategoryPath(node);
+    if (!categoryPath) {
+      return;
+    }
+    categoryNodeByPath.set(categoryPath, node);
+  });
+
+  const requiredCategoryPaths = new Set<string>();
+  baseNodes.forEach((node) => {
+    if (!isOrdinaryMemoryNode(node)) {
+      return;
+    }
+    getMemoryCategoryPrefixes(node).forEach((prefix) => requiredCategoryPaths.add(prefix));
+  });
+
+  const syntheticNodes: MemoryNode[] = [];
+
+  const ensureCategoryNode = (categoryPath: string): MemoryNode | null => {
+    if (!categoryPath) {
+      return null;
+    }
+    const existing = categoryNodeByPath.get(categoryPath);
+    if (existing) {
+      return existing;
+    }
+
+    const segments = categoryPath
+      .split(".")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (segments.length === 0) {
+      return null;
+    }
+
+    const parentPath = segments.slice(0, -1).join(".");
+    const parentNode = parentPath ? ensureCategoryNode(parentPath) : assistantRootNode;
+    const syntheticNode: MemoryNode = {
+      id: buildSyntheticCategoryNodeId(seedNode.project_id, categoryPath),
+      workspace_id: seedNode.workspace_id,
+      project_id: seedNode.project_id,
+      content: segments[segments.length - 1],
+      category: categoryPath,
+      type: "permanent",
+      source_conversation_id: null,
+      parent_memory_id: parentNode?.id ?? null,
+      position_x: null,
+      position_y: null,
+      metadata_json: {
+        node_kind: "category-path",
+        concept_source: "category_path",
+        structural_only: true,
+        auto_generated: true,
+        synthetic_graph_node: true,
+        parent_binding: "auto",
+        category_path: categoryPath,
+        category_label: segments[segments.length - 1],
+        category_segments: segments,
+        category_prefixes: segments.map((_, index) => segments.slice(0, index + 1).join(".")),
+        category_depth: Math.max(0, segments.length - 1),
+      },
+      created_at: fallbackTimestamp,
+      updated_at: fallbackTimestamp,
+    };
+    categoryNodeByPath.set(categoryPath, syntheticNode);
+    syntheticNodes.push(syntheticNode);
+    return syntheticNode;
+  };
+
+  [...requiredCategoryPaths]
+    .sort(
+      (left, right) =>
+        left.split(".").length - right.split(".").length || left.localeCompare(right),
+    )
+    .forEach((categoryPath) => {
+      ensureCategoryNode(categoryPath);
+    });
+
+  const augmentedNodes = baseNodes.map((node) => {
+    const metadata = { ...node.metadata_json };
+    let graphParentId: string | null = null;
+
+    if (isCategoryPathMemoryNode(node)) {
+      const categoryPath = getMemoryCategoryPath(node);
+      const segments = categoryPath
+        .split(".")
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+      const parentPath = segments.slice(0, -1).join(".");
+      graphParentId = parentPath
+        ? categoryNodeByPath.get(parentPath)?.id ?? null
+        : assistantRootNode?.id ?? null;
+    } else if (isOrdinaryMemoryNode(node)) {
+      const actualParent = node.parent_memory_id
+        ? baseNodeById.get(node.parent_memory_id) ?? null
+        : null;
+      const categoryPath = getMemoryCategoryPath(node);
+      const categoryNode = categoryPath ? categoryNodeByPath.get(categoryPath) ?? null : null;
+      if (!actualParent || isAssistantRootMemoryNode(actualParent)) {
+        graphParentId = categoryNode?.id ?? null;
+      } else if (isCategoryPathMemoryNode(actualParent)) {
+        graphParentId = actualParent.id;
+      }
+    }
+
+    if (graphParentId) {
+      metadata.graph_parent_memory_id = graphParentId;
+      return {
+        ...node,
+        metadata_json: metadata,
+      };
+    }
+    return node;
+  });
+
+  return {
+    nodes: [...augmentedNodes, ...syntheticNodes],
+    edges: baseEdges,
+  };
 }
 
 interface NormalizeStreamNodeOptions {
@@ -260,13 +516,25 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
   const [data, setData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(true);
   const silentRefreshTimerRef = useRef<number | null>(null);
+  const fetchRequestSeqRef = useRef(0);
+  const activeFetchControllerRef = useRef<AbortController | null>(null);
+
+  const cancelActiveFetch = useCallback(() => {
+    activeFetchControllerRef.current?.abort();
+    activeFetchControllerRef.current = null;
+  }, []);
 
   const fetchGraph = useCallback(async (options?: { silent?: boolean }) => {
     if (!projectId) {
+      cancelActiveFetch();
       setData({ nodes: [], edges: [] });
       setLoading(false);
       return;
     }
+    cancelActiveFetch();
+    const requestSeq = ++fetchRequestSeqRef.current;
+    const controller = new AbortController();
+    activeFetchControllerRef.current = controller;
     if (!options?.silent) {
       setLoading(true);
     }
@@ -274,17 +542,32 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
       const params = new URLSearchParams({ project_id: projectId });
       if (conversationId) params.set("conversation_id", conversationId);
       if (includeTemporary) params.set("include_temporary", "true");
-      const result = await apiGet<GraphData>(`/api/v1/memory?${params}`);
-      setData(result);
-    } catch {
+      const result = await apiGet<GraphData>(`/api/v1/memory?${params}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || fetchRequestSeqRef.current !== requestSeq) {
+        return;
+      }
+      setData(augmentGraphDataWithCategoryBranches(result));
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        fetchRequestSeqRef.current !== requestSeq ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
       // show empty graph on error
       setData({ nodes: [], edges: [] });
     } finally {
-      if (!options?.silent) {
+      if (activeFetchControllerRef.current === controller) {
+        activeFetchControllerRef.current = null;
+      }
+      if (!options?.silent && fetchRequestSeqRef.current === requestSeq) {
         setLoading(false);
       }
     }
-  }, [projectId, conversationId, includeTemporary]);
+  }, [cancelActiveFetch, conversationId, includeTemporary, projectId]);
 
   const scheduleSilentGraphRefresh = useCallback((delayMs = 180) => {
     if (silentRefreshTimerRef.current !== null) {
@@ -296,15 +579,19 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
     }, delayMs);
   }, [fetchGraph]);
 
-  useEffect(() => { fetchGraph(); }, [fetchGraph]);
+  useEffect(() => {
+    void fetchGraph();
+  }, [fetchGraph]);
 
   useEffect(
     () => () => {
+      cancelActiveFetch();
       if (silentRefreshTimerRef.current !== null) {
         window.clearTimeout(silentRefreshTimerRef.current);
+        silentRefreshTimerRef.current = null;
       }
     },
-    [],
+    [cancelActiveFetch, fetchGraph],
   );
 
   // SSE subscription for real-time memory updates
@@ -332,14 +619,16 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
             return;
           }
           setData((prev) => ({
-            ...prev,
-            nodes: prev.nodes.some((node) => node.id === newNode.id)
-              ? prev.nodes.map((node) =>
-                  node.id === newNode.id
-                    ? normalizeStreamNode(newNode, { projectId, previous: node })
-                    : node,
-                )
-              : [...prev.nodes, normalizeStreamNode(newNode, { projectId })],
+            ...augmentGraphDataWithCategoryBranches({
+              ...prev,
+              nodes: prev.nodes.some((node) => node.id === newNode.id)
+                ? prev.nodes.map((node) =>
+                    node.id === newNode.id
+                      ? normalizeStreamNode(newNode, { projectId, previous: node })
+                      : node,
+                  )
+                : [...prev.nodes, normalizeStreamNode(newNode, { projectId })],
+            }),
           }));
           scheduleSilentGraphRefresh();
         } catch { /* ignore parse errors */ }
@@ -349,12 +638,14 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
         try {
           const { id } = JSON.parse(event.data);
           setData((prev) => ({
-            ...prev,
-            nodes: prev.nodes.map((n) =>
-              n.id === id
-                ? { ...n, type: "permanent" as const, updated_at: new Date().toISOString() }
-                : n
-            ),
+            ...augmentGraphDataWithCategoryBranches({
+              ...prev,
+              nodes: prev.nodes.map((n) =>
+                n.id === id
+                  ? { ...n, type: "permanent" as const, updated_at: new Date().toISOString() }
+                  : n
+              ),
+            }),
           }));
           scheduleSilentGraphRefresh();
         } catch { /* ignore parse errors */ }

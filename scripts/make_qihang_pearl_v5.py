@@ -93,23 +93,40 @@ REMAINING_SIDEWALL_CENTER_Z_RANGE_MM = (-16.6, -15.3)
 REMAINING_SIDEWALL_NORMAL_X_MIN = 0.8
 REMAINING_SIDEWALL_AREA_MM2_MIN = 1.0
 EXPECTED_REMAINING_SIDEWALL_TRIANGLE_COUNT = 2
+FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_X_RANGE_MM = (16.0, 18.95)
+FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Y_RANGE_MM = (2.0, 10.8)
+FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Z_RANGE_MM = (-39.5, -31.0)
+EXPECTED_FRONT_WINDOW_SLOPED_RESIDUAL_TRIANGLE_COUNT = 20
 EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT = 36
-FRONT_WINDOW_OUTER_STRIP_SLICE = (2, 18)
-FRONT_WINDOW_INNER_STRIP_SLICE = (19, 34)
-FRONT_WINDOW_LEFT_CAP_LOOP_INDICES = (35, 0, 1, 2, 33, 34)
-FRONT_WINDOW_LEFT_CAP_TRIANGLE_INDICES = (
-    (0, 1, 5),
-    (1, 2, 5),
-    (2, 4, 5),
-    (2, 3, 4),
-)
-FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES = (17, 18, 19)
+EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT = 42
+FRONT_WINDOW_REBUILD_OUTER_CHAIN_SLICE = (1, 20)
+FRONT_WINDOW_REBUILD_INNER_CHAIN_SLICE = (20, 39)
+FRONT_WINDOW_REFERENCE_RIM_X_RANGE_MM = (-35.5, -1.5)
+FRONT_WINDOW_REFERENCE_RIM_Y_RANGE_MM = (9.2, 9.4)
+FRONT_WINDOW_REFERENCE_RIM_Z_RANGE_MM = (-16.5, -12.5)
+FRONT_WINDOW_REFERENCE_RIM_UPPER_Y_MIN_MM = 9.3
+FRONT_WINDOW_REFERENCE_RIM_LOWER_Y_MM = 9.25
+FRONT_WINDOW_REFERENCE_RIM_LOWER_Y_TOLERANCE_MM = 0.01
+EXPECTED_FRONT_WINDOW_REFERENCE_RIM_CHAIN_COUNT = 20
 GUIDED_FRONT_FILL_SAMPLE_COUNT = 24
 GUIDED_FRONT_FILL_RAMP_X_TOLERANCE_MM = 0.8
 GUIDED_FRONT_FILL_RAMP_Y_RANGE_MM = (-2.0, 10.0)
 GUIDED_FRONT_FILL_FRONT_BAND_MM = 0.6
 GUIDED_FRONT_FILL_MIN_RISE_MM = 0.6
 GUIDED_FRONT_FILL_FALLBACK_Z_MM = -15.0
+POSITIVE_LIP_SYMMETRY_X_MAX_MM = 20.5
+POSITIVE_LIP_SYMMETRY_Y_RANGE_MM = (-1.0, 9.35)
+POSITIVE_LIP_SYMMETRY_Z_RANGE_MM = (15.3, 17.05)
+EXPECTED_POSITIVE_LIP_CHAIN_POINT_COUNT = 11
+POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM = (-2.2, 4.3)
+POSITIVE_LIP_CENTER_REBUILD_Y_RANGE_MM = (-0.6, 9.4)
+POSITIVE_LIP_CENTER_REBUILD_Z_RANGE_MM = (15.45, 17.05)
+EXPECTED_POSITIVE_LIP_CENTER_REBUILD_TRIANGLE_COUNT = 18
+EXPECTED_POSITIVE_LIP_CENTER_REBUILD_CHAIN_POINT_COUNT = 4
+POSITIVE_LIP_UPPER_STRIP_REBUILD_X_RANGE_MM = (-0.1, 20.5)
+POSITIVE_LIP_UPPER_STRIP_REBUILD_Y_RANGE_MM = (9.2, 9.33)
+POSITIVE_LIP_UPPER_STRIP_REBUILD_Z_RANGE_MM = (15.35, 16.36)
+EXPECTED_POSITIVE_LIP_UPPER_STRIP_TRIANGLE_COUNT = 20
 FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM = (-27.1, -22.45)
 FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM = (-0.2, 3.0)
 FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM = (-16.05, -14.75)
@@ -227,6 +244,10 @@ def read_triangles_for_mesh(
 def compute_bbox(points: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     stacked = np.stack(points, axis=0)
     return stacked.min(axis=0), stacked.max(axis=0)
+
+
+def point_key(point: np.ndarray) -> tuple[float, float, float]:
+    return tuple(round(float(value), 9) for value in point)
 
 
 def triangle_normal(triangle: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
@@ -596,6 +617,130 @@ def bridge_opening_loop(loop_points: list[np.ndarray]) -> list[tuple[np.ndarray,
     return bridge_triangles
 
 
+def build_equal_strip_between_chains(
+    chain_a: list[np.ndarray],
+    chain_b: list[np.ndarray],
+    reference_center: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    if len(chain_a) != len(chain_b):
+        raise ValueError(
+            f"Expected equal chain lengths for strip rebuild, got {len(chain_a)} and {len(chain_b)}."
+        )
+
+    strip_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for index in range(len(chain_a) - 1):
+        strip_triangles.append(
+            orient_triangle_away_from_center((chain_a[index], chain_a[index + 1], chain_b[index]), reference_center)
+        )
+        strip_triangles.append(
+            orient_triangle_away_from_center(
+                (chain_a[index + 1], chain_b[index + 1], chain_b[index]),
+                reference_center,
+            )
+        )
+
+    if len(chain_a) >= 2:
+        # At the x=0 seam, match the positive-X shell's diagonal direction so the
+        # negative-X rebuilt strip continues the same triangulation pattern.
+        strip_triangles[-2] = orient_triangle_away_from_center(
+            (chain_a[-2], chain_b[-2], chain_b[-1]),
+            reference_center,
+        )
+        strip_triangles[-1] = orient_triangle_away_from_center(
+            (chain_a[-2], chain_b[-1], chain_a[-1]),
+            reference_center,
+        )
+    return strip_triangles
+
+
+def build_uniform_strip_between_chains(
+    chain_a: list[np.ndarray],
+    chain_b: list[np.ndarray],
+    reference_center: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    if len(chain_a) != len(chain_b):
+        raise ValueError(
+            f"Expected equal chain lengths for strip rebuild, got {len(chain_a)} and {len(chain_b)}."
+        )
+
+    strip_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for index in range(len(chain_a) - 1):
+        strip_triangles.append(
+            orient_triangle_away_from_center((chain_a[index], chain_a[index + 1], chain_b[index]), reference_center)
+        )
+        strip_triangles.append(
+            orient_triangle_away_from_center(
+                (chain_a[index + 1], chain_b[index + 1], chain_b[index]),
+                reference_center,
+            )
+        )
+    return strip_triangles
+
+
+def extract_front_window_reference_rim_chains(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    candidate_points: list[tuple[float, float, float]] = []
+    for triangle in shell_triangles:
+        for point in triangle:
+            point_mm = point * 1000.0
+            if (
+                FRONT_WINDOW_REFERENCE_RIM_X_RANGE_MM[0] <= float(point_mm[0]) <= FRONT_WINDOW_REFERENCE_RIM_X_RANGE_MM[1]
+                and FRONT_WINDOW_REFERENCE_RIM_Y_RANGE_MM[0] <= float(point_mm[1]) <= FRONT_WINDOW_REFERENCE_RIM_Y_RANGE_MM[1]
+                and FRONT_WINDOW_REFERENCE_RIM_Z_RANGE_MM[0] <= float(point_mm[2]) <= FRONT_WINDOW_REFERENCE_RIM_Z_RANGE_MM[1]
+            ):
+                candidate_points.append(tuple(round(float(value), 6) for value in point_mm))
+
+    unique_points = sorted(set(candidate_points))
+    upper_chain = [np.array(point, dtype=float) / 1000.0 for point in unique_points if point[1] > FRONT_WINDOW_REFERENCE_RIM_UPPER_Y_MIN_MM]
+    lower_chain = [
+        np.array(point, dtype=float) / 1000.0
+        for point in unique_points
+        if abs(point[1] - FRONT_WINDOW_REFERENCE_RIM_LOWER_Y_MM) <= FRONT_WINDOW_REFERENCE_RIM_LOWER_Y_TOLERANCE_MM
+    ]
+    upper_chain.sort(key=lambda point: float(point[0]))
+    lower_chain.sort(key=lambda point: float(point[0]))
+
+    if len(upper_chain) != EXPECTED_FRONT_WINDOW_REFERENCE_RIM_CHAIN_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_WINDOW_REFERENCE_RIM_CHAIN_COUNT} upper rim reference points, found {len(upper_chain)}."
+        )
+    if len(lower_chain) != EXPECTED_FRONT_WINDOW_REFERENCE_RIM_CHAIN_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_WINDOW_REFERENCE_RIM_CHAIN_COUNT} lower rim reference points, found {len(lower_chain)}."
+        )
+
+    return {
+        "upperChain": upper_chain,
+        "lowerChain": lower_chain,
+        "upperChainCount": len(upper_chain),
+        "lowerChainCount": len(lower_chain),
+        "xRangeMm": list(FRONT_WINDOW_REFERENCE_RIM_X_RANGE_MM),
+        "yRangeMm": list(FRONT_WINDOW_REFERENCE_RIM_Y_RANGE_MM),
+        "zRangeMm": list(FRONT_WINDOW_REFERENCE_RIM_Z_RANGE_MM),
+    }
+
+
+def serialize_front_window_reference_rim(
+    rim_reference: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "upperChainCount": int(rim_reference["upperChainCount"]),
+        "lowerChainCount": int(rim_reference["lowerChainCount"]),
+        "xRangeMm": list(rim_reference["xRangeMm"]),
+        "yRangeMm": list(rim_reference["yRangeMm"]),
+        "zRangeMm": list(rim_reference["zRangeMm"]),
+        "upperChainEndpointsProductMm": [
+            vector_to_mm_list(rim_reference["upperChain"][0]),
+            vector_to_mm_list(rim_reference["upperChain"][-1]),
+        ],
+        "lowerChainEndpointsProductMm": [
+            vector_to_mm_list(rim_reference["lowerChain"][0]),
+            vector_to_mm_list(rim_reference["lowerChain"][-1]),
+        ],
+    }
+
+
 def polyline_parameters(polyline: list[np.ndarray]) -> list[float]:
     distances = [0.0]
     for index in range(1, len(polyline)):
@@ -844,74 +989,90 @@ def build_guided_front_fill_patch(
 
 def build_structured_front_window_patch(
     loop_points: list[np.ndarray],
+    rim_reference: dict[str, object],
 ) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray]], dict[str, object]]:
-    if len(loop_points) != EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT:
+    if len(loop_points) != EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT:
         raise ValueError(
-            f"Expected {EXPECTED_FRONT_WINDOW_BOUNDARY_VERTEX_COUNT} boundary vertices for structured fill, "
+            f"Expected {EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT} boundary vertices for front-window fill, "
             f"found {len(loop_points)}."
         )
 
+    upper_chain = [point.copy() for point in rim_reference["upperChain"]]
+    lower_chain = [point.copy() for point in rim_reference["lowerChain"]]
     reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
-    outer_start, outer_stop = FRONT_WINDOW_OUTER_STRIP_SLICE
-    inner_start, inner_stop = FRONT_WINDOW_INNER_STRIP_SLICE
+    outer_start, outer_stop = FRONT_WINDOW_REBUILD_OUTER_CHAIN_SLICE
     outer_strip = [point.copy() for point in loop_points[outer_start:outer_stop]]
+    inner_start, inner_stop = FRONT_WINDOW_REBUILD_INNER_CHAIN_SLICE
     inner_strip = [point.copy() for point in reversed(loop_points[inner_start:inner_stop])]
-    strip_triangles = loft_open_polylines(outer_strip, inner_strip, reference_center)
+    strip_triangles = build_equal_strip_between_chains(outer_strip, inner_strip, reference_center)
 
-    left_cap_loop = [loop_points[index].copy() for index in FRONT_WINDOW_LEFT_CAP_LOOP_INDICES]
-    left_cap_triangles = [
-        orient_triangle_away_from_center(
-            (
-                left_cap_loop[index_a],
-                left_cap_loop[index_b],
-                left_cap_loop[index_c],
-            ),
-            reference_center,
-        )
-        for index_a, index_b, index_c in FRONT_WINDOW_LEFT_CAP_TRIANGLE_INDICES
+    top_lower_right = loop_points[40].copy()
+    top_upper_left = loop_points[41].copy()
+    upper_match_index = min(
+        range(len(upper_chain)),
+        key=lambda index: abs(float(upper_chain[index][0] - top_upper_left[0])),
+    )
+    lower_match_index = min(
+        range(len(lower_chain)),
+        key=lambda index: abs(float(lower_chain[index][0] - top_lower_right[0])),
+    )
+    if upper_match_index + 1 >= len(upper_chain):
+        raise ValueError("Upper rim reference chain does not extend past the front-window upper-left match point.")
+    if lower_match_index - 1 < 0:
+        raise ValueError("Lower rim reference chain does not extend before the front-window upper-right match point.")
+
+    top_upper_right = upper_chain[upper_match_index + 1].copy()
+    top_lower_left = lower_chain[lower_match_index - 1].copy()
+
+    lower_outer_left = loop_points[0].copy()
+    lower_outer_next = loop_points[1].copy()
+    lower_inner_next = loop_points[38].copy()
+    lower_inner_left = loop_points[39].copy()
+    local_patch_triangles = [
+        (lower_outer_left, lower_outer_next, top_upper_right),
+        (lower_outer_next, lower_inner_next, top_upper_right),
+        (lower_inner_next, lower_inner_left, top_lower_left),
+        (lower_inner_left, top_lower_right, top_lower_left),
+        (top_lower_right, top_upper_right, top_lower_left),
+        (top_lower_right, top_upper_left, top_upper_right),
+        (top_upper_left, lower_outer_left, top_upper_right),
+        (lower_inner_next, top_lower_left, top_upper_right),
+    ]
+    local_patch_triangles = [
+        orient_triangle_away_from_center(triangle, reference_center) for triangle in local_patch_triangles
     ]
 
-    right_cap_loop = [loop_points[index].copy() for index in FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES]
-    right_cap_triangles = [
-        orient_triangle_away_from_center(
-            (right_cap_loop[0], right_cap_loop[1], right_cap_loop[2]),
-            reference_center,
-        )
-    ]
-
-    patch_triangles = strip_triangles + left_cap_triangles + right_cap_triangles
+    patch_triangles = strip_triangles + local_patch_triangles
     patch_points = [point for triangle in patch_triangles for point in triangle]
     patch_mins, patch_maxs = compute_bbox(patch_points)
     strip_points = [point for triangle in strip_triangles for point in triangle]
     strip_mins, strip_maxs = compute_bbox(strip_points)
-    left_points = [point for triangle in left_cap_triangles for point in triangle]
-    left_mins, left_maxs = compute_bbox(left_points)
-    right_points = [point for triangle in right_cap_triangles for point in triangle]
-    right_mins, right_maxs = compute_bbox(right_points)
+    local_points = [point for triangle in local_patch_triangles for point in triangle]
+    local_mins, local_maxs = compute_bbox(local_points)
 
     return patch_triangles, {
         "boundaryVertexCount": len(loop_points),
         "outerStripVertexCount": len(outer_strip),
         "innerStripVertexCount": len(inner_strip),
         "stripTriangleCount": len(strip_triangles),
-        "leftCapTriangleCount": len(left_cap_triangles),
-        "rightCapTriangleCount": len(right_cap_triangles),
-        "outerStripSlice": list(FRONT_WINDOW_OUTER_STRIP_SLICE),
-        "innerStripSlice": list(FRONT_WINDOW_INNER_STRIP_SLICE),
-        "leftCapLoopIndices": list(FRONT_WINDOW_LEFT_CAP_LOOP_INDICES),
-        "rightCapLoopIndices": list(FRONT_WINDOW_RIGHT_CAP_LOOP_INDICES),
+        "localPatchTriangleCount": len(local_patch_triangles),
+        "outerStripSlice": list(FRONT_WINDOW_REBUILD_OUTER_CHAIN_SLICE),
+        "innerStripSlice": list(FRONT_WINDOW_REBUILD_INNER_CHAIN_SLICE),
+        "rimReferenceUpperChainCount": len(upper_chain),
+        "rimReferenceLowerChainCount": len(lower_chain),
+        "rimUpperMatchIndex": upper_match_index,
+        "rimLowerMatchIndex": lower_match_index,
+        "topUpperRightProductMm": vector_to_mm_list(top_upper_right),
+        "topLowerLeftProductMm": vector_to_mm_list(top_lower_left),
         "patchBboxMinProductMm": vector_to_mm_list(patch_mins),
         "patchBboxMaxProductMm": vector_to_mm_list(patch_maxs),
         "patchBboxSizeProductMm": vector_to_mm_list(patch_maxs - patch_mins),
         "stripBboxMinProductMm": vector_to_mm_list(strip_mins),
         "stripBboxMaxProductMm": vector_to_mm_list(strip_maxs),
         "stripBboxSizeProductMm": vector_to_mm_list(strip_maxs - strip_mins),
-        "leftCapBboxMinProductMm": vector_to_mm_list(left_mins),
-        "leftCapBboxMaxProductMm": vector_to_mm_list(left_maxs),
-        "leftCapBboxSizeProductMm": vector_to_mm_list(left_maxs - left_mins),
-        "rightCapBboxMinProductMm": vector_to_mm_list(right_mins),
-        "rightCapBboxMaxProductMm": vector_to_mm_list(right_maxs),
-        "rightCapBboxSizeProductMm": vector_to_mm_list(right_maxs - right_mins),
+        "localPatchBboxMinProductMm": vector_to_mm_list(local_mins),
+        "localPatchBboxMaxProductMm": vector_to_mm_list(local_maxs),
+        "localPatchBboxSizeProductMm": vector_to_mm_list(local_maxs - local_mins),
     }
 
 
@@ -1022,6 +1183,445 @@ def replace_shell_with_product_triangles(
 
     replace_nonindexed_primitive_rows(gltf, bin_chunk, primitive, positions, normals)
     return len(product_triangles)
+
+
+def classify_positive_lip_chain_point(point: np.ndarray) -> str | None:
+    point_mm = point * 1000.0
+    y_mm = float(point_mm[1])
+    z_mm = float(point_mm[2])
+
+    if abs(y_mm + 0.456) <= 0.03 and abs(z_mm - 16.2) <= 0.05:
+        return "bottom16"
+    if abs(y_mm + 0.456) <= 0.03 and abs(z_mm - 17.0) <= 0.05:
+        return "outer17"
+    if abs(y_mm - 9.25) <= 0.03 and 15.3 <= z_mm <= 15.6:
+        return "mid15"
+    if y_mm >= 9.29 and 16.1 <= z_mm <= 16.36:
+        return "upper16"
+    return None
+
+
+def collect_positive_lip_symmetry_chains(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    *,
+    side_sign: int,
+) -> dict[str, object]:
+    chain_points: dict[str, dict[tuple[float, float, float], np.ndarray]] = defaultdict(dict)
+    triangle_indices: list[int] = []
+    collected_points: list[np.ndarray] = []
+
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+
+        if side_sign < 0:
+            if min(xs_mm) < -POSITIVE_LIP_SYMMETRY_X_MAX_MM or max(xs_mm) > 0.001:
+                continue
+        else:
+            if min(xs_mm) < -0.001 or max(xs_mm) > POSITIVE_LIP_SYMMETRY_X_MAX_MM:
+                continue
+
+        if (
+            min(ys_mm) < POSITIVE_LIP_SYMMETRY_Y_RANGE_MM[0]
+            or max(ys_mm) > POSITIVE_LIP_SYMMETRY_Y_RANGE_MM[1]
+            or min(zs_mm) < POSITIVE_LIP_SYMMETRY_Z_RANGE_MM[0]
+            or max(zs_mm) > POSITIVE_LIP_SYMMETRY_Z_RANGE_MM[1]
+        ):
+            continue
+
+        triangle_indices.append(triangle_index)
+        for point in triangle:
+            x_mm = float(point[0]) * 1000.0
+            if side_sign < 0 and x_mm > 0.001:
+                continue
+            if side_sign > 0 and x_mm < -0.001:
+                continue
+
+            chain_name = classify_positive_lip_chain_point(point)
+            if chain_name is None:
+                continue
+
+            key = point_key(point)
+            chain_points[chain_name][key] = point.copy()
+            collected_points.append(point)
+
+    ordered_chains: dict[str, list[np.ndarray]] = {}
+    expected_chain_names = ("bottom16", "outer17", "mid15", "upper16")
+    for chain_name in expected_chain_names:
+        ordered_points = sorted(
+            chain_points[chain_name].values(),
+            key=lambda point: abs(float(point[0])),
+        )
+        if len(ordered_points) != EXPECTED_POSITIVE_LIP_CHAIN_POINT_COUNT:
+            raise ValueError(
+                f"Expected {EXPECTED_POSITIVE_LIP_CHAIN_POINT_COUNT} points in {chain_name} for side {side_sign}, "
+                f"found {len(ordered_points)}."
+            )
+        ordered_chains[chain_name] = ordered_points
+
+    mins, maxs = compute_bbox(collected_points)
+    return {
+        "sideSign": side_sign,
+        "triangleIndices": sorted(set(triangle_indices)),
+        "triangleCount": len(set(triangle_indices)),
+        "chains": ordered_chains,
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+    }
+
+
+def build_positive_lip_symmetry_point_map(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[dict[tuple[float, float, float], np.ndarray], dict[str, object]]:
+    left_side = collect_positive_lip_symmetry_chains(shell_triangles, side_sign=-1)
+    right_side = collect_positive_lip_symmetry_chains(shell_triangles, side_sign=1)
+
+    remap: dict[tuple[float, float, float], np.ndarray] = {}
+    moved_points: list[dict[str, object]] = []
+    chain_names = ("bottom16", "outer17", "mid15", "upper16")
+    for chain_name in chain_names:
+        left_chain = left_side["chains"][chain_name]
+        right_chain = right_side["chains"][chain_name]
+        if len(left_chain) != len(right_chain):
+            raise ValueError(
+                f"Positive lip symmetry chain length mismatch for {chain_name}: "
+                f"{len(left_chain)} vs {len(right_chain)}."
+            )
+
+        for index, (left_point, right_point) in enumerate(zip(left_chain, right_chain)):
+            replacement = np.array(
+                [abs(float(left_point[0])), float(left_point[1]), float(left_point[2])],
+                dtype=float,
+            )
+            remap[point_key(right_point)] = replacement
+            if not np.allclose(right_point, replacement, atol=1e-9):
+                moved_points.append(
+                    {
+                        "chain": chain_name,
+                        "index": index,
+                        "fromProductMm": vector_to_mm_list(right_point),
+                        "toProductMm": vector_to_mm_list(replacement),
+                    }
+                )
+
+    return remap, {
+        "leftRegion": {
+            "triangleCount": int(left_side["triangleCount"]),
+            "triangleIndices": list(left_side["triangleIndices"]),
+            "bboxMinProductMm": list(left_side["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(left_side["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(left_side["bboxSizeProductMm"]),
+        },
+        "rightRegion": {
+            "triangleCount": int(right_side["triangleCount"]),
+            "triangleIndices": list(right_side["triangleIndices"]),
+            "bboxMinProductMm": list(right_side["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(right_side["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(right_side["bboxSizeProductMm"]),
+        },
+        "chainPointCount": EXPECTED_POSITIVE_LIP_CHAIN_POINT_COUNT,
+        "pointRemapCount": len(remap),
+        "movedPointCount": len(moved_points),
+        "movedPoints": moved_points,
+    }
+
+
+def enforce_positive_lip_symmetry(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    left_side = collect_positive_lip_symmetry_chains(shell_triangles, side_sign=-1)
+    right_side = collect_positive_lip_symmetry_chains(shell_triangles, side_sign=1)
+
+    left_triangle_indices = set(int(index) for index in left_side["triangleIndices"])
+    right_triangle_indices = set(int(index) for index in right_side["triangleIndices"])
+    left_triangles = [shell_triangles[index] for index in sorted(left_triangle_indices)]
+    shell_without_right_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in right_triangle_indices
+    ]
+
+    point_remap: dict[tuple[float, float, float], np.ndarray] = {}
+    moved_points: list[dict[str, object]] = []
+    chain_names = ("bottom16", "outer17", "mid15", "upper16")
+    for chain_name in chain_names:
+        left_chain = left_side["chains"][chain_name]
+        right_chain = right_side["chains"][chain_name]
+        if len(left_chain) != len(right_chain):
+            raise ValueError(
+                f"Positive lip symmetry chain length mismatch for {chain_name}: "
+                f"{len(left_chain)} vs {len(right_chain)}."
+            )
+
+        for index, (left_point, right_point) in enumerate(zip(left_chain, right_chain)):
+            point_remap[point_key(left_point)] = right_point.copy()
+            moved_points.append(
+                {
+                    "chain": chain_name,
+                    "index": index,
+                    "fromLeftProductMm": vector_to_mm_list(left_point),
+                    "toRightProductMm": vector_to_mm_list(right_point),
+                }
+            )
+
+    reference_center = np.mean(
+        np.stack([point for chain in right_side["chains"].values() for point in chain], axis=0),
+        axis=0,
+    )
+    rebuilt_right_region: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for triangle in left_triangles:
+        mapped_triangle = tuple(point_remap[point_key(point)].copy() for point in triangle)
+        rebuilt_right_region.append(orient_triangle_away_from_center(mapped_triangle, reference_center))
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_right_region + rebuilt_right_region)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive lip topology rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_right_region for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "leftRegion": {
+            "triangleCount": int(left_side["triangleCount"]),
+            "triangleIndices": list(left_side["triangleIndices"]),
+            "bboxMinProductMm": list(left_side["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(left_side["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(left_side["bboxSizeProductMm"]),
+        },
+        "rightRegionRemoved": {
+            "triangleCount": int(right_side["triangleCount"]),
+            "triangleIndices": list(right_side["triangleIndices"]),
+            "bboxMinProductMm": list(right_side["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(right_side["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(right_side["bboxSizeProductMm"]),
+        },
+        "rebuiltRightRegionTriangleCount": len(rebuilt_right_region),
+        "chainPointCount": EXPECTED_POSITIVE_LIP_CHAIN_POINT_COUNT,
+        "pointRemapCount": len(point_remap),
+        "referenceCenterProductMm": vector_to_mm_list(reference_center),
+        "rebuiltRegionBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltRegionBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltRegionBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "mappedChains": moved_points,
+        "finalBoundaryEdgeCount": len(final_boundary_edges),
+    }
+
+
+def select_positive_lip_center_rebuild_region(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    collected_points: list[np.ndarray] = []
+    chain_points: dict[str, dict[tuple[float, float, float], np.ndarray]] = defaultdict(dict)
+
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+
+        if (
+            min(xs_mm) < POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM[0]
+            or max(xs_mm) > POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM[1]
+            or min(ys_mm) < POSITIVE_LIP_CENTER_REBUILD_Y_RANGE_MM[0]
+            or max(ys_mm) > POSITIVE_LIP_CENTER_REBUILD_Y_RANGE_MM[1]
+            or min(zs_mm) < POSITIVE_LIP_CENTER_REBUILD_Z_RANGE_MM[0]
+            or max(zs_mm) > POSITIVE_LIP_CENTER_REBUILD_Z_RANGE_MM[1]
+        ):
+            continue
+
+        triangle_indices.append(triangle_index)
+        collected_points.extend(triangle)
+        for point in triangle:
+            x_mm = float(point[0]) * 1000.0
+            if not (POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM[0] <= x_mm <= POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM[1]):
+                continue
+            chain_name = classify_positive_lip_chain_point(point)
+            if chain_name is None:
+                continue
+            chain_points[chain_name][point_key(point)] = point.copy()
+
+    if len(triangle_indices) != EXPECTED_POSITIVE_LIP_CENTER_REBUILD_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_LIP_CENTER_REBUILD_TRIANGLE_COUNT} positive lip center triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    expected_chain_names = ("outer17", "upper16", "mid15", "bottom16")
+    ordered_chains: dict[str, list[np.ndarray]] = {}
+    for chain_name in expected_chain_names:
+        ordered_points = sorted(chain_points[chain_name].values(), key=lambda point: float(point[0]))
+        if len(ordered_points) != EXPECTED_POSITIVE_LIP_CENTER_REBUILD_CHAIN_POINT_COUNT:
+            raise ValueError(
+                f"Expected {EXPECTED_POSITIVE_LIP_CENTER_REBUILD_CHAIN_POINT_COUNT} points in {chain_name} for "
+                f"positive lip center rebuild, found {len(ordered_points)}."
+            )
+        ordered_chains[chain_name] = ordered_points
+
+    mins, maxs = compute_bbox(collected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "chains": ordered_chains,
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionRangesProductMm": {
+            "x": list(POSITIVE_LIP_CENTER_REBUILD_X_RANGE_MM),
+            "y": list(POSITIVE_LIP_CENTER_REBUILD_Y_RANGE_MM),
+            "z": list(POSITIVE_LIP_CENTER_REBUILD_Z_RANGE_MM),
+        },
+    }
+
+
+def rebuild_positive_lip_center_strip(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    rebuild_region = select_positive_lip_center_rebuild_region(shell_triangles)
+    target_indices = set(int(index) for index in rebuild_region["triangleIndices"])
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    chains = rebuild_region["chains"]
+    reference_center = np.mean(
+        np.stack([point for chain in chains.values() for point in chain], axis=0),
+        axis=0,
+    )
+    rebuilt_triangles = (
+        build_uniform_strip_between_chains(chains["outer17"], chains["upper16"], reference_center)
+        + build_uniform_strip_between_chains(chains["upper16"], chains["mid15"], reference_center)
+        + build_uniform_strip_between_chains(chains["bottom16"], chains["mid15"], reference_center)
+    )
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive lip center rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "region": {
+            "triangleCount": int(rebuild_region["triangleCount"]),
+            "triangleIndices": list(rebuild_region["triangleIndices"]),
+            "bboxMinProductMm": list(rebuild_region["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(rebuild_region["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(rebuild_region["bboxSizeProductMm"]),
+            "selectionRangesProductMm": dict(rebuild_region["selectionRangesProductMm"]),
+        },
+        "chainXCoordinatesProductMm": {
+            name: [round(float(point[0]) * 1000.0, 3) for point in chains[name]]
+            for name in ("outer17", "upper16", "mid15", "bottom16")
+        },
+    }
+
+
+def select_positive_lip_upper_strip_region(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    collected_points: list[np.ndarray] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= POSITIVE_LIP_UPPER_STRIP_REBUILD_X_RANGE_MM[0]
+            and max(xs_mm) <= POSITIVE_LIP_UPPER_STRIP_REBUILD_X_RANGE_MM[1]
+            and min(ys_mm) >= POSITIVE_LIP_UPPER_STRIP_REBUILD_Y_RANGE_MM[0]
+            and max(ys_mm) <= POSITIVE_LIP_UPPER_STRIP_REBUILD_Y_RANGE_MM[1]
+            and min(zs_mm) >= POSITIVE_LIP_UPPER_STRIP_REBUILD_Z_RANGE_MM[0]
+            and max(zs_mm) <= POSITIVE_LIP_UPPER_STRIP_REBUILD_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+            collected_points.extend(triangle)
+
+    if len(triangle_indices) != EXPECTED_POSITIVE_LIP_UPPER_STRIP_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_LIP_UPPER_STRIP_TRIANGLE_COUNT} positive lip upper-strip triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    mins, maxs = compute_bbox(collected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionRangesProductMm": {
+            "x": list(POSITIVE_LIP_UPPER_STRIP_REBUILD_X_RANGE_MM),
+            "y": list(POSITIVE_LIP_UPPER_STRIP_REBUILD_Y_RANGE_MM),
+            "z": list(POSITIVE_LIP_UPPER_STRIP_REBUILD_Z_RANGE_MM),
+        },
+    }
+
+
+def rebuild_positive_lip_upper_strip(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    rebuild_region = select_positive_lip_upper_strip_region(shell_triangles)
+    target_indices = set(int(index) for index in rebuild_region["triangleIndices"])
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    right_side = collect_positive_lip_symmetry_chains(shell_triangles, side_sign=1)
+    upper_chain = right_side["chains"]["upper16"]
+    mid_chain = right_side["chains"]["mid15"]
+    reference_center = np.mean(np.stack(upper_chain + mid_chain, axis=0), axis=0)
+    rebuilt_triangles = build_uniform_strip_between_chains(upper_chain, mid_chain, reference_center)
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive lip upper-strip rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "region": {
+            "triangleCount": int(rebuild_region["triangleCount"]),
+            "triangleIndices": list(rebuild_region["triangleIndices"]),
+            "bboxMinProductMm": list(rebuild_region["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(rebuild_region["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(rebuild_region["bboxSizeProductMm"]),
+            "selectionRangesProductMm": dict(rebuild_region["selectionRangesProductMm"]),
+        },
+        "chainPointCount": len(upper_chain),
+    }
 
 
 def draw_depth_weighted_view(
@@ -1378,12 +1978,59 @@ def select_remaining_sidewall_triangles(
     }
 
 
+def select_front_window_sloped_residual_triangles(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    _, positions, _ = read_shell_primitive_rows(gltf, bin_chunk)
+    triangle_indices: list[int] = []
+    selected_points: list[np.ndarray] = []
+
+    for triangle_index in range(len(positions) // 3):
+        points = np.array(positions[triangle_index * 3 : triangle_index * 3 + 3], dtype=float)
+        center_mm = points.mean(axis=0) * 1000.0
+        if (
+            FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_X_RANGE_MM[0]
+            <= float(center_mm[0])
+            <= FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_X_RANGE_MM[1]
+            and FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Y_RANGE_MM[0]
+            <= float(center_mm[1])
+            <= FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Y_RANGE_MM[1]
+            and FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Z_RANGE_MM[0]
+            <= float(center_mm[2])
+            <= FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+            selected_points.extend(points)
+
+    if len(triangle_indices) != EXPECTED_FRONT_WINDOW_SLOPED_RESIDUAL_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_WINDOW_SLOPED_RESIDUAL_TRIANGLE_COUNT} sloped residual triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinShellLocalMm": vector_to_mm_list(mins),
+        "bboxMaxShellLocalMm": vector_to_mm_list(maxs),
+        "bboxSizeShellLocalMm": vector_to_mm_list(maxs - mins),
+        "selectionCenterRangesShellLocalMm": {
+            "x": list(FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_X_RANGE_MM),
+            "y": list(FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Y_RANGE_MM),
+            "z": list(FRONT_WINDOW_SLOPED_RESIDUAL_LOCAL_Z_RANGE_MM),
+        },
+    }
+
+
 def rebuild_front_window_shell(
     gltf: dict,
     bin_chunk: bytearray,
 ) -> dict[str, object]:
     part_geometries = build_part_geometries(gltf, bin_chunk)
     shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
+    rim_reference = extract_front_window_reference_rim_chains(shell_triangles)
     blocker_component = select_front_window_blocker_component(shell_triangles)
     blocker_indices = set(int(index) for index in blocker_component["triangleIndices"])
     blocker_removed_count, after_blocker_triangle_count = remove_triangle_indices_from_shell(
@@ -1412,12 +2059,23 @@ def rebuild_front_window_shell(
         sidewall_indices,
     )
 
+    sloped_residual_component = select_front_window_sloped_residual_triangles(gltf, bin_chunk)
+    sloped_residual_indices = set(int(index) for index in sloped_residual_component["triangleIndices"])
+    sloped_residual_removed_count, after_sloped_residual_triangle_count = remove_triangle_indices_from_shell(
+        gltf,
+        bin_chunk,
+        sloped_residual_indices,
+    )
+
     part_geometries = build_part_geometries(gltf, bin_chunk)
     shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
     boundary_loop = ordered_boundary_loop(shell_triangles)
-    fill_triangles, fill_patch_debug = build_structured_front_window_patch(boundary_loop)
+    fill_triangles, fill_patch_debug = build_structured_front_window_patch(boundary_loop, rim_reference)
     final_product_triangles = shell_triangles + fill_triangles
     replace_shell_with_product_triangles(gltf, bin_chunk, final_product_triangles)
+    positive_lip_symmetry = enforce_positive_lip_symmetry(gltf, bin_chunk)
+    positive_lip_center_rebuild = rebuild_positive_lip_center_strip(gltf, bin_chunk)
+    positive_lip_upper_strip_rebuild = rebuild_positive_lip_upper_strip(gltf, bin_chunk)
 
     final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
     final_boundary_edges = build_boundary_edges(final_shell_triangles)
@@ -1428,13 +2086,15 @@ def rebuild_front_window_shell(
     fill_mins, fill_maxs = compute_bbox(fill_points)
     return {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_and_rebuild_front_window_with_structured_patch",
+        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_and_mirror_positive_z_lip",
         "blockerRemovedTriangleCount": blocker_removed_count,
         "afterBlockerTriangleCount": after_blocker_triangle_count,
         "frontFaceRemovedTriangleCount": front_face_removed_count,
         "afterFrontFaceTriangleCount": after_front_face_triangle_count,
         "sidewallRemovedTriangleCount": sidewall_removed_count,
         "afterSidewallTriangleCount": after_sidewall_triangle_count,
+        "slopedResidualRemovedTriangleCount": sloped_residual_removed_count,
+        "afterSlopedResidualTriangleCount": after_sloped_residual_triangle_count,
         "fillPatchTriangleCount": len(fill_triangles),
         "finalTriangleCount": len(final_shell_triangles),
         "boundaryVertexCountBeforeFill": len(boundary_loop),
@@ -1442,7 +2102,12 @@ def rebuild_front_window_shell(
         "blockerComponent": blocker_component,
         "frontFaceComponent": front_face_component,
         "sidewallComponent": sidewall_component,
+        "slopedResidualComponent": sloped_residual_component,
+        "rimReference": serialize_front_window_reference_rim(rim_reference),
         "fillPatchDebug": fill_patch_debug,
+        "positiveLipSymmetry": positive_lip_symmetry,
+        "positiveLipCenterRebuild": positive_lip_center_rebuild,
+        "positiveLipUpperStripRebuild": positive_lip_upper_strip_rebuild,
         "fillPatchBboxMinProductMm": vector_to_mm_list(fill_mins),
         "fillPatchBboxMaxProductMm": vector_to_mm_list(fill_maxs),
         "fillPatchBboxSizeProductMm": vector_to_mm_list(fill_maxs - fill_mins),

@@ -252,7 +252,10 @@ def _build_graph_neighbors(
         if memory.parent_memory_id:
             children_by_parent.setdefault(memory.parent_memory_id, []).append(memory)
 
-    branch_root_ids = set(structural_seed_ids) | set(structural_parent_depths)
+    # Only expand downward from structure nodes that were directly selected as seeds.
+    # Ancestors discovered while walking up from a leaf should contribute as parents,
+    # but they should not re-expand sideways into sibling subtrees.
+    branch_root_ids = set(structural_seed_ids)
     descendant_depths: dict[str, int] = {}
     traversal_queue = [(parent_id, 0) for parent_id in branch_root_ids]
     seen_structural_ids = set(branch_root_ids)

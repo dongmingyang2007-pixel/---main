@@ -10,6 +10,7 @@ from app.services.memory_metadata import (
     CATEGORY_PATH_CONCEPT_SOURCE,
     CATEGORY_PATH_NODE_KIND,
     MEMORY_KIND_FACT,
+    clear_manual_parent_binding,
     get_manual_parent_id,
     get_memory_category_path,
     get_memory_kind,
@@ -75,6 +76,8 @@ def _is_preservable_parent(candidate: Memory | None, child: Memory) -> bool:
         return False
     if is_category_path_memory(candidate):
         return False
+    if not (is_concept_memory(candidate) or is_summary_memory(candidate)):
+        return False
     child_owner_user_id = get_memory_owner_user_id(child) if is_private_memory(child) else None
     if not _same_visibility(candidate, owner_user_id=child_owner_user_id):
         return False
@@ -102,7 +105,8 @@ def _would_create_cycle(
     return False
 
 
-def _delete_memory(db: Session, memory_id: str) -> None:
+def _delete_memory(db: Session, memory_or_id: Memory | str) -> None:
+    memory_id = memory_or_id.id if isinstance(memory_or_id, Memory) else memory_or_id
     db.query(MemoryEdge).filter(
         or_(
             MemoryEdge.source_memory_id == memory_id,
@@ -110,6 +114,9 @@ def _delete_memory(db: Session, memory_id: str) -> None:
         )
     ).delete(synchronize_session=False)
     db.execute(sql_text("DELETE FROM embeddings WHERE memory_id = :memory_id"), {"memory_id": memory_id})
+    if isinstance(memory_or_id, Memory):
+        db.delete(memory_or_id)
+        return
     db.query(Memory).filter(Memory.id == memory_id).delete(synchronize_session=False)
 
 
@@ -246,16 +253,11 @@ def _desired_parent_id(
     memories_by_id: dict[str, Memory],
     path_nodes_by_key: dict[tuple[str, str], Memory],
 ) -> str:
-    owner_user_id = get_memory_owner_user_id(memory) if is_private_memory(memory) else None
-    category_path = get_memory_category_path(memory)
-    deepest_path_node = (
-        path_nodes_by_key.get((_visibility_key_for_owner(owner_user_id), category_path))
-        if category_path
-        else None
-    )
     current_parent = memories_by_id.get(memory.parent_memory_id or "")
 
     if is_category_path_memory(memory):
+        owner_user_id = get_memory_owner_user_id(memory) if is_private_memory(memory) else None
+        category_path = get_memory_category_path(memory)
         segments = split_category_segments(category_path)
         if len(segments) <= 1:
             return root_memory.id
@@ -270,6 +272,12 @@ def _desired_parent_id(
         manual_parent = memories_by_id.get(manual_parent_id)
         if manual_parent is None or is_assistant_root_memory(manual_parent):
             return root_memory.id
+        if not (
+            is_category_path_memory(manual_parent)
+            or is_concept_memory(manual_parent)
+            or is_summary_memory(manual_parent)
+        ):
+            return root_memory.id
         if _would_create_cycle(
             memory_id=memory.id,
             candidate_parent_id=manual_parent.id,
@@ -278,13 +286,39 @@ def _desired_parent_id(
             return root_memory.id
         return manual_parent.id
 
+    if current_parent is None or is_assistant_root_memory(current_parent):
+        return root_memory.id
     if _is_preservable_parent(current_parent, memory):
         return current_parent.id
 
-    if deepest_path_node is not None:
-        return deepest_path_node.id
-
     return root_memory.id
+
+
+def _manual_parent_binding_is_supported(
+    *,
+    memory: Memory,
+    root_memory: Memory,
+    memories_by_id: dict[str, Memory],
+) -> bool:
+    if not has_manual_parent_binding(memory):
+        return True
+    manual_parent_id = get_manual_parent_id(memory)
+    if not manual_parent_id or manual_parent_id == root_memory.id:
+        return True
+    manual_parent = memories_by_id.get(manual_parent_id)
+    if manual_parent is None or is_assistant_root_memory(manual_parent):
+        return False
+    if not (
+        is_category_path_memory(manual_parent)
+        or is_concept_memory(manual_parent)
+        or is_summary_memory(manual_parent)
+    ):
+        return False
+    return not _would_create_cycle(
+        memory_id=memory.id,
+        candidate_parent_id=manual_parent.id,
+        memories_by_id=memories_by_id,
+    )
 
 
 def _sync_structural_auto_edges(
@@ -365,7 +399,7 @@ def _prune_empty_path_nodes(
             memories_by_id.pop(memory.id, None)
             key = (_visibility_key(memory), get_memory_category_path(memory))
             path_nodes_by_key.pop(key, None)
-            _delete_memory(db, memory.id)
+            _delete_memory(db, memory)
             summary.deleted_empty_path_nodes += 1
 
 
@@ -434,6 +468,17 @@ def ensure_project_category_tree(
     for memory in memories:
         if is_assistant_root_memory(memory):
             continue
+        if not _manual_parent_binding_is_supported(
+            memory=memory,
+            root_memory=root_memory,
+            memories_by_id=memories_by_id,
+        ):
+            memory.metadata_json = normalize_memory_metadata(
+                content=memory.content,
+                category=memory.category,
+                memory_type=memory.type,
+                metadata=clear_manual_parent_binding(dict(memory.metadata_json or {})),
+            )
         desired_parent_id = _desired_parent_id(
             memory=memory,
             root_memory=root_memory,

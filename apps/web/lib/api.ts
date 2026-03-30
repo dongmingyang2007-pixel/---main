@@ -86,7 +86,7 @@ function isPublicMutation(path: string): boolean {
   ].includes(path);
 }
 
-async function ensureCsrfToken(): Promise<string> {
+async function ensureCsrfToken(options?: { suppressUnauthorizedHandling?: boolean }): Promise<string> {
   if (cachedCsrfToken) {
     return cachedCsrfToken;
   }
@@ -99,10 +99,13 @@ async function ensureCsrfToken(): Promise<string> {
       cache: "no-store",
     });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
     throw toApiRequestError(error, apiBaseUrl);
   }
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
+  if (res.status === 401 && !options?.suppressUnauthorizedHandling) {
     handleUnauthorizedSession();
   }
   if (!res.ok || !data?.csrf_token) {
@@ -193,10 +196,13 @@ function buildHeaders(
   return headers;
 }
 
-async function parseResponse<T>(res: Response): Promise<T> {
+async function parseResponse<T>(
+  res: Response,
+  options?: { suppressUnauthorizedHandling?: boolean },
+): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) {
+    if (res.status === 401 && !options?.suppressUnauthorizedHandling) {
       handleUnauthorizedSession();
     } else if (res.status === 403) {
       clearCachedSecurityState();
@@ -214,14 +220,14 @@ async function parseResponse<T>(res: Response): Promise<T> {
 async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
-  options: { requireCsrf?: boolean; contentType?: string } = {},
+  options: { requireCsrf?: boolean; contentType?: string; suppressUnauthorizedHandling?: boolean } = {},
 ): Promise<T> {
   const apiBaseUrl = getApiBaseUrl();
   const apiHttpBaseUrl = getApiHttpBaseUrl();
   const method = (init.method || "GET").toUpperCase();
   const requireCsrf =
     options.requireCsrf ?? (!isPublicMutation(path) && ["POST", "PUT", "PATCH", "DELETE"].includes(method));
-  const csrfToken = requireCsrf ? await ensureCsrfToken() : undefined;
+  const csrfToken = requireCsrf ? await ensureCsrfToken({ suppressUnauthorizedHandling: options.suppressUnauthorizedHandling }) : undefined;
   let res: Response;
   try {
     res = await fetch(`${apiHttpBaseUrl}${path}`, {
@@ -231,9 +237,12 @@ async function apiRequest<T>(
       cache: "no-store",
     });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
     throw toApiRequestError(error, apiBaseUrl);
   }
-  return parseResponse<T>(res);
+  return parseResponse<T>(res, { suppressUnauthorizedHandling: options.suppressUnauthorizedHandling });
 }
 
 /**
@@ -353,16 +362,21 @@ export function clearWorkspaceId(): void {
   clearCookie(LEGACY_WORKSPACE_COOKIE_NAME);
 }
 
-export async function logout(): Promise<void> {
+export async function logout(): Promise<boolean> {
   try {
-    await apiPost("/api/v1/auth/logout", {});
+    await apiRequest<void>(
+      "/api/v1/auth/logout",
+      { method: "POST" },
+      { requireCsrf: true, suppressUnauthorizedHandling: true },
+    );
   } catch {
-    // Clear client state regardless of API errors
+    return false;
   }
   clearAuthState();
   clearWorkspaceId();
   clearCachedSecurityState();
   window.location.href = getLocaleAwareLoginPath();
+  return true;
 }
 
 export async function apiPostFormData<T>(path: string, formData: FormData, init?: RequestInit): Promise<T> {

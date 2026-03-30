@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { useRealtimeVoice, type PersistedRealtimeTurnPayload } from "@/hooks/useRealtimeVoice";
+import {
+  useRealtimeVoice,
+  type PersistedRealtimeTurnPayload,
+} from "@/hooks/useRealtimeVoice";
 import { useSyntheticRealtimeVoice } from "@/hooks/useSyntheticRealtimeVoice";
 import type { ChatMode } from "./chat-types";
 
@@ -11,7 +14,10 @@ interface RealtimeVoicePanelProps {
   conversationId: string;
   projectId: string;
   allowVideoInput?: boolean;
-  onTurnComplete: (payload: { userText: string; assistantText: string }) => void;
+  onTurnComplete: (payload: {
+    userText: string;
+    assistantText: string;
+  }) => void;
   onTurnPersisted: (payload: PersistedRealtimeTurnPayload) => void;
   onTranscriptUpdate: (payload: {
     role: "user" | "assistant";
@@ -29,7 +35,13 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function WaveformBars({ levels, barCount = 5 }: { levels: number[]; barCount?: number }) {
+function WaveformBars({
+  levels,
+  barCount = 5,
+}: {
+  levels: number[];
+  barCount?: number;
+}) {
   return (
     <div className={`rt-waveform${barCount > 5 ? " is-large" : ""}`}>
       {Array.from({ length: barCount }, (_, i) => (
@@ -64,7 +76,9 @@ export default function RealtimeVoicePanel({
   onStateChange,
 }: RealtimeVoicePanelProps) {
   const t = useTranslations("console-chat");
+  const sessionKey = `${chatMode}:${projectId}:${conversationId}`;
   const [expanded, setExpanded] = useState(false);
+  const [expandedSessionKey, setExpandedSessionKey] = useState(sessionKey);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const captureRef = useRef<HTMLInputElement>(null);
@@ -126,6 +140,13 @@ export default function RealtimeVoicePanel({
     userVolume,
     aiVolume,
   } = active;
+  const omniState = omni.state;
+  const omniTranscriptLength = omni.transcript.length;
+  const omniDisconnect = omni.disconnect;
+  const syntheticState = synthetic.state;
+  const syntheticTranscriptLength = synthetic.transcript.length;
+  const syntheticDisconnect = synthetic.disconnect;
+  const isExpanded = expanded && expandedSessionKey === sessionKey;
 
   // Synthetic-only fields
   const pendingMedia = isSynthetic ? synthetic.pendingMedia : null;
@@ -143,35 +164,33 @@ export default function RealtimeVoicePanel({
     onStateChange(state);
   }, [onStateChange, state]);
 
-  const sessionIdentityRef = useRef(`${chatMode}:${projectId}:${conversationId}`);
+  const sessionIdentityRef = useRef(sessionKey);
   useEffect(() => {
-    const nextIdentity = `${chatMode}:${projectId}:${conversationId}`;
-    if (sessionIdentityRef.current === nextIdentity) {
+    if (sessionIdentityRef.current === sessionKey) {
       return;
     }
     const hadActiveSession =
-      omni.state !== "idle" ||
-      synthetic.state !== "idle" ||
-      omni.transcript.length > 0 ||
-      synthetic.transcript.length > 0;
-    sessionIdentityRef.current = nextIdentity;
-    setExpanded(false);
-    omni.disconnect();
-    synthetic.disconnect();
+      omniState !== "idle" ||
+      syntheticState !== "idle" ||
+      omniTranscriptLength > 0 ||
+      syntheticTranscriptLength > 0;
+    sessionIdentityRef.current = sessionKey;
+    omniDisconnect();
+    syntheticDisconnect();
     if (hadActiveSession) {
       onError(t("realtimeRestartAfterContextChange"));
     }
   }, [
-    chatMode,
     conversationId,
-    omni.disconnect,
-    omni.state,
-    omni.transcript.length,
+    omniDisconnect,
+    omniState,
+    omniTranscriptLength,
     onError,
     projectId,
-    synthetic.disconnect,
-    synthetic.state,
-    synthetic.transcript.length,
+    sessionKey,
+    syntheticDisconnect,
+    syntheticState,
+    syntheticTranscriptLength,
     t,
   ]);
 
@@ -207,7 +226,12 @@ export default function RealtimeVoicePanel({
   }, [disconnect]);
 
   // ─── Idle / error state: entry capsule ────────────────────────
-  if (state === "idle" || state === "error" || state === "connecting" || state === "reconnecting") {
+  if (
+    state === "idle" ||
+    state === "error" ||
+    state === "connecting" ||
+    state === "reconnecting"
+  ) {
     const entryText =
       state === "error"
         ? t("realtimeRetry")
@@ -223,18 +247,17 @@ export default function RealtimeVoicePanel({
           className="rt-capsule rt-entry"
           onClick={connect}
           disabled={state === "connecting" || state === "reconnecting"}
+          aria-label="Voice panel"
           style={{ cursor: "pointer" }}
         >
-          <span className="rt-capsule-label rt-entry-label">
-            {entryText}
-          </span>
+          <span className="rt-capsule-label rt-entry-label">{entryText}</span>
         </button>
       </div>
     );
   }
 
   // ─── Active + collapsed: capsule with info ────────────────────
-  if (!expanded) {
+  if (!isExpanded) {
     return (
       <div className="rt-float">
         <div className="rt-capsule rt-pill">
@@ -248,7 +271,10 @@ export default function RealtimeVoicePanel({
           <button
             type="button"
             className="rt-capsule-expand"
-            onClick={() => setExpanded(true)}
+            onClick={() => {
+              setExpandedSessionKey(sessionKey);
+              setExpanded(true);
+            }}
           >
             ━
           </button>
@@ -270,7 +296,10 @@ export default function RealtimeVoicePanel({
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file && (allowVideoInput || !file.type.startsWith("video/"))) {
+              if (
+                file &&
+                (allowVideoInput || !file.type.startsWith("video/"))
+              ) {
                 void attachMediaFile(file);
               }
               event.target.value = "";
@@ -300,7 +329,10 @@ export default function RealtimeVoicePanel({
             {t("realtimeTitle") || "AI \u52A9\u624B"}
           </span>
           <span className="rt-card-timer">{formatTime(timer)}</span>
-          <button className="rt-card-collapse" onClick={() => setExpanded(false)}>
+          <button
+            className="rt-card-collapse"
+            onClick={() => setExpanded(false)}
+          >
             ━
           </button>
         </div>
@@ -325,18 +357,48 @@ export default function RealtimeVoicePanel({
             onClick={toggleMute}
             title={isMuted ? t("realtimeUnmute") : t("realtimeMute")}
           >
-            <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
+            <svg
+              viewBox="0 0 24 24"
+              width={20}
+              height={20}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
-              {isMuted && <line x1="1" y1="1" x2="23" y2="23" stroke="#ef4444" strokeWidth={2.5} />}
+              {isMuted && (
+                <line
+                  x1="1"
+                  y1="1"
+                  x2="23"
+                  y2="23"
+                  stroke="#ef4444"
+                  strokeWidth={2.5}
+                />
+              )}
             </svg>
           </button>
 
           <button className="rt-card-hangup" onClick={handleHangup}>
             <svg viewBox="0 0 24 24" width={20} height={20} fill="currentColor">
-              <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" strokeWidth={2.5} />
-              <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth={2.5} />
+              <line
+                x1="18"
+                y1="6"
+                x2="6"
+                y2="18"
+                stroke="currentColor"
+                strokeWidth={2.5}
+              />
+              <line
+                x1="6"
+                y1="6"
+                x2="18"
+                y2="18"
+                stroke="currentColor"
+                strokeWidth={2.5}
+              />
             </svg>
           </button>
 
@@ -346,7 +408,14 @@ export default function RealtimeVoicePanel({
               title={t("syntheticUpload")}
               onClick={() => uploadRef.current?.click()}
             >
-              <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg
+                viewBox="0 0 24 24"
+                width={20}
+                height={20}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
@@ -359,11 +428,27 @@ export default function RealtimeVoicePanel({
               title={t("realtimeSpeaker")}
               onClick={toggleSpeakerMute}
             >
-              <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg
+                viewBox="0 0 24 24"
+                width={20}
+                height={20}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
                 <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                {isSpeakerMuted && <line x1="2" y1="2" x2="22" y2="22" stroke="#ef4444" strokeWidth={2.5} />}
+                {isSpeakerMuted && (
+                  <line
+                    x1="2"
+                    y1="2"
+                    x2="22"
+                    y2="22"
+                    stroke="#ef4444"
+                    strokeWidth={2.5}
+                  />
+                )}
               </svg>
             </button>
           )}
@@ -373,10 +458,16 @@ export default function RealtimeVoicePanel({
         {isSynthetic && pendingMedia && (
           <div className="rt-card-media">
             <span className="profile-model-badge">
-              {pendingMedia.kind === "video" ? t("syntheticVideo") : t("syntheticImage")}
+              {pendingMedia.kind === "video"
+                ? t("syntheticVideo")
+                : t("syntheticImage")}
             </span>
             <span>{pendingMedia.filename}</span>
-            <button type="button" className="chat-audio-btn" onClick={clearPendingMedia}>
+            <button
+              type="button"
+              className="chat-audio-btn"
+              onClick={clearPendingMedia}
+            >
               {t("syntheticClearMedia")}
             </button>
           </div>
@@ -390,7 +481,9 @@ export default function RealtimeVoicePanel({
               className="chat-audio-btn"
               onClick={() => uploadRef.current?.click()}
             >
-              {allowVideoInput ? t("syntheticUpload") : t("syntheticUploadImageOnly")}
+              {allowVideoInput
+                ? t("syntheticUpload")
+                : t("syntheticUploadImageOnly")}
             </button>
             <button
               type="button"

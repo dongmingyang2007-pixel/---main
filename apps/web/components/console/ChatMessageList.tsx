@@ -50,7 +50,8 @@ function AnimatedMessageText({
       return;
     }
 
-    const msPerChar = segments.length > 240 ? 6 : segments.length > 120 ? 12 : 22;
+    const msPerChar =
+      segments.length > 240 ? 6 : segments.length > 120 ? 12 : 22;
     let rafId = 0;
     const start = performance.now();
 
@@ -71,7 +72,8 @@ function AnimatedMessageText({
 
   const displayCount = shouldAnimate ? visibleCount : segments.length;
   const visibleText = segments.slice(0, displayCount).join("");
-  const showCursor = streaming || (shouldAnimate && displayCount < segments.length);
+  const showCursor =
+    streaming || (shouldAnimate && displayCount < segments.length);
 
   return (
     <div className="chat-markdown">
@@ -80,7 +82,15 @@ function AnimatedMessageText({
         rehypePlugins={[rehypeKatex]}
         components={{
           a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "var(--console-accent, #6366f1)", textDecoration: "underline" }}>
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                color: "var(--console-accent, #6366f1)",
+                textDecoration: "underline",
+              }}
+            >
               {children}
             </a>
           ),
@@ -254,7 +264,9 @@ function CollapsibleRetrievalTrace({
   const knowledgeChunks = trace.knowledge_chunks ?? [];
   const linkedFileChunks = trace.linked_file_chunks ?? [];
   const hasRetrievedItems =
-    memories.length > 0 || knowledgeChunks.length > 0 || linkedFileChunks.length > 0;
+    memories.length > 0 ||
+    knowledgeChunks.length > 0 ||
+    linkedFileChunks.length > 0;
   const shouldForceVisible =
     contextLevel === "memory_only" || contextLevel === "full_rag";
   const countBadges = [
@@ -292,15 +304,22 @@ function CollapsibleRetrievalTrace({
           >
             <polyline points="9 18 15 12 9 6" />
           </svg>
-          <span className="chat-context-trace-label">{t("retrievalLabel")}</span>
+          <span className="chat-context-trace-label">
+            {t("retrievalLabel")}
+          </span>
           {trace.strategy ? (
-            <span className="chat-context-trace-strategy">{trace.strategy}</span>
+            <span className="chat-context-trace-strategy">
+              {trace.strategy}
+            </span>
           ) : null}
         </div>
         <div className="chat-context-trace-badges">
           {countBadges.map((item) => (
             <span key={item.label} className="chat-context-trace-badge">
-              {t("retrievalBadgeCount", { label: item.label, count: item.value })}
+              {t("retrievalBadgeCount", {
+                label: item.label,
+                count: item.value,
+              })}
             </span>
           ))}
         </div>
@@ -310,23 +329,41 @@ function CollapsibleRetrievalTrace({
           {trace.memory_counts ? (
             <div className="chat-context-trace-summary">
               {typeof trace.memory_counts.static === "number" ? (
-                <span>{t("retrievalSummaryStatic", { count: trace.memory_counts.static })}</span>
+                <span>
+                  {t("retrievalSummaryStatic", {
+                    count: trace.memory_counts.static,
+                  })}
+                </span>
               ) : null}
               {typeof trace.memory_counts.relevant === "number" ? (
-                <span>{t("retrievalSummaryRelevant", { count: trace.memory_counts.relevant })}</span>
+                <span>
+                  {t("retrievalSummaryRelevant", {
+                    count: trace.memory_counts.relevant,
+                  })}
+                </span>
               ) : null}
               {typeof trace.memory_counts.graph === "number" ? (
-                <span>{t("retrievalSummaryGraph", { count: trace.memory_counts.graph })}</span>
+                <span>
+                  {t("retrievalSummaryGraph", {
+                    count: trace.memory_counts.graph,
+                  })}
+                </span>
               ) : null}
               {typeof trace.memory_counts.temporary === "number" ? (
-                <span>{t("retrievalSummaryTemporary", { count: trace.memory_counts.temporary })}</span>
+                <span>
+                  {t("retrievalSummaryTemporary", {
+                    count: trace.memory_counts.temporary,
+                  })}
+                </span>
               ) : null}
             </div>
           ) : null}
 
           {memories.length ? (
             <div className="chat-context-section">
-              <div className="chat-context-section-title">{t("retrievalMemories")}</div>
+              <div className="chat-context-section-title">
+                {t("retrievalMemories")}
+              </div>
               <div className="chat-context-list">
                 {memories.map((memory) => (
                   <article key={memory.id} className="chat-context-card">
@@ -348,23 +385,36 @@ function CollapsibleRetrievalTrace({
                       </div>
                       <div className="chat-context-card-metrics">
                         {formatRetrievalPercent(
-                          typeof memory.score === "number" ? memory.score : memory.semantic_score,
+                          typeof memory.score === "number"
+                            ? memory.score
+                            : memory.semantic_score,
                         ) ? (
                           <span>
                             {formatRetrievalPercent(
-                              typeof memory.score === "number" ? memory.score : memory.semantic_score,
+                              typeof memory.score === "number"
+                                ? memory.score
+                                : memory.semantic_score,
                             )}
                           </span>
                         ) : null}
                         {formatRetrievalPercent(memory.salience) ? (
-                          <span>{t("retrievalSalience", { score: formatRetrievalPercent(memory.salience) || "" })}</span>
+                          <span>
+                            {t("retrievalSalience", {
+                              score:
+                                formatRetrievalPercent(memory.salience) || "",
+                            })}
+                          </span>
                         ) : null}
                       </div>
                     </div>
                     {memory.category ? (
-                      <div className="chat-context-card-subtitle">{memory.category}</div>
+                      <div className="chat-context-card-subtitle">
+                        {memory.category}
+                      </div>
                     ) : null}
-                    <div className="chat-context-card-body">{memory.content}</div>
+                    <div className="chat-context-card-body">
+                      {memory.content}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -373,7 +423,9 @@ function CollapsibleRetrievalTrace({
 
           {knowledgeChunks.length ? (
             <div className="chat-context-section">
-              <div className="chat-context-section-title">{t("retrievalKnowledge")}</div>
+              <div className="chat-context-section-title">
+                {t("retrievalKnowledge")}
+              </div>
               <div className="chat-context-list">
                 {knowledgeChunks.map((chunk, index) => (
                   <article
@@ -392,7 +444,9 @@ function CollapsibleRetrievalTrace({
                         </div>
                       ) : null}
                     </div>
-                    <div className="chat-context-card-body">{chunk.chunk_text}</div>
+                    <div className="chat-context-card-body">
+                      {chunk.chunk_text}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -401,7 +455,9 @@ function CollapsibleRetrievalTrace({
 
           {linkedFileChunks.length ? (
             <div className="chat-context-section">
-              <div className="chat-context-section-title">{t("retrievalLinkedFiles")}</div>
+              <div className="chat-context-section-title">
+                {t("retrievalLinkedFiles")}
+              </div>
               <div className="chat-context-list">
                 {linkedFileChunks.map((chunk, index) => (
                   <article
@@ -420,7 +476,9 @@ function CollapsibleRetrievalTrace({
                         </div>
                       ) : null}
                     </div>
-                    <div className="chat-context-card-body">{chunk.chunk_text}</div>
+                    <div className="chat-context-card-body">
+                      {chunk.chunk_text}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -428,7 +486,9 @@ function CollapsibleRetrievalTrace({
           ) : null}
 
           {!hasRetrievedItems ? (
-            <div className="chat-context-trace-empty">{t("retrievalEmpty")}</div>
+            <div className="chat-context-trace-empty">
+              {t("retrievalEmpty")}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -446,7 +506,10 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-function getSourceDisplayIndex(source: SearchSource, fallbackIndex: number): number {
+function getSourceDisplayIndex(
+  source: SearchSource,
+  fallbackIndex: number,
+): number {
   return source.index > 0 ? source.index : fallbackIndex;
 }
 
@@ -454,16 +517,16 @@ function getSourceCardId(messageId: string, sourceIndex: number): string {
   return `chat-source-${messageId}-${sourceIndex}`;
 }
 
-function MarkdownLink({
-  href,
-  children,
-}: ComponentPropsWithoutRef<"a">) {
+function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      style={{ color: "var(--console-accent, #6366f1)", textDecoration: "underline" }}
+      style={{
+        color: "var(--console-accent, #6366f1)",
+        textDecoration: "underline",
+      }}
     >
       {children}
     </a>
@@ -484,7 +547,10 @@ function buildCitationSnippetMap(text: string): Map<number, string> {
     if (!indices.length) {
       continue;
     }
-    const cleaned = block.replace(CITATION_PATTERN, "").replace(/\s+/g, " ").trim();
+    const cleaned = block
+      .replace(CITATION_PATTERN, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!cleaned) {
       continue;
     }
@@ -650,17 +716,20 @@ function resolveSourceSummary(
   if (explicitSummary) {
     return explicitSummary;
   }
-  return citationSnippets.get(getSourceDisplayIndex(source, fallbackIndex)) || null;
+  return (
+    citationSnippets.get(getSourceDisplayIndex(source, fallbackIndex)) || null
+  );
 }
 
-function SourceFavicon({
-  source,
-}: {
-  source: SearchSource;
-}) {
+function SourceFavicon({ source }: { source: SearchSource }) {
   const [imageFailed, setImageFailed] = useState(false);
   const iconUrl = getSourceIconUrl(source);
-  const fallbackLabel = (source.site_name || source.domain || source.title || "?")
+  const fallbackLabel = (
+    source.site_name ||
+    source.domain ||
+    source.title ||
+    "?"
+  )
     .trim()
     .charAt(0)
     .toUpperCase();
@@ -676,7 +745,9 @@ function SourceFavicon({
           onError={() => setImageFailed(true)}
         />
       ) : (
-        <span className="chat-source-favicon-fallback">{fallbackLabel || "?"}</span>
+        <span className="chat-source-favicon-fallback">
+          {fallbackLabel || "?"}
+        </span>
       )}
     </span>
   );
@@ -687,11 +758,14 @@ function SourceAwareAssistantMarkdown({
   sourceEntries,
 }: {
   message: Message;
-  sourceEntries: Map<number, {
-    source: SearchSource;
-    displayIndex: number;
-    previewSummary: string;
-  }>;
+  sourceEntries: Map<
+    number,
+    {
+      source: SearchSource;
+      displayIndex: number;
+      previewSummary: string;
+    }
+  >;
 }) {
   const citationPlugin = createCitationRemarkPlugin(
     message.id,
@@ -723,11 +797,7 @@ function SourceAwareAssistantMarkdown({
               );
             }
 
-            return (
-              <MarkdownLink href={href}>
-                {children}
-              </MarkdownLink>
-            );
+            return <MarkdownLink href={href}>{children}</MarkdownLink>;
           },
         }}
       >
@@ -759,7 +829,9 @@ function CitationAnchor({
       </a>
       <span className="chat-citation-preview" role="tooltip">
         <span className="chat-citation-preview-title">{source.title}</span>
-        <span className="chat-citation-preview-meta">{formatSourceDomain(source)}</span>
+        <span className="chat-citation-preview-meta">
+          {formatSourceDomain(source)}
+        </span>
         <span className="chat-citation-preview-summary">{previewSummary}</span>
       </span>
     </span>
@@ -794,9 +866,9 @@ function AssistantMessageBody({
       return [displayIndex, { source, displayIndex, previewSummary }];
     }),
   );
-  const hasCitationAnchors = Array.from(message.content.matchAll(CITATION_PATTERN)).some((match) =>
-    sourceEntries.has(Number.parseInt(match[1] || "0", 10)),
-  );
+  const hasCitationAnchors = Array.from(
+    message.content.matchAll(CITATION_PATTERN),
+  ).some((match) => sourceEntries.has(Number.parseInt(match[1] || "0", 10)));
 
   return (
     <>
@@ -828,6 +900,104 @@ function AssistantMessageBody({
         </span>
       ) : null}
     </>
+  );
+}
+
+function MemorySummaryCard({
+  message,
+  t,
+}: {
+  message: Message;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const facts = message.extracted_facts ?? [];
+
+  if (
+    !facts.length &&
+    !message.memories_extracted &&
+    message.memory_extraction_status !== "pending"
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="chat-memory-card">
+      <div className="chat-memory-card-header">
+        <div className="chat-memory-card-icon">
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx={12} cy={12} r={10} />
+            <path d="M12 8v4l3 3" />
+          </svg>
+        </div>
+        <span className="chat-memory-card-label">{t("memory.remembered")}</span>
+      </div>
+      {message.memories_extracted ? (
+        <div className="chat-memory-card-body">
+          {message.memories_extracted}
+        </div>
+      ) : null}
+      {facts.length ? (
+        <div className="chat-memory-card-facts">
+          {facts.map((fact, idx) => (
+            <div key={idx} className="chat-memory-fact">
+              <div className="chat-memory-fact-header">
+                <span className="chat-memory-fact-category">
+                  {fact.category || "general"}
+                </span>
+                <div className="chat-memory-fact-metrics">
+                  <span
+                    className={`chat-memory-fact-result ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
+                  >
+                    {formatMemoryResultLabel(fact.status, t)}
+                  </span>
+                  <span
+                    className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
+                    title={t("memory.importanceTitle", {
+                      score: (fact.importance * 100).toFixed(0),
+                    })}
+                  >
+                    {t("memory.importanceValue", {
+                      score: (fact.importance * 100).toFixed(0),
+                    })}
+                  </span>
+                </div>
+              </div>
+              <div className="chat-memory-fact-text">{fact.fact}</div>
+              {fact.triage_action || fact.triage_reason ? (
+                <div className="chat-memory-fact-meta">
+                  {fact.triage_action ? (
+                    <span className="chat-memory-fact-decision">
+                      {t("memory.decisionPrefix")}
+                      {formatMemoryTriageActionLabel(fact.triage_action, t)}
+                    </span>
+                  ) : null}
+                  {fact.triage_reason ? (
+                    <span className="chat-memory-fact-reason">
+                      {t("memory.reasonPrefix")}
+                      {fact.triage_reason}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {!facts.length &&
+      !message.memories_extracted &&
+      message.memory_extraction_status === "pending" ? (
+        <div className="chat-memory-card-body">{t("memory.processing")}</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -874,7 +1044,14 @@ export const ChatMessageList = forwardRef<
   ChatMessageListHandle,
   ChatMessageListProps
 >(function ChatMessageList(
-  { messages, onMessagesChange, isTyping, conversationId, noConversation, onError },
+  {
+    messages,
+    onMessagesChange,
+    isTyping,
+    conversationId,
+    noConversation,
+    onError,
+  },
   ref,
 ) {
   const t = useTranslations("console-chat");
@@ -884,11 +1061,16 @@ export const ChatMessageList = forwardRef<
   messagesRef.current = messages;
 
   /* ---------- read-aloud state / refs ---------- */
-  const [loadingReadAloudId, setLoadingReadAloudId] = useState<string | null>(null);
+  const [loadingReadAloudId, setLoadingReadAloudId] = useState<string | null>(
+    null,
+  );
   const [readingMessageId, setReadingMessageId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const conversationIdRef = useRef(conversationId);
+  const readAloudRequestSeqRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  conversationIdRef.current = conversationId;
 
   /* ---------- read-aloud helpers ---------- */
 
@@ -912,6 +1094,13 @@ export const ChatMessageList = forwardRef<
     }
     releaseAudioPlayer();
   }, [releaseAudioPlayer]);
+
+  useEffect(() => {
+    return () => {
+      readAloudRequestSeqRef.current += 1;
+      stopReadAloud();
+    };
+  }, [conversationId, stopReadAloud]);
 
   const playMessageAudio = useCallback(
     (base64Audio: string, messageId: string) => {
@@ -960,7 +1149,16 @@ export const ChatMessageList = forwardRef<
         return;
       }
 
+      const requestConversationId = conversationIdRef.current;
+      const requestSeq = ++readAloudRequestSeqRef.current;
+
       if (message.audioBase64) {
+        if (
+          readAloudRequestSeqRef.current !== requestSeq ||
+          conversationIdRef.current !== requestConversationId
+        ) {
+          return;
+        }
         playMessageAudio(message.audioBase64, message.id);
         return;
       }
@@ -971,6 +1169,12 @@ export const ChatMessageList = forwardRef<
           `/api/v1/chat/conversations/${conversationId}/speech`,
           { content: text },
         );
+        if (
+          readAloudRequestSeqRef.current !== requestSeq ||
+          conversationIdRef.current !== requestConversationId
+        ) {
+          return;
+        }
         if (!data.audio_response) {
           throw new Error("missing audio response");
         }
@@ -981,6 +1185,12 @@ export const ChatMessageList = forwardRef<
           error instanceof Error ? error.message : "Read-aloud failed";
         onError?.(errorMessage);
       } finally {
+        if (
+          readAloudRequestSeqRef.current !== requestSeq ||
+          conversationIdRef.current !== requestConversationId
+        ) {
+          return;
+        }
         setLoadingReadAloudId((current) =>
           current === message.id ? null : current,
         );
@@ -1069,214 +1279,181 @@ export const ChatMessageList = forwardRef<
         stopReadAloud();
       },
     }),
-    [cacheMessageAudio, handleReadAloud, onMessagesChange, playMessageAudio, stopReadAloud],
+    [
+      cacheMessageAudio,
+      handleReadAloud,
+      onMessagesChange,
+      playMessageAudio,
+      stopReadAloud,
+    ],
   );
 
   /* ---------- render ---------- */
 
   return (
-    <div className="chat-messages" style={{ padding: "16px 24px" }}>
+    <div
+      className="chat-messages"
+      role="log"
+      aria-live="polite"
+      aria-busy={isTyping}
+      style={{ padding: "16px 24px" }}
+    >
       {messages.length === 0 && !isTyping && (
         <div className="chat-empty">
           {noConversation ? t("emptyHint") : t("emptyConversationHint")}
         </div>
       )}
 
-      {messages.map((msg, index) => (
-        (() => {
-          const assistantSources = msg.role === "assistant" ? msg.sources ?? [] : [];
-          const showAvatar = msg.role === "assistant" && (index === 0 || messages[index - 1]?.role !== "assistant");
-          return (
-        <div
-          key={msg.id}
-          className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
-        >
-          {showAvatar && (
-            <div className="chat-avatar-ai" style={{ width: 24, height: 24, borderRadius: "50%", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff", fontWeight: 700, flexShrink: 0 }} aria-hidden="true">
-              铭
-            </div>
-          )}
-          <div className="chat-message-wrapper">
-            <div className="chat-message-stack">
-              {msg.role === "assistant" && msg.reasoningContent?.trim() ? (
-                <CollapsibleReasoning
-                  content={msg.reasoningContent.trim()}
-                  animate={Boolean(msg.animateOnMount)}
-                  label={t("reasoningLabel")}
-                />
-              ) : null}
-              <div className="chat-bubble">
-                {msg.role === "assistant" ? (
-                  <AssistantMessageBody message={msg} t={t} />
-                ) : (
-                  <AnimatedMessageText
-                    text={msg.content}
-                    animate={Boolean(msg.animateOnMount)}
-                    streaming={Boolean(msg.isStreaming)}
-                  />
-                )}
-              </div>
-              {msg.role === "assistant" && assistantSources.length ? (
-                <div className="chat-sources-compact" aria-label={t("sourcesLabel")}>
-                  {assistantSources.map((source, index) => {
-                    const displayIndex = getSourceDisplayIndex(source, index + 1);
-                    return (
-                      <a
-                        key={`${source.url}-${displayIndex}`}
-                        id={getSourceCardId(msg.id, displayIndex)}
-                        className="chat-source-chip"
-                        href={source.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={source.title || source.url}
-                      >
-                        <SourceFavicon source={source} />
-                        <span className="chat-source-chip-domain">{formatSourceDomain(source)}</span>
-                        <span className="chat-source-chip-index">{displayIndex}</span>
-                      </a>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {msg.role === "assistant" ? (
-                <CollapsibleRetrievalTrace message={msg} t={t} />
-              ) : null}
-              {msg.role === "assistant" && msg.extracted_facts && msg.extracted_facts.length > 0 && (
-                <div className="chat-memory-card">
-                  <div className="chat-memory-card-header">
-                    <div className="chat-memory-card-icon">
-                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx={12} cy={12} r={10} />
-                        <path d="M12 8v4l3 3" />
-                      </svg>
-                    </div>
-                    <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-                  </div>
-                  {msg.memories_extracted ? (
-                    <div className="chat-memory-card-body">{msg.memories_extracted}</div>
-                  ) : null}
-                  <div className="chat-memory-card-facts">
-                    {msg.extracted_facts.map((fact, idx) => (
-                      <div key={idx} className="chat-memory-fact">
-                        <div className="chat-memory-fact-header">
-                          <span className="chat-memory-fact-category">{fact.category || "general"}</span>
-                          <div className="chat-memory-fact-metrics">
-                            <span
-                              className={`chat-memory-fact-result ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                            >
-                              {formatMemoryResultLabel(fact.status, t)}
-                            </span>
-                            <span
-                              className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                              title={t("memory.importanceTitle", {
-                                score: (fact.importance * 100).toFixed(0),
-                              })}
-                            >
-                              {t("memory.importanceValue", {
-                                score: (fact.importance * 100).toFixed(0),
-                              })}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="chat-memory-fact-text">{fact.fact}</div>
-                        {fact.triage_action || fact.triage_reason ? (
-                          <div className="chat-memory-fact-meta">
-                            {fact.triage_action ? (
-                              <span className="chat-memory-fact-decision">
-                                {t("memory.decisionPrefix")}
-                                {formatMemoryTriageActionLabel(fact.triage_action, t)}
-                              </span>
-                            ) : null}
-                            {fact.triage_reason ? (
-                              <span className="chat-memory-fact-reason">
-                                {t("memory.reasonPrefix")}
-                                {fact.triage_reason}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {msg.role === "assistant" && msg.memories_extracted && !(msg.extracted_facts && msg.extracted_facts.length > 0) && (
-                <div className="chat-memory-card">
-                  <div className="chat-memory-card-header">
-                    <div className="chat-memory-card-icon">
-                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx={12} cy={12} r={10} />
-                        <path d="M12 8v4l3 3" />
-                      </svg>
-                    </div>
-                    <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-                  </div>
-                  <div className="chat-memory-card-body">{msg.memories_extracted}</div>
-                </div>
-              )}
-              {msg.role === "assistant" &&
-              msg.memory_extraction_status === "pending" &&
-              !(msg.extracted_facts && msg.extracted_facts.length > 0) &&
-              !msg.memories_extracted ? (
-                <div className="chat-memory-card">
-                  <div className="chat-memory-card-header">
-                    <div className="chat-memory-card-icon">
-                      <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx={12} cy={12} r={10} />
-                        <path d="M12 8v4l3 3" />
-                      </svg>
-                    </div>
-                    <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-                  </div>
-                  <div className="chat-memory-card-body">{t("memory.processing")}</div>
-                </div>
-              ) : null}
-            </div>
-            {msg.role === "assistant" &&
-            (msg.content.trim() ||
-              msg.audioBase64 ||
-              loadingReadAloudId === msg.id ||
-              readingMessageId === msg.id) ? (
-              <div className="chat-message-hover-actions">
-                <button
-                  className={`chat-audio-btn ${readingMessageId === msg.id ? "is-active" : ""}`}
-                  onClick={() => void handleReadAloud(msg)}
-                  title={
-                    readingMessageId === msg.id
-                      ? t("voiceStop")
-                      : t("voicePlay")
-                  }
-                  disabled={loadingReadAloudId === msg.id}
-                  type="button"
-                >
-                  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                  </svg>
-                  <span>
-                    {loadingReadAloudId === msg.id
-                      ? t("voicePreparing")
-                      : readingMessageId === msg.id
-                        ? t("voiceStop")
-                        : t("voicePlay")}
-                  </span>
-                </button>
+      {messages.map((msg, index) => {
+        const assistantSources =
+          msg.role === "assistant" ? (msg.sources ?? []) : [];
+        const showAvatar =
+          msg.role === "assistant" &&
+          (index === 0 || messages[index - 1]?.role !== "assistant");
+        const showReasoning =
+          msg.role === "assistant" && Boolean(msg.reasoningContent?.trim());
+        const showMemoryCard =
+          msg.role === "assistant" &&
+          ((msg.extracted_facts?.length ?? 0) > 0 ||
+            Boolean(msg.memories_extracted) ||
+            msg.memory_extraction_status === "pending");
+        const showMessageActions =
+          msg.role === "assistant" &&
+          (msg.content.trim() ||
+            msg.audioBase64 ||
+            loadingReadAloudId === msg.id ||
+            readingMessageId === msg.id);
+
+        return (
+          <div
+            key={msg.id}
+            className={`chat-message ${msg.role === "user" ? "is-user" : "is-assistant"}`}
+          >
+            {msg.role === "assistant" ? (
+              <div
+                className={`chat-avatar-ai${showAvatar ? "" : " is-ghost"}`}
+                aria-hidden="true"
+              >
+                {showAvatar ? (
+                  <span className="chat-avatar-ai-char">铭</span>
+                ) : null}
               </div>
             ) : null}
+            <div className="chat-message-wrapper">
+              <div className="chat-message-stack">
+                <div className="chat-message-primary">
+                  <div className="chat-bubble">
+                    {msg.role === "assistant" ? (
+                      <AssistantMessageBody message={msg} t={t} />
+                    ) : (
+                      <AnimatedMessageText
+                        text={msg.content}
+                        animate={Boolean(msg.animateOnMount)}
+                        streaming={Boolean(msg.isStreaming)}
+                      />
+                    )}
+                  </div>
+                  {showMessageActions ? (
+                    <div className="chat-message-hover-actions">
+                      <button
+                        className={`chat-audio-btn ${readingMessageId === msg.id ? "is-active" : ""}`}
+                        onClick={() => void handleReadAloud(msg)}
+                        title={
+                          readingMessageId === msg.id
+                            ? t("voiceStop")
+                            : t("voicePlay")
+                        }
+                        aria-label={
+                          loadingReadAloudId === msg.id
+                            ? t("voicePreparing")
+                            : readingMessageId === msg.id
+                              ? t("voiceStop")
+                              : t("voicePlay")
+                        }
+                        disabled={loadingReadAloudId === msg.id}
+                        type="button"
+                      >
+                        <svg
+                          width={14}
+                          height={14}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {msg.role === "assistant" ? (
+                  <div className="chat-message-support">
+                    {showReasoning ? (
+                      <CollapsibleReasoning
+                        content={msg.reasoningContent?.trim() || ""}
+                        animate={Boolean(msg.animateOnMount)}
+                        label={t("reasoningLabel")}
+                      />
+                    ) : null}
+                    {assistantSources.length ? (
+                      <div
+                        className="chat-sources-compact"
+                        aria-label={t("sourcesLabel")}
+                      >
+                        {assistantSources.map((source, index) => {
+                          const displayIndex = getSourceDisplayIndex(
+                            source,
+                            index + 1,
+                          );
+                          return (
+                            <a
+                              key={`${source.url}-${displayIndex}`}
+                              id={getSourceCardId(msg.id, displayIndex)}
+                              className="chat-source-chip"
+                              href={source.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={source.title || source.url}
+                            >
+                              <SourceFavicon source={source} />
+                              <span className="chat-source-chip-domain">
+                                {formatSourceDomain(source)}
+                              </span>
+                              <span className="chat-source-chip-index">
+                                {displayIndex}
+                              </span>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                    <CollapsibleRetrievalTrace message={msg} t={t} />
+                    {showMemoryCard ? (
+                      <MemorySummaryCard message={msg} t={t} />
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
-        </div>
-          );
-        })()
-      ))}
+        );
+      })}
 
       {isTyping && (
         <div className="chat-message is-assistant">
+          <div className="chat-avatar-ai is-ghost" aria-hidden="true" />
           <div className="chat-message-wrapper">
             <div className="chat-message-stack">
-              <div className="chat-bubble is-typing">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
+              <div className="chat-message-primary">
+                <div className="chat-bubble is-typing">
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
               </div>
             </div>
           </div>

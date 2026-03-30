@@ -16,7 +16,7 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE projects
-        ADD COLUMN default_chat_mode TEXT NOT NULL DEFAULT 'standard'
+        ADD COLUMN IF NOT EXISTS default_chat_mode TEXT NOT NULL DEFAULT 'standard'
         """
     )
 

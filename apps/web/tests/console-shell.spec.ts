@@ -79,7 +79,11 @@ async function stubRealtimeDictationApis(page: Page) {
     }
 
     class MockScriptProcessor {
-      onaudioprocess: ((event: { inputBuffer: { getChannelData: () => Float32Array } }) => void) | null = null;
+      onaudioprocess:
+        | ((event: {
+            inputBuffer: { getChannelData: () => Float32Array };
+          }) => void)
+        | null = null;
 
       connect() {
         return undefined;
@@ -121,7 +125,9 @@ async function stubRealtimeDictationApis(page: Page) {
       }
 
       createScriptProcessor(bufferSize?: number) {
-        (window as Window & { __lastDictationBufferSize?: number }).__lastDictationBufferSize = bufferSize;
+        (
+          window as Window & { __lastDictationBufferSize?: number }
+        ).__lastDictationBufferSize = bufferSize;
         return new MockScriptProcessor();
       }
 
@@ -161,8 +167,10 @@ async function stubRealtimeDictationApis(page: Page) {
       readyState = MockWebSocket.CONNECTING;
       binaryType = "blob";
       onopen: ((event: unknown) => void) | null = null;
-      onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null;
-      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      onmessage: ((event: { data: string | ArrayBuffer }) => void) | null =
+        null;
+      onclose: ((event: { code: number; reason: string }) => void) | null =
+        null;
       onerror: ((event: unknown) => void) | null = null;
 
       constructor(url: string) {
@@ -183,17 +191,27 @@ async function stubRealtimeDictationApis(page: Page) {
         const payload = JSON.parse(data);
         if (payload.type === "session.start") {
           setTimeout(() => {
-            this.onmessage?.({ data: JSON.stringify({ type: "session.ready" }) });
+            this.onmessage?.({
+              data: JSON.stringify({ type: "session.ready" }),
+            });
           }, 0);
           setTimeout(() => {
-            this.onmessage?.({ data: JSON.stringify({ type: "transcript.partial", text: "帮我" }) });
+            this.onmessage?.({
+              data: JSON.stringify({
+                type: "transcript.partial",
+                text: "帮我",
+              }),
+            });
           }, 50);
           return;
         }
         if (payload.type === "audio.stop") {
           setTimeout(() => {
             this.onmessage?.({
-              data: JSON.stringify({ type: "transcript.final", text: "帮我整理成一段话" }),
+              data: JSON.stringify({
+                type: "transcript.final",
+                text: "帮我整理成一段话",
+              }),
             });
           }, 30);
           return;
@@ -232,34 +250,46 @@ async function setPlaywrightProjects(
   page: Page,
   projects: Array<{ id: string; name: string; default_chat_mode?: string }>,
 ) {
-  await page.addInitScript(({ seededProjects }) => {
-    (
-      window as Window & {
-        __PLAYWRIGHT_PROJECTS__?: Array<{
-          id: string;
-          name: string;
-          default_chat_mode?: string;
-        }>;
-      }
-    ).__PLAYWRIGHT_PROJECTS__ = seededProjects;
-  }, { seededProjects: projects });
+  await page.addInitScript(
+    ({ seededProjects }) => {
+      (
+        window as Window & {
+          __PLAYWRIGHT_PROJECTS__?: Array<{
+            id: string;
+            name: string;
+            default_chat_mode?: string;
+          }>;
+        }
+      ).__PLAYWRIGHT_PROJECTS__ = seededProjects;
+    },
+    { seededProjects: projects },
+  );
 }
 
 async function forceSelectChatProject(page: Page, projectId: string) {
   const select = page.locator(".inline-topbar-project-select");
   await expect(select).toBeVisible({ timeout: 10000 });
-  await page.evaluate(({ nextProjectId }) => {
-    const select = document.querySelector<HTMLSelectElement>(".inline-topbar-project-select");
-    if (!select) {
-      return;
-    }
-    if (!Array.from(select.options).some((option) => option.value === nextProjectId)) {
-      const option = document.createElement("option");
-      option.value = nextProjectId;
-      option.textContent = nextProjectId;
-      select.appendChild(option);
-    }
-  }, { nextProjectId: projectId });
+  await page.evaluate(
+    ({ nextProjectId }) => {
+      const select = document.querySelector<HTMLSelectElement>(
+        ".inline-topbar-project-select",
+      );
+      if (!select) {
+        return;
+      }
+      if (
+        !Array.from(select.options).some(
+          (option) => option.value === nextProjectId,
+        )
+      ) {
+        const option = document.createElement("option");
+        option.value = nextProjectId;
+        option.textContent = nextProjectId;
+        select.appendChild(option);
+      }
+    },
+    { nextProjectId: projectId },
+  );
   await select.selectOption(projectId);
   await expect(select).toHaveValue(projectId);
 }
@@ -289,30 +319,34 @@ async function stubAssistantMessageWithRetrievalTrace(
   trace: Record<string, unknown>,
   content = "Mock assistant response",
 ) {
-  await page.route("**/api/v1/chat/conversations/*/messages", async (route, request) => {
-    if (request.method() !== "POST") {
-      await route.fallback();
-      return;
-    }
+  await page.route(
+    "**/api/v1/chat/conversations/*/messages",
+    async (route, request) => {
+      if (request.method() !== "POST") {
+        await route.fallback();
+        return;
+      }
 
-    const conversationId =
-      request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] || "conv-001";
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: "msg-trace-001",
-        conversation_id: conversationId,
-        role: "assistant",
-        content,
-        reasoning_content: null,
-        metadata_json: {
-          retrieval_trace: trace,
-        },
-        created_at: "2026-03-14T12:00:00.000Z",
-      }),
-    });
-  });
+      const conversationId =
+        request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+        "conv-001";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "msg-trace-001",
+          conversation_id: conversationId,
+          role: "assistant",
+          content,
+          reasoning_content: null,
+          metadata_json: {
+            retrieval_trace: trace,
+          },
+          created_at: "2026-03-14T12:00:00.000Z",
+        }),
+      });
+    },
+  );
 }
 
 test.describe("Console Shell", () => {
@@ -323,7 +357,9 @@ test.describe("Console Shell", () => {
   test("applies console theme attributes", async ({ page }) => {
     await page.goto("/app");
     await expect(page.locator("[data-theme='console']").first()).toBeVisible();
-    await expect(page.locator("header.site-header-v2.is-console")).toBeVisible();
+    await expect(
+      page.locator("header.site-header-v2.is-console"),
+    ).toBeVisible();
   });
 
   test("IconBar visible on desktop", async ({ page }) => {
@@ -338,21 +374,30 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".glass-sidebar--collapsed")).not.toBeVisible();
   });
 
-  test("dashboard keeps the home chrome free of breadcrumb strips", async ({ page }) => {
+  test("dashboard keeps the home chrome free of breadcrumb strips", async ({
+    page,
+  }) => {
     await page.goto("/app");
-    await expect(page.locator("header.site-header-v2.is-console")).toBeVisible();
+    await expect(
+      page.locator("header.site-header-v2.is-console"),
+    ).toBeVisible();
     await expect(page.locator(".inline-topbar-breadcrumb")).toHaveCount(0);
     await expect(page.locator("main [aria-label='Breadcrumb']")).toHaveCount(0);
   });
 
-  test("dashboard shows all projects and their configured models", async ({ page }) => {
+  test("dashboard shows all projects and their configured models", async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
       (
         window as Window & {
           __PLAYWRIGHT_PROJECTS__?: Array<{
             id: string;
             name: string;
-            default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+            default_chat_mode?:
+              | "standard"
+              | "omni_realtime"
+              | "synthetic_realtime";
           }>;
         }
       ).__PLAYWRIGHT_PROJECTS__ = [
@@ -369,53 +414,71 @@ test.describe("Console Shell", () => {
       ];
     });
 
-    await page.route("**/api/v1/pipeline?project_id=proj-seed", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            { model_type: "llm", model_id: "qwen3.5-plus" },
-            { model_type: "tts", model_id: "qwen3-tts-flash" },
-          ],
-        }),
-      });
-    });
+    await page.route(
+      "**/api/v1/pipeline?project_id=proj-seed",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              { model_type: "llm", model_id: "qwen3.5-plus" },
+              { model_type: "tts", model_id: "qwen3-tts-flash" },
+            ],
+          }),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/pipeline?project_id=proj-doctor", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            { model_type: "llm", model_id: "qwen3.5-plus" },
-            { model_type: "realtime", model_id: "qwen3-omni-flash-realtime" },
-          ],
-        }),
-      });
-    });
+    await page.route(
+      "**/api/v1/pipeline?project_id=proj-doctor",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              { model_type: "llm", model_id: "qwen3.5-plus" },
+              { model_type: "realtime", model_id: "qwen3-omni-flash-realtime" },
+            ],
+          }),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations?project_id=proj-seed", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations?project_id=proj-seed",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations?project_id=proj-doctor", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations?project_id=proj-doctor",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
     await page.goto("/app");
 
     await expect(page.locator(".dashboard-project-card")).toHaveCount(2);
-    await expect(page.locator(".dashboard-project-card").filter({ hasText: "Seed Console Project" })).toContainText("Qwen3.5-Plus");
-    await expect(page.locator(".dashboard-project-card").filter({ hasText: "医生" })).toContainText("Qwen3-Omni-Flash-Realtime");
+    await expect(
+      page
+        .locator(".dashboard-project-card")
+        .filter({ hasText: "Seed Console Project" }),
+    ).toContainText("Qwen3.5-Plus");
+    await expect(
+      page.locator(".dashboard-project-card").filter({ hasText: "医生" }),
+    ).toContainText("Qwen3-Omni-Flash-Realtime");
   });
 
   test("dashboard cards open the assistant detail route", async ({ page }) => {
@@ -425,7 +488,10 @@ test.describe("Console Shell", () => {
           __PLAYWRIGHT_PROJECTS__?: Array<{
             id: string;
             name: string;
-            default_chat_mode?: "standard" | "omni_realtime" | "synthetic_realtime";
+            default_chat_mode?:
+              | "standard"
+              | "omni_realtime"
+              | "synthetic_realtime";
           }>;
         }
       ).__PLAYWRIGHT_PROJECTS__ = [
@@ -442,43 +508,61 @@ test.describe("Console Shell", () => {
       ];
     });
 
-    await page.route("**/api/v1/pipeline?project_id=proj-seed", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [{ model_type: "llm", model_id: "qwen3.5-plus" }],
-        }),
-      });
-    });
+    await page.route(
+      "**/api/v1/pipeline?project_id=proj-seed",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [{ model_type: "llm", model_id: "qwen3.5-plus" }],
+          }),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/pipeline?project_id=proj-doctor", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [{ model_type: "realtime", model_id: "qwen3-omni-flash-realtime" }],
-        }),
-      });
-    });
+    await page.route(
+      "**/api/v1/pipeline?project_id=proj-doctor",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              { model_type: "realtime", model_id: "qwen3-omni-flash-realtime" },
+            ],
+          }),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations?project_id=proj-seed", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations?project_id=proj-seed",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations?project_id=proj-doctor", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          { id: "conv-doctor", title: "医生建议", updated_at: "2026-03-20T12:00:00.000Z" },
-        ]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations?project_id=proj-doctor",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-doctor",
+              title: "医生建议",
+              updated_at: "2026-03-20T12:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
     await page.goto("/app");
     await page.getByTestId("dashboard-project-card-proj-doctor").click();
@@ -522,52 +606,94 @@ test.describe("Console Shell", () => {
 
   test("english console shell also renders correctly", async ({ page }) => {
     await page.goto("/en/app");
-    await expect(page.locator("header.site-header-v2.is-console")).toContainText("Mingrun");
+    await expect(
+      page.locator("header.site-header-v2.is-console"),
+    ).toContainText("Mingrun");
     await expect(page.getByRole("heading", { name: "My AI" })).toBeVisible();
   });
 
-  test("discover model details resolve dotted ids and current vision model ids", async ({ page }) => {
+  test("discover model details resolve dotted ids and current vision model ids", async ({
+    page,
+  }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto("/app/discover");
-    await page.locator(".model-card").filter({ hasText: "Qwen3.5-Plus" }).first().click();
+    await page
+      .locator(".model-card")
+      .filter({ hasText: "Qwen3.5-Plus" })
+      .first()
+      .click();
     await expect(page).toHaveURL(/\/app\/discover\/models\/qwen3\.5-plus$/);
-    await expect(page.getByRole("heading", { name: "Qwen3.5-Plus" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "使用此模型" })).toHaveCount(0);
-    await expect(page.locator(".model-detail-status")).toContainText("可在助手页使用");
-    await expect(page.locator('[aria-label="Breadcrumb"]').first()).toContainText("模型");
+    await expect(
+      page.getByRole("heading", { name: "Qwen3.5-Plus" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "使用此模型" })).toHaveCount(
+      0,
+    );
+    await expect(page.locator(".model-detail-status")).toContainText(
+      "可在助手页使用",
+    );
+    await expect(
+      page.locator('[aria-label="Breadcrumb"]').first(),
+    ).toContainText("模型");
     await expect(page.getByRole("link", { name: "models" })).toHaveCount(0);
 
     await page.goto("/app/discover/models/qwen3-vl-plus");
-    await expect(page.getByRole("heading", { name: "Qwen3-VL-Plus" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Qwen3-VL-Plus" }),
+    ).toBeVisible();
     await expect(page.locator(".model-detail-provider")).toContainText("千问");
   });
 
-  test("english discover and detail localize official labels", async ({ page }) => {
+  test("english discover and detail localize official labels", async ({
+    page,
+  }) => {
     await page.goto("/en/app/discover");
-    await expect(page.locator(".discover-category-chip").filter({ hasText: "Text Generation" }).first()).toBeVisible();
-    await expect(page.locator(".model-card-provider").first()).toContainText("Qwen");
+    await expect(
+      page
+        .locator(".discover-category-chip")
+        .filter({ hasText: "Text Generation" })
+        .first(),
+    ).toBeVisible();
+    await expect(page.locator(".model-card-provider").first()).toContainText(
+      "Qwen",
+    );
 
-    await page.locator(".model-card").filter({ hasText: "Qwen3.5-Plus" }).first().click();
+    await page
+      .locator(".model-card")
+      .filter({ hasText: "Qwen3.5-Plus" })
+      .first()
+      .click();
     await expect(page).toHaveURL(/\/en\/app\/discover\/models\/qwen3\.5-plus$/);
-    await expect(page.locator(".model-detail-tags .model-card-tag.highlight")).toContainText("Text Generation");
-    await expect(page.locator(".model-detail-provider")).toContainText("Alibaba");
+    await expect(
+      page.locator(".model-detail-tags .model-card-tag.highlight"),
+    ).toContainText("Text Generation");
+    await expect(page.locator(".model-detail-provider")).toContainText(
+      "Alibaba",
+    );
   });
 
-  test("discover shows an error state when the official catalog request fails", async ({ page }) => {
-    await page.route("**/api/v1/models/catalog?view=discover", async (route) => {
-      await route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({ error: { message: "broken" } }),
-      });
-    });
+  test("discover shows an error state when the official catalog request fails", async ({
+    page,
+  }) => {
+    await page.route(
+      "**/api/v1/models/catalog?view=discover",
+      async (route) => {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "broken" } }),
+        });
+      },
+    );
 
     await page.goto("/app/discover");
     await expect(page.getByText("加载官方模型目录失败。")).toBeVisible();
   });
 
-  test("assistant detail route renders current action surface without 5xx responses", async ({ page }) => {
+  test("assistant detail route renders current action surface without 5xx responses", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     const failingResponses: string[] = [];
 
@@ -584,47 +710,74 @@ test.describe("Console Shell", () => {
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
     await expect(page.getByRole("link", { name: "开始聊天" })).toBeVisible();
     await expect(
-      page.locator(".assistant-profile-actions").getByRole("button", { name: "设置" }),
+      page
+        .locator(".assistant-profile-actions")
+        .getByRole("button", { name: "设置" }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "管理" })).toBeVisible();
     expect(failingResponses).toEqual([]);
   });
 
-  test("assistant dialogs stay inside the console theme container", async ({ page }) => {
+  test("assistant dialogs stay inside the console theme container", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.locator(".assistant-profile-actions").getByRole("button", { name: "设置" }).click();
+    await page
+      .locator(".assistant-profile-actions")
+      .getByRole("button", { name: "设置" })
+      .click();
 
-    const dialog = page.locator('[data-theme="console"] [role="dialog"]').first();
+    const dialog = page
+      .locator('[data-theme="console"] [role="dialog"]')
+      .first();
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("给它一个名字和形象");
   });
 
-  test("assistant detail collapses covered vision model slots into the chat model", async ({ page }) => {
+  test("assistant detail collapses covered vision model slots into the chat model", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
 
-    const visionRow = page.locator(".profile-model-row").filter({ hasText: "视觉理解" }).first();
+    const visionRow = page
+      .locator(".profile-model-row")
+      .filter({ hasText: "视觉理解" })
+      .first();
     await expect(visionRow).toContainText("Qwen 3.5 Plus");
     await expect(visionRow).toContainText("跟随对话模型");
     await expect(visionRow).toContainText("图像输入会直接交给 Qwen 3.5 Plus");
-    await expect(visionRow.getByRole("button", { name: "更换" })).toHaveCount(0);
+    await expect(visionRow.getByRole("button", { name: "更换" })).toHaveCount(
+      0,
+    );
   });
 
-  test("assistant detail shows a dedicated realtime model row", async ({ page }) => {
+  test("assistant detail shows a dedicated realtime model row", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
 
-    const realtimeRow = page.locator(".profile-model-row").filter({ hasText: "实时对话" }).first();
+    const realtimeRow = page
+      .locator(".profile-model-row")
+      .filter({ hasText: "实时对话" })
+      .first();
     await expect(realtimeRow).toContainText("Qwen3-Omni-Flash-Realtime");
-    await expect(realtimeRow).toContainText("实时双工语音当前使用 Qwen3-Omni-Flash-Realtime");
-    await expect(realtimeRow.getByRole("button", { name: "更换" })).toHaveCount(1);
+    await expect(realtimeRow).toContainText(
+      "实时双工语音当前使用 Qwen3-Omni-Flash-Realtime",
+    );
+    await expect(realtimeRow.getByRole("button", { name: "更换" })).toHaveCount(
+      1,
+    );
   });
 
-  test("assistant detail opens the model picker from grouped model rows", async ({ page }) => {
+  test("assistant detail opens the model picker from grouped model rows", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
@@ -632,11 +785,18 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".model-picker-title")).toContainText("实时对话");
   });
 
-  test("assistant detail opens a realtime-only model picker", async ({ page }) => {
+  test("assistant detail opens a realtime-only model picker", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.locator(".profile-model-row").filter({ hasText: "实时对话" }).first().getByRole("button", { name: "更换" }).click();
+    await page
+      .locator(".profile-model-row")
+      .filter({ hasText: "实时对话" })
+      .first()
+      .getByRole("button", { name: "更换" })
+      .click();
 
     const modal = page.locator(".model-picker-card");
     await expect(modal).toBeVisible();
@@ -645,26 +805,46 @@ test.describe("Console Shell", () => {
     await expect(modal).not.toContainText("Qwen 3.5 Plus");
   });
 
-  test("assistant detail round-trips through the marketplace detail picker flow", async ({ page }) => {
+  test("assistant detail round-trips through the marketplace detail picker flow", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.locator(".profile-model-row").filter({ hasText: "对话模型" }).first().getByRole("button", { name: "更换" }).click();
+    await page
+      .locator(".profile-model-row")
+      .filter({ hasText: "对话模型" })
+      .first()
+      .getByRole("button", { name: "更换" })
+      .click();
     await page.getByRole("link", { name: "前往模型广场" }).click();
 
     await expect(page).toHaveURL(/\/app\/discover\?picker=1&category=llm/);
-    await page.locator(".model-card").filter({ hasText: "Qwen Max" }).first().click();
+    await page
+      .locator(".model-card")
+      .filter({ hasText: "Qwen Max" })
+      .first()
+      .click();
     await expect(page.getByRole("heading", { name: "Qwen Max" })).toBeVisible();
     await expect(page.getByRole("link", { name: "返回上一页" })).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "使用此模型" })).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "使用此模型" }),
+    ).toBeEnabled();
     await page.getByRole("button", { name: "使用此模型" }).click();
 
-    await expect(page).toHaveURL(new RegExp(`/app/assistants/${handle.seedProjectId}$`));
-    const llmRow = page.locator(".profile-model-row").filter({ hasText: "对话模型" }).first();
+    await expect(page).toHaveURL(
+      new RegExp(`/app/assistants/${handle.seedProjectId}$`),
+    );
+    const llmRow = page
+      .locator(".profile-model-row")
+      .filter({ hasText: "对话模型" })
+      .first();
     await expect(llmRow).toContainText("Qwen Max");
   });
 
-  test("assistant detail shows dedicated synthetic realtime model rows", async ({ page }) => {
+  test("assistant detail shows dedicated synthetic realtime model rows", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
@@ -686,108 +866,155 @@ test.describe("Console Shell", () => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     const patchedBodies: Array<{ default_chat_mode?: string }> = [];
 
-    await page.route(`**/api/v1/projects/${handle.seedProjectId}`, async (route) => {
-      if (route.request().method().toUpperCase() !== "PATCH") {
-        await route.fallback();
-        return;
-      }
+    await page.route(
+      `**/api/v1/projects/${handle.seedProjectId}`,
+      async (route) => {
+        if (route.request().method().toUpperCase() !== "PATCH") {
+          await route.fallback();
+          return;
+        }
 
-      patchedBodies.push(route.request().postDataJSON() as { default_chat_mode?: string });
-      await route.fallback();
-    });
+        patchedBodies.push(
+          route.request().postDataJSON() as { default_chat_mode?: string },
+        );
+        await route.fallback();
+      },
+    );
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
     await page.getByRole("button", { name: "模型" }).click();
-    await page.locator(".profile-mode-card").filter({ hasText: "合成式实时" }).first().click();
+    await page
+      .locator(".profile-mode-card")
+      .filter({ hasText: "合成式实时" })
+      .first()
+      .click();
 
-    await expect.poll(() => patchedBodies.at(-1)?.default_chat_mode).toBe("synthetic_realtime");
+    await expect
+      .poll(() => patchedBodies.at(-1)?.default_chat_mode)
+      .toBe("synthetic_realtime");
     await expect(
-      page.locator(".profile-mode-card.is-active").filter({ hasText: "合成式实时" }).first(),
+      page
+        .locator(".profile-mode-card.is-active")
+        .filter({ hasText: "合成式实时" })
+        .first(),
     ).toBeVisible();
   });
 
   test("chat timeout errors stay localized", async ({ page }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route("**/api/v1/chat/conversations/*/messages", async (route) => {
-      await route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error: {
-            code: "inference_timeout",
-            message: "Inference timeout",
-          },
-        }),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "inference_timeout",
+              message: "Inference timeout",
+            },
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await expect(page.getByRole("textbox", { name: "输入消息…" }).first()).toBeEnabled();
+    await expect(
+      page.getByRole("textbox", { name: "输入消息…" }).first(),
+    ).toBeEnabled();
 
     await page.getByRole("textbox", { name: "输入消息…" }).fill("测试超时");
     await page.getByRole("button", { name: "发送" }).click();
 
-    await expect(page.locator(".chat-message.is-assistant").last()).toContainText(
-      "AI 回复超时，请稍后重试。",
-    );
+    await expect(
+      page.locator(".chat-message.is-assistant").last(),
+    ).toContainText("AI 回复超时，请稍后重试。");
   });
 
-  test("chat message history loads through the app origin instead of cross-origin api calls", async ({ page }) => {
+  test("chat message history loads through the app origin instead of cross-origin api calls", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     let messageRequestUrl = "";
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-proxy",
-            project_id: handle.seedProjectId,
-            title: "代理会话",
-            updated_at: "2026-03-18T08:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-proxy",
+              project_id: handle.seedProjectId,
+              title: "代理会话",
+              updated_at: "2026-03-18T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-proxy/messages", async (route, request) => {
-      messageRequestUrl = request.url();
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "msg-proxy-1",
-            role: "user",
-            content: "通过同源代理读取历史消息",
-            created_at: "2026-03-18T08:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-proxy/messages",
+      async (route, request) => {
+        messageRequestUrl = request.url();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "msg-proxy-1",
+              role: "user",
+              content: "通过同源代理读取历史消息",
+              created_at: "2026-03-18T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.goto(`/app/chat?project_id=${handle.seedProjectId}&conv=conv-proxy`);
-    await expect(page.locator(".chat-message.is-user").first()).toContainText("通过同源代理读取历史消息");
+    await page.goto(
+      `/app/chat?project_id=${handle.seedProjectId}&conv=conv-proxy`,
+    );
+    await expect(page.locator(".chat-message.is-user").first()).toContainText(
+      "通过同源代理读取历史消息",
+    );
 
     expect(new URL(messageRequestUrl).origin).toBe(new URL(page.url()).origin);
   });
 
-  test("chat mic button dictates into the input instead of sending immediately", async ({ page }) => {
+  test("chat mic button dictates into the input instead of sending immediately", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubRealtimeDictationApis(page);
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await ensureChatConversationReady(page, handle.seedProjectId);
     await page.locator(".chat-mic-btn").click();
-    await expect(page.locator(".chat-voice-indicator")).toContainText("听写中…再次点击完成");
-    await expect.poll(async () => page.evaluate(() => (window as Window & { __lastDictationBufferSize?: number }).__lastDictationBufferSize ?? 0)).toBe(1024);
-    await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue("帮我");
+    await expect(page.locator(".chat-voice-indicator")).toContainText(
+      "听写中…再次点击完成",
+    );
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          () =>
+            (window as Window & { __lastDictationBufferSize?: number })
+              .__lastDictationBufferSize ?? 0,
+        ),
+      )
+      .toBe(1024);
+    await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue(
+      "帮我",
+    );
 
     await page.locator(".chat-mic-btn").click();
 
-    await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue("帮我整理成一段话");
+    await expect(page.getByRole("textbox", { name: "输入消息…" })).toHaveValue(
+      "帮我整理成一段话",
+    );
     await expect(page.locator(".chat-message.is-user")).toHaveCount(0);
   });
 
@@ -819,15 +1046,21 @@ test.describe("Console Shell", () => {
     expect(speechBodies).toEqual([{ content: "Mock assistant response" }]);
   });
 
-  test("short user bubbles stay horizontal instead of collapsing into a narrow column", async ({ page }) => {
+  test("short user bubbles stay horizontal instead of collapsing into a narrow column", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await ensureChatConversationReady(page, handle.seedProjectId);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("介绍一下你自己");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("介绍一下你自己");
     await page.getByRole("button", { name: "发送" }).click();
 
-    const userBubble = page.locator(".chat-message.is-user .chat-bubble").last();
+    const userBubble = page
+      .locator(".chat-message.is-user .chat-bubble")
+      .last();
     await expect(userBubble).toContainText("介绍一下你自己");
 
     const box = await userBubble.boundingBox();
@@ -836,7 +1069,94 @@ test.describe("Console Shell", () => {
     expect(box!.width).toBeGreaterThan(box!.height);
   });
 
-  test("streamed replies still render when only the final message_done event carries content", async ({ page }) => {
+  test("chat history scroll stays inside the conversation pane instead of extending the page", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-scroll-pane",
+              project_id: handle.seedProjectId,
+              title: "滚动测试",
+              updated_at: "2026-03-18T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
+
+    await page.route(
+      "**/api/v1/chat/conversations/conv-scroll-pane/messages",
+      async (route) => {
+        const messages = Array.from({ length: 18 }, (_, index) => ({
+          id: `msg-scroll-${index + 1}`,
+          role: index % 2 === 0 ? "assistant" : "user",
+          content: "这是一条用于滚动测试的长消息。".repeat(
+            index % 2 === 0 ? 10 : 6,
+          ),
+          created_at: `2026-03-18T08:${String(index).padStart(2, "0")}:00.000Z`,
+        }));
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(messages),
+        });
+      },
+    );
+
+    await page.goto(
+      `/app/chat?project_id=${handle.seedProjectId}&conv=conv-scroll-pane`,
+    );
+    await expect(page.locator(".chat-message").last()).toBeVisible();
+
+    const scrollability = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".console-shell-main");
+      const messages = document.querySelector<HTMLElement>(
+        ".chat-main .chat-messages",
+      );
+      if (!shell || !messages) {
+        return null;
+      }
+      return {
+        shellScrollable: shell.scrollHeight > shell.clientHeight + 2,
+        messagesScrollable: messages.scrollHeight > messages.clientHeight + 2,
+      };
+    });
+
+    expect(scrollability).toEqual({
+      shellScrollable: false,
+      messagesScrollable: true,
+    });
+
+    await page.locator(".chat-main .chat-messages").hover();
+    await page.mouse.wheel(0, 900);
+
+    const scrollPositions = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".console-shell-main");
+      const messages = document.querySelector<HTMLElement>(
+        ".chat-main .chat-messages",
+      );
+      return {
+        shellTop: shell?.scrollTop ?? -1,
+        messagesTop: messages?.scrollTop ?? -1,
+      };
+    });
+
+    expect(scrollPositions.shellTop).toBe(0);
+    expect(scrollPositions.messagesTop).toBeGreaterThan(0);
+  });
+
+  test("streamed replies still render when only the final message_done event carries content", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
@@ -844,10 +1164,10 @@ test.describe("Console Shell", () => {
         status: 200,
         contentType: "text/event-stream",
         body: [
-          'event: message_start',
+          "event: message_start",
           'data: {"role":"assistant"}',
           "",
-          'event: message_done',
+          "event: message_done",
           'data: {"id":"msg-stream-final","content":"来自最终事件的完整回复","reasoning_content":"最终思考轨迹"}',
           "",
         ].join("\n"),
@@ -855,27 +1175,46 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("测试流式最终事件");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("测试流式最终事件");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("来自最终事件的完整回复");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "来自最终事件的完整回复",
+    );
     await assistantMessage.locator(".chat-reasoning-toggle").click();
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText("最终思考轨迹");
+    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
+      "最终思考轨迹",
+    );
   });
 
-  test("deep think shows reasoning content and read aloud still uses the final answer", async ({ page }) => {
+  test("deep think shows reasoning content and read aloud still uses the final answer", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
-    const messageBodies: Array<{ content?: string; enable_thinking?: boolean }> = [];
+    const messageBodies: Array<{
+      content?: string;
+      enable_thinking?: boolean;
+    }> = [];
     const speechBodies: Array<{ content?: string }> = [];
 
     await stubBrowserVoiceApis(page);
-    await page.route("**/api/v1/chat/conversations/*/messages", async (route, request) => {
-      if (request.method() === "POST") {
-        messageBodies.push(request.postDataJSON() as { content?: string; enable_thinking?: boolean });
-      }
-      await route.fallback();
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() === "POST") {
+          messageBodies.push(
+            request.postDataJSON() as {
+              content?: string;
+              enable_thinking?: boolean;
+            },
+          );
+        }
+        await route.fallback();
+      },
+    );
     await page.route("**/api/v1/chat/conversations/*/speech", async (route) => {
       speechBodies.push(route.request().postDataJSON() as { content?: string });
       await route.fulfill({
@@ -893,71 +1232,102 @@ test.describe("Console Shell", () => {
     await page.getByRole("button", { name: "发送" }).click();
 
     await expect.poll(() => messageBodies.length).toBe(1);
-    expect(messageBodies[0]).toEqual({ content: "请拆解一下", enable_thinking: true });
+    expect(messageBodies[0]).toEqual({
+      content: "请拆解一下",
+      enable_thinking: true,
+    });
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText("思考过程");
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText("Mock reasoning trace");
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
+    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
+      "思考过程",
+    );
+    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
+      "Mock reasoning trace",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "Mock assistant response",
+    );
 
     await assistantMessage.getByRole("button", { name: "朗读" }).click();
     await expect.poll(() => speechBodies.length).toBe(1);
     expect(speechBodies[0]).toEqual({ content: "Mock assistant response" });
   });
 
-  test("assistant messages with sources still render markdown, formulas, and source cards", async ({ page }) => {
+  test("assistant messages with sources still render markdown, formulas, and source cards", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route("**/api/v1/chat/conversations/*/messages", async (route, request) => {
-      if (request.method() !== "POST") {
-        await route.fallback();
-        return;
-      }
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
 
-      const conversationId = request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] || "conv-001";
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: "msg-source-001",
-          conversation_id: conversationId,
-          role: "assistant",
-          content: "**结论**：根据公开资料，公式 $E=mc^2$ 可以正常显示。[ref_1]",
-          reasoning_content: null,
-          metadata_json: {
-            sources: [
-              {
-                index: 1,
-                title: "Aliyun Web Search",
-                url: "https://help.aliyun.com/zh/model-studio/web-search",
-                domain: "help.aliyun.com",
-                site_name: "Aliyun Docs",
-              },
-            ],
-          },
-          created_at: "2026-03-14T12:00:00.000Z",
-        }),
-      });
-    });
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-source-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "**结论**：根据公开资料，公式 $E=mc^2$ 可以正常显示。[ref_1]",
+            reasoning_content: null,
+            metadata_json: {
+              sources: [
+                {
+                  index: 1,
+                  title: "Aliyun Web Search",
+                  url: "https://help.aliyun.com/zh/model-studio/web-search",
+                  domain: "help.aliyun.com",
+                  site_name: "Aliyun Docs",
+                },
+              ],
+            },
+            created_at: "2026-03-14T12:00:00.000Z",
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我查一下");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-bubble strong")).toContainText("结论");
+    await expect(assistantMessage.locator(".chat-bubble strong")).toContainText(
+      "结论",
+    );
     await expect(assistantMessage.locator(".chat-bubble .katex")).toBeVisible();
-    await expect(assistantMessage.locator(".chat-citation-anchor")).toContainText("[1]");
+    await expect(
+      assistantMessage.locator(".chat-citation-anchor"),
+    ).toContainText("[1]");
     await assistantMessage.locator(".chat-citation-anchor").hover();
-    await expect(assistantMessage.locator(".chat-citation-preview")).toContainText("Aliyun Web Search");
-    await expect(assistantMessage.locator(".chat-citation-preview")).toContainText("根据公开资料，公式 $E=mc^2$ 可以正常显示。");
-    await expect(assistantMessage.locator(".chat-source-chip")).toContainText("Aliyun Docs · help.aliyun.com");
-    await expect(assistantMessage.locator(".chat-source-chip")).toContainText("1");
+    await expect(
+      assistantMessage.locator(".chat-citation-preview"),
+    ).toContainText("Aliyun Web Search");
+    await expect(
+      assistantMessage.locator(".chat-citation-preview"),
+    ).toContainText("根据公开资料，公式 $E=mc^2$ 可以正常显示。");
+    await expect(assistantMessage.locator(".chat-source-chip")).toContainText(
+      "Aliyun Docs · help.aliyun.com",
+    );
+    await expect(assistantMessage.locator(".chat-source-chip")).toContainText(
+      "1",
+    );
     await expect(assistantMessage.locator(".chat-source-chip")).toHaveAttribute(
       "href",
       "https://help.aliyun.com/zh/model-studio/web-search",
     );
-    await expect(assistantMessage.locator(".chat-source-favicon")).toBeVisible();
+    await expect(
+      assistantMessage.locator(".chat-source-favicon"),
+    ).toBeVisible();
   });
 
   test("context trace stays hidden for none routes", async ({ page }) => {
@@ -973,15 +1343,23 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("介绍一下你自己");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("介绍一下你自己");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
-    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(0);
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "Mock assistant response",
+    );
+    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(
+      0,
+    );
   });
 
-  test("context trace stays hidden for profile-only routes", async ({ page }) => {
+  test("context trace stays hidden for profile-only routes", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
       strategy: "layered_memory_v2",
@@ -1004,15 +1382,23 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("你大概了解我什么");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("你大概了解我什么");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
-    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(0);
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "Mock assistant response",
+    );
+    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(
+      0,
+    );
   });
 
-  test("memory-only routes show a focused context card without knowledge sections", async ({ page }) => {
+  test("memory-only routes show a focused context card without knowledge sections", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
       strategy: "layered_memory_v2",
@@ -1036,7 +1422,9 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("你记得我之前喜欢什么风格吗");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("你记得我之前喜欢什么风格吗");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
@@ -1050,7 +1438,9 @@ test.describe("Console Shell", () => {
     await expect(trace).not.toContainText("关联文件片段");
   });
 
-  test("full-rag routes continue to show knowledge and linked file sections", async ({ page }) => {
+  test("full-rag routes continue to show knowledge and linked file sections", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
       strategy: "layered_memory_v2",
@@ -1087,7 +1477,9 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("请结合我上传的资料回答");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("请结合我上传的资料回答");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
@@ -1103,7 +1495,9 @@ test.describe("Console Shell", () => {
     await expect(trace).toContainText("竞赛笔记.md");
   });
 
-  test("chat updates remembered facts when assistant metadata arrives over the events stream", async ({ page }) => {
+  test("chat updates remembered facts when assistant metadata arrives over the events stream", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.addInitScript(() => {
@@ -1111,13 +1505,20 @@ test.describe("Console Shell", () => {
         url: string;
         withCredentials: boolean;
         onerror: ((event: Event) => void) | null = null;
-        private listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
+        private listeners = new Map<
+          string,
+          Array<(event: MessageEvent<string>) => void>
+        >();
 
         constructor(url: string | URL, init?: EventSourceInit) {
           this.url = String(url);
           this.withCredentials = Boolean(init?.withCredentials);
 
-          if (this.url.includes("/api/v1/chat/conversations/conv-memory-events/events")) {
+          if (
+            this.url.includes(
+              "/api/v1/chat/conversations/conv-memory-events/events",
+            )
+          ) {
             setTimeout(() => {
               const payload = {
                 id: "msg-memory-001",
@@ -1135,15 +1536,23 @@ test.describe("Console Shell", () => {
                   ],
                 },
               };
-              const callbacks = this.listeners.get("assistant_message_metadata") || [];
+              const callbacks =
+                this.listeners.get("assistant_message_metadata") || [];
               for (const callback of callbacks) {
-                callback(new MessageEvent("assistant_message_metadata", { data: JSON.stringify(payload) }));
+                callback(
+                  new MessageEvent("assistant_message_metadata", {
+                    data: JSON.stringify(payload),
+                  }),
+                );
               }
             }, 200);
           }
         }
 
-        addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        addEventListener(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+        ) {
           const callback =
             typeof listener === "function"
               ? (listener as (event: MessageEvent<string>) => void)
@@ -1153,7 +1562,10 @@ test.describe("Console Shell", () => {
           this.listeners.set(type, existing);
         }
 
-        removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        removeEventListener(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+        ) {
           const existing = this.listeners.get(type) || [];
           const callback =
             typeof listener === "function"
@@ -1183,53 +1595,79 @@ test.describe("Console Shell", () => {
       });
     });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-memory-events",
-            project_id: handle.seedProjectId,
-            title: "记忆事件测试",
-            updated_at: "2026-03-14T12:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-memory-events",
+              project_id: handle.seedProjectId,
+              title: "记忆事件测试",
+              updated_at: "2026-03-14T12:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-memory-events/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "msg-memory-001",
-            conversation_id: "conv-memory-events",
-            role: "assistant",
-            content: "先正常回答，记忆稍后补上。",
-            reasoning_content: null,
-            metadata_json: {},
-            created_at: "2026-03-14T12:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-memory-events/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "msg-memory-001",
+              conversation_id: "conv-memory-events",
+              role: "assistant",
+              content: "先正常回答，记忆稍后补上。",
+              reasoning_content: null,
+              metadata_json: {},
+              created_at: "2026-03-14T12:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.goto(`/app/chat?project_id=${handle.seedProjectId}&conv=conv-memory-events`);
+    await page.goto(
+      `/app/chat?project_id=${handle.seedProjectId}&conv=conv-memory-events`,
+    );
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("先正常回答，记忆稍后补上。");
-    await expect(assistantMessage.locator(".chat-memory-card")).toContainText("记住了");
-    await expect(assistantMessage.locator(".chat-memory-card-body")).toContainText("新增永久记忆 1 条");
-    await expect(assistantMessage.locator(".chat-memory-fact-text")).toContainText("用户对微分几何有持续兴趣");
-    await expect(assistantMessage.locator(".chat-memory-fact-result")).toContainText("永久记忆");
-    await expect(assistantMessage.locator(".chat-memory-fact-score")).toContainText("95%");
-    await expect(assistantMessage.locator(".chat-memory-fact-decision")).toContainText("处理：新建");
-    await expect(assistantMessage.locator(".chat-memory-fact-reason")).toContainText("这是稳定且高重要度的长期偏好");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "先正常回答，记忆稍后补上。",
+    );
+    await expect(assistantMessage.locator(".chat-memory-card")).toContainText(
+      "记住了",
+    );
+    await expect(
+      assistantMessage.locator(".chat-memory-card-body"),
+    ).toContainText("新增永久记忆 1 条");
+    await expect(
+      assistantMessage.locator(".chat-memory-fact-text"),
+    ).toContainText("用户对微分几何有持续兴趣");
+    await expect(
+      assistantMessage.locator(".chat-memory-fact-result"),
+    ).toContainText("永久记忆");
+    await expect(
+      assistantMessage.locator(".chat-memory-fact-score"),
+    ).toContainText("95%");
+    await expect(
+      assistantMessage.locator(".chat-memory-fact-decision"),
+    ).toContainText("处理：新建");
+    await expect(
+      assistantMessage.locator(".chat-memory-fact-reason"),
+    ).toContainText("这是稳定且高重要度的长期偏好");
   });
 
-  test("new assistant messages render with a typewriter cursor before settling", async ({ page }) => {
+  test("new assistant messages render with a typewriter cursor before settling", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
@@ -1238,10 +1676,14 @@ test.describe("Console Shell", () => {
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
     await expect(assistantMessage.locator(".chat-inline-cursor")).toBeVisible();
-    await expect(assistantMessage.locator(".chat-bubble")).toContainText("Mock assistant response");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "Mock assistant response",
+    );
   });
 
-  test("auto read requests speech for each new assistant reply", async ({ page }) => {
+  test("auto read requests speech for each new assistant reply", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     const speechBodies: Array<{ content?: string }> = [];
 
@@ -1259,14 +1701,18 @@ test.describe("Console Shell", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await page.getByRole("button", { name: "自动朗读" }).click();
-    await page.getByRole("textbox", { name: "输入消息…" }).fill("请自动朗读这段回复");
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("请自动朗读这段回复");
     await page.getByRole("button", { name: "发送" }).click();
 
     await expect.poll(() => speechBodies.length).toBe(1);
     expect(speechBodies[0]).toEqual({ content: "Mock assistant response" });
   });
 
-  test("standard chat can send an image through the image pipeline", async ({ page }) => {
+  test("standard chat can send an image through the image pipeline", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     let imageCalls = 0;
 
@@ -1290,68 +1736,94 @@ test.describe("Console Shell", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await expect(page.getByRole("button", { name: "上传图片" })).toBeEnabled();
-    await page.locator('[data-testid="chat-image-upload-input"]:not([disabled])').setInputFiles({
-      name: "demo.png",
-      mimeType: "image/png",
-      buffer: Buffer.from("fake-image"),
-    });
+    await page
+      .locator('[data-testid="chat-image-upload-input"]:not([disabled])')
+      .setInputFiles({
+        name: "demo.png",
+        mimeType: "image/png",
+        buffer: Buffer.from("fake-image"),
+      });
 
-    await expect(page.locator(".chat-attachment-chip")).toContainText("demo.png");
+    await expect(page.locator(".chat-attachment-chip")).toContainText(
+      "demo.png",
+    );
     await page.getByRole("button", { name: "发送" }).click();
 
     await expect.poll(() => imageCalls).toBe(1);
-    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("Mock image response");
+    await expect(
+      page.locator(".chat-message.is-assistant").last(),
+    ).toContainText("Mock image response");
   });
 
-  test("chat mode overrides stay scoped to the current conversation", async ({ page }) => {
+  test("chat mode overrides stay scoped to the current conversation", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-a",
-            project_id: handle.seedProjectId,
-            title: "会话 A",
-            updated_at: "2026-03-18T08:00:00.000Z",
-          },
-          {
-            id: "conv-b",
-            project_id: handle.seedProjectId,
-            title: "会话 B",
-            updated_at: "2026-03-18T07:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-a",
+              project_id: handle.seedProjectId,
+              title: "会话 A",
+              updated_at: "2026-03-18T08:00:00.000Z",
+            },
+            {
+              id: "conv-b",
+              project_id: handle.seedProjectId,
+              title: "会话 B",
+              updated_at: "2026-03-18T07:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-a/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-a/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-b/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-b/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await page.getByRole("button", { name: "合成实时" }).click();
-    await expect(page.getByRole("button", { name: "合成实时" })).toHaveClass(/is-active/);
+    await expect(page.getByRole("button", { name: "合成实时" })).toHaveClass(
+      /is-active/,
+    );
 
-    await page.locator(".chat-sidebar-item").filter({ hasText: "会话 B" }).click();
-    await expect(page.getByRole("button", { name: "普通对话" })).toHaveClass(/is-active/);
+    await page
+      .locator(".chat-sidebar-item")
+      .filter({ hasText: "会话 B" })
+      .click();
+    await expect(page.getByRole("button", { name: "普通对话" })).toHaveClass(
+      /is-active/,
+    );
   });
 
-  test("chat history selection survives conversation list reloads", async ({ page }) => {
+  test("chat history selection survives conversation list reloads", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     const conversations = [
       {
@@ -1368,56 +1840,73 @@ test.describe("Console Shell", () => {
       },
     ];
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(conversations),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(conversations),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-empty/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-empty/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-history/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "msg-1",
-            role: "user",
-            content: "历史问题",
-            created_at: "2026-03-17T08:00:00.000Z",
-          },
-          {
-            id: "msg-2",
-            role: "assistant",
-            content: "历史回复",
-            created_at: "2026-03-17T08:00:30.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-history/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "msg-1",
+              role: "user",
+              content: "历史问题",
+              created_at: "2026-03-17T08:00:00.000Z",
+            },
+            {
+              id: "msg-2",
+              role: "assistant",
+              content: "历史回复",
+              created_at: "2026-03-17T08:00:30.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await page.locator(".chat-sidebar-item").nth(1).click();
-    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("历史回复");
+    await expect(
+      page.locator(".chat-message.is-assistant").last(),
+    ).toContainText("历史回复");
 
     await page.evaluate(() => {
-      const select = document.querySelector(".inline-topbar-project-select") as HTMLSelectElement | null;
+      const select = document.querySelector(
+        ".inline-topbar-project-select",
+      ) as HTMLSelectElement | null;
       select?.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    await expect(page.locator(".chat-message.is-assistant").last()).toContainText("历史回复");
+    await expect(
+      page.locator(".chat-message.is-assistant").last(),
+    ).toContainText("历史回复");
   });
 
-  test("assistant detail settings dialog saves edited identity", async ({ page }) => {
+  test("assistant detail settings dialog saves edited identity", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     let patchedProject:
       | {
@@ -1426,60 +1915,84 @@ test.describe("Console Shell", () => {
         }
       | undefined;
 
-    await page.route(`**/api/v1/projects/${handle.seedProjectId}`, async (route) => {
-      if (route.request().method().toUpperCase() !== "PATCH") {
-        await route.fallback();
-        return;
-      }
+    await page.route(
+      `**/api/v1/projects/${handle.seedProjectId}`,
+      async (route) => {
+        if (route.request().method().toUpperCase() !== "PATCH") {
+          await route.fallback();
+          return;
+        }
 
-      patchedProject = route.request().postDataJSON() as {
-        name?: string;
-        description?: string;
-      };
-      await route.fallback();
-    });
+        patchedProject = route.request().postDataJSON() as {
+          name?: string;
+          description?: string;
+        };
+        await route.fallback();
+      },
+    );
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page.locator(".assistant-profile-actions").getByRole("button", { name: "设置" }).click();
+    await page
+      .locator(".assistant-profile-actions")
+      .getByRole("button", { name: "设置" })
+      .click();
 
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByLabel("助手名字").fill("更新后的助手");
     await page.getByRole("button", { name: "保存" }).click();
 
     await expect(page.getByRole("dialog")).not.toBeVisible();
-    await expect(page.getByRole("heading", { name: "更新后的助手" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "更新后的助手" }),
+    ).toBeVisible();
     expect(patchedProject).toMatchObject({
       name: "更新后的助手",
     });
   });
 
-  test("assistant detail model picker updates the visible llm name", async ({ page }) => {
+  test("assistant detail model picker updates the visible llm name", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await expect(page.locator(".profile-model-name").first()).toHaveText("Qwen 3.5 Plus");
+    await expect(page.locator(".profile-model-name").first()).toHaveText(
+      "Qwen 3.5 Plus",
+    );
 
     await page.locator(".profile-model-change").first().click();
     await expect(page.locator(".model-picker-card")).toBeVisible();
 
-    const qwenMaxCard = page.locator(".model-picker-item").filter({ hasText: "Qwen Max" }).first();
+    const qwenMaxCard = page
+      .locator(".model-picker-item")
+      .filter({ hasText: "Qwen Max" })
+      .first();
     await qwenMaxCard.locator(".marketplace-card-btn").click();
 
-    await expect(page.locator(".profile-model-name").first()).toHaveText("Qwen Max");
+    await expect(page.locator(".profile-model-name").first()).toHaveText(
+      "Qwen Max",
+    );
   });
 
-  test("assistant detail keeps the vision row visible in standard mode", async ({ page }) => {
+  test("assistant detail keeps the vision row visible in standard mode", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
     await page.getByRole("button", { name: "模型" }).click();
 
-    const visionRow = page.locator(".profile-model-row").filter({ hasText: "视觉理解" }).first();
+    const visionRow = page
+      .locator(".profile-model-row")
+      .filter({ hasText: "视觉理解" })
+      .first();
     await expect(visionRow).toBeVisible();
     await expect(visionRow).toContainText("Qwen 3.5 Plus");
   });
 
-  test("assistants page filters cards by the selected project", async ({ page }) => {
+  test("assistants page filters cards by the selected project", async ({
+    page,
+  }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
     await setPlaywrightProjects(page, [
       {
@@ -1497,13 +2010,19 @@ test.describe("Console Shell", () => {
     ]);
 
     await page.goto("/app/assistants");
-    await page.locator(".inline-topbar-project-select").selectOption("proj-test-a");
+    await page
+      .locator(".inline-topbar-project-select")
+      .selectOption("proj-test-a");
 
     await expect(page.locator(".assistant-card-name")).toHaveCount(1);
-    await expect(page.locator(".assistant-card-name").first()).toHaveText("测试项目A");
+    await expect(page.locator(".assistant-card-name").first()).toHaveText(
+      "测试项目A",
+    );
   });
 
-  test("duplicate project names stay distinguishable in selectors", async ({ page }) => {
+  test("duplicate project names stay distinguishable in selectors", async ({
+    page,
+  }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
     await setPlaywrightProjects(page, [
       {
@@ -1526,146 +2045,162 @@ test.describe("Console Shell", () => {
     );
   });
 
-  test("memory graph stats reflect the filtered search results", async ({ page }) => {
+  test("memory graph stats reflect the filtered search results", async ({
+    page,
+  }) => {
     test.slow();
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/memory?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          nodes: [
-            {
-              id: "memory-root",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "Seed Console Project",
-              category: "assistant",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: null,
-              position_x: 0,
-              position_y: 0,
-              metadata_json: {
-                node_kind: "assistant-root",
-                assistant_name: "Seed Console Project",
+    await page.route(
+      `**/api/v1/memory?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            nodes: [
+              {
+                id: "memory-root",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "Seed Console Project",
+                category: "assistant",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: null,
+                position_x: 0,
+                position_y: 0,
+                metadata_json: {
+                  node_kind: "assistant-root",
+                  assistant_name: "Seed Console Project",
+                },
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
               },
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-            {
-              id: "memory-1",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "心理咨询流程",
-              category: "心理",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: "memory-root",
-              position_x: 0,
-              position_y: 0,
-              metadata_json: {},
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-            {
-              id: "memory-2",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "心理干预记录",
-              category: "心理",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: "memory-root",
-              position_x: 60,
-              position_y: 40,
-              metadata_json: {},
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-            {
-              id: "memory-3",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "医生排班安排",
-              category: "医生",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: "memory-root",
-              position_x: -40,
-              position_y: -30,
-              metadata_json: {},
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-          ],
-          edges: [],
-        }),
-      });
-    });
+              {
+                id: "memory-1",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "心理咨询流程",
+                category: "心理",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: "memory-root",
+                position_x: 0,
+                position_y: 0,
+                metadata_json: {},
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
+              },
+              {
+                id: "memory-2",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "心理干预记录",
+                category: "心理",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: "memory-root",
+                position_x: 60,
+                position_y: 40,
+                metadata_json: {},
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
+              },
+              {
+                id: "memory-3",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "医生排班安排",
+                category: "医生",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: "memory-root",
+                position_x: -40,
+                position_y: -30,
+                metadata_json: {},
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
+              },
+            ],
+            edges: [],
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/memory`);
     await page.getByPlaceholder("搜索记忆…").fill("心理");
-    await expect(page.locator(".graph-controls-stats")).toContainText("共 2 个记忆");
+    await expect(page.locator(".graph-controls-stats")).toContainText(
+      "共 2 个记忆",
+    );
   });
 
-  test("memory page count excludes the assistant root memory node", async ({ page }) => {
+  test("memory page count excludes the assistant root memory node", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/memory?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          nodes: [
-            {
-              id: "memory-root",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "医生助手",
-              category: "assistant",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: null,
-              position_x: 0,
-              position_y: 0,
-              metadata_json: {
-                node_kind: "assistant-root",
-                assistant_name: "医生助手",
+    await page.route(
+      `**/api/v1/memory?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            nodes: [
+              {
+                id: "memory-root",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "医生助手",
+                category: "assistant",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: null,
+                position_x: 0,
+                position_y: 0,
+                metadata_json: {
+                  node_kind: "assistant-root",
+                  assistant_name: "医生助手",
+                },
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
               },
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-            {
-              id: "memory-1",
-              workspace_id: handle.workspaceId,
-              project_id: handle.seedProjectId,
-              content: "用户偏好午后回访",
-              category: "偏好",
-              type: "permanent",
-              source_conversation_id: null,
-              parent_memory_id: "memory-root",
-              position_x: 32,
-              position_y: 16,
-              metadata_json: {},
-              created_at: "2026-03-18T08:00:00.000Z",
-              updated_at: "2026-03-18T08:00:00.000Z",
-            },
-          ],
-          edges: [],
-        }),
-      });
-    });
+              {
+                id: "memory-1",
+                workspace_id: handle.workspaceId,
+                project_id: handle.seedProjectId,
+                content: "用户偏好午后回访",
+                category: "偏好",
+                type: "permanent",
+                source_conversation_id: null,
+                parent_memory_id: "memory-root",
+                position_x: 32,
+                position_y: 16,
+                metadata_json: {},
+                created_at: "2026-03-18T08:00:00.000Z",
+                updated_at: "2026-03-18T08:00:00.000Z",
+              },
+            ],
+            edges: [],
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/memory`);
     await expect(page.locator(".memory-topbar-count")).toContainText("1");
     await page.getByRole("button", { name: "列表" }).click();
     await expect(page.locator(".memory-list-item")).toHaveCount(1);
-    await expect(page.locator(".memory-list-item")).toContainText("用户偏好午后回访");
+    await expect(page.locator(".memory-list-item")).toContainText(
+      "用户偏好午后回访",
+    );
   });
 
-  test("assistant detail breadcrumbs use the assistant name instead of a raw uuid", async ({ page }) => {
+  test("assistant detail breadcrumbs use the assistant name instead of a raw uuid", async ({
+    page,
+  }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
     const projectId = "f555d613-aaaa-4a15-8fd5-100000000001";
     await setPlaywrightProjects(page, [
@@ -1676,11 +2211,17 @@ test.describe("Console Shell", () => {
     ]);
 
     await page.goto(`/app/assistants/${projectId}`);
-    await expect(page.locator(".inline-topbar-breadcrumb")).toContainText("医生");
-    await expect(page.locator(".inline-topbar-breadcrumb")).not.toContainText("f555d613");
+    await expect(page.locator(".inline-topbar-breadcrumb")).toContainText(
+      "医生",
+    );
+    await expect(page.locator(".inline-topbar-breadcrumb")).not.toContainText(
+      "f555d613",
+    );
   });
 
-  test("assistant knowledge manager stays localized in Chinese", async ({ page }) => {
+  test("assistant knowledge manager stays localized in Chinese", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
@@ -1695,35 +2236,40 @@ test.describe("Console Shell", () => {
   test("chat generic failures stay localized in Chinese", async ({ page }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route("**/api/v1/chat/conversations/*/messages", async (route) => {
-      if (route.request().method().toUpperCase() !== "POST") {
-        await route.fallback();
-        return;
-      }
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route) => {
+        if (route.request().method().toUpperCase() !== "POST") {
+          await route.fallback();
+          return;
+        }
 
-      await route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error: {
-            code: "unexpected_failure",
-            message: "Sorry, something went wrong",
-          },
-        }),
-      });
-    });
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "unexpected_failure",
+              message: "Sorry, something went wrong",
+            },
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await page.locator(".chat-sidebar-new").click();
     await page.getByRole("textbox", { name: "输入消息…" }).fill("测试报错");
     await page.getByRole("button", { name: "发送" }).click();
 
-    await expect(page.locator(".chat-message.is-assistant").last()).toContainText(
-      "抱歉，刚才出错了，请重试。",
-    );
+    await expect(
+      page.locator(".chat-message.is-assistant").last(),
+    ).toContainText("抱歉，刚才出错了，请重试。");
   });
 
-  test("model marketplace detail buttons stay on one line", async ({ page }) => {
+  test("model marketplace detail buttons stay on one line", async ({
+    page,
+  }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto("/app");
@@ -1744,51 +2290,65 @@ test.describe("Console Shell", () => {
     expect(hasNowrapRule).toBe(true);
   });
 
-  test("chat sidebar falls back to a message summary when the conversation title is empty", async ({ page }) => {
+  test("chat sidebar falls back to a message summary when the conversation title is empty", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-summary",
-            project_id: handle.seedProjectId,
-            title: "",
-            updated_at: "2026-03-17T08:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-summary",
+              project_id: handle.seedProjectId,
+              title: "",
+              updated_at: "2026-03-17T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-summary/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "msg-user",
-            role: "user",
-            content: "如何缓解焦虑和失眠？",
-            created_at: "2026-03-17T08:00:00.000Z",
-          },
-          {
-            id: "msg-assistant",
-            role: "assistant",
-            content: "可以先从睡眠节律和情绪记录开始。",
-            created_at: "2026-03-17T08:01:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-summary/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "msg-user",
+              role: "user",
+              content: "如何缓解焦虑和失眠？",
+              created_at: "2026-03-17T08:00:00.000Z",
+            },
+            {
+              id: "msg-assistant",
+              role: "assistant",
+              content: "可以先从睡眠节律和情绪记录开始。",
+              created_at: "2026-03-17T08:01:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await expect(page.locator(".chat-sidebar-item-title").first()).toContainText("如何缓解焦虑和失眠");
-    await expect(page.locator(".chat-sidebar-item-time").first()).toContainText(/\d+天前/);
+    await expect(
+      page.locator(".chat-sidebar-item-title").first(),
+    ).toContainText("如何缓解焦虑和失眠");
+    await expect(page.locator(".chat-sidebar-item-time").first()).toContainText(
+      /\d+天前/,
+    );
   });
 
-  test("chat auto-creates a ready conversation when the assistant has no history", async ({ page }) => {
+  test("chat auto-creates a ready conversation when the assistant has no history", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
@@ -1796,13 +2356,19 @@ test.describe("Console Shell", () => {
       "新对话已创建，输入第一条消息开始测试",
     );
     const modeSwitcher = page.locator(".chat-mode-switcher").first();
-    await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("普通对话");
-    await expect(page.getByRole("textbox", { name: "输入消息…" })).toBeEnabled();
+    await expect(
+      modeSwitcher.locator(".chat-mode-chip.is-active"),
+    ).toContainText("普通对话");
+    await expect(
+      page.getByRole("textbox", { name: "输入消息…" }),
+    ).toBeEnabled();
     await expect(page.locator(".chat-mic-btn").first()).toBeEnabled();
     await expect(page.locator(".rt-entry")).toHaveCount(0);
   });
 
-  test("chat workspace toolbar reflects the active mode and message count", async ({ page }) => {
+  test("chat workspace toolbar reflects the active mode and message count", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
@@ -1811,36 +2377,45 @@ test.describe("Console Shell", () => {
     await expect(toolbarState).toContainText("0 条消息");
   });
 
-  test("chat initializes mode from the assistant default mode", async ({ page }) => {
+  test("chat initializes mode from the assistant default mode", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/projects/${handle.seedProjectId}`, async (route) => {
-      if (route.request().method().toUpperCase() !== "GET") {
-        await route.fallback();
-        return;
-      }
+    await page.route(
+      `**/api/v1/projects/${handle.seedProjectId}`,
+      async (route) => {
+        if (route.request().method().toUpperCase() !== "GET") {
+          await route.fallback();
+          return;
+        }
 
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: handle.seedProjectId,
-          name: "Seed Console Project",
-          description: "Default workspace project",
-          default_chat_mode: "synthetic_realtime",
-          created_at: "2026-03-14T12:00:00.000Z",
-        }),
-      });
-    });
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: handle.seedProjectId,
+            name: "Seed Console Project",
+            description: "Default workspace project",
+            default_chat_mode: "synthetic_realtime",
+            created_at: "2026-03-14T12:00:00.000Z",
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     const modeSwitcher = page.locator(".chat-mode-switcher").first();
-    await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("合成实时");
+    await expect(
+      modeSwitcher.locator(".chat-mode-chip.is-active"),
+    ).toContainText("合成实时");
     await expect(page.locator(".chat-mic-btn")).toHaveCount(0);
     await expect(page.locator(".rt-entry")).toContainText("合成实时");
   });
 
-  test("discover picker keeps the current slot and model context visible", async ({ page }) => {
+  test("discover picker keeps the current slot and model context visible", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(
@@ -1848,11 +2423,17 @@ test.describe("Console Shell", () => {
     );
 
     await expect(page.getByTestId("discover-picker-context")).toBeVisible();
-    await expect(page.locator(".discover-picker-context")).toContainText("当前槽位");
-    await expect(page.locator(".discover-picker-context")).toContainText("qwen3-vl-plus");
+    await expect(page.locator(".discover-picker-context")).toContainText(
+      "当前槽位",
+    );
+    await expect(page.locator(".discover-picker-context")).toContainText(
+      "qwen3-vl-plus",
+    );
   });
 
-  test("chat does not create a new conversation before existing history finishes loading", async ({ page }) => {
+  test("chat does not create a new conversation before existing history finishes loading", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     let createConversationCalls = 0;
 
@@ -1863,28 +2444,35 @@ test.describe("Console Shell", () => {
       await route.fallback();
     });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-existing",
-            project_id: handle.seedProjectId,
-            title: "保留的历史会话",
-            updated_at: "2026-03-17T08:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-existing",
+              project_id: handle.seedProjectId,
+              title: "保留的历史会话",
+              updated_at: "2026-03-17T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await expect(page.locator(".chat-sidebar-item-title").first()).toContainText("保留的历史会话");
+    await expect(
+      page.locator(".chat-sidebar-item-title").first(),
+    ).toContainText("保留的历史会话");
     expect(createConversationCalls).toBe(0);
   });
 
-  test("chat mode switching does not create a new conversation", async ({ page }) => {
+  test("chat mode switching does not create a new conversation", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     let createConversationCalls = 0;
 
@@ -1895,45 +2483,61 @@ test.describe("Console Shell", () => {
       await route.fallback();
     });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([
-          {
-            id: "conv-existing-mode",
-            project_id: handle.seedProjectId,
-            title: "已有会话",
-            updated_at: "2026-03-17T08:00:00.000Z",
-          },
-        ]),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              id: "conv-existing-mode",
+              project_id: handle.seedProjectId,
+              title: "已有会话",
+              updated_at: "2026-03-17T08:00:00.000Z",
+            },
+          ]),
+        });
+      },
+    );
 
-    await page.route("**/api/v1/chat/conversations/conv-existing-mode/messages", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([]),
-      });
-    });
+    await page.route(
+      "**/api/v1/chat/conversations/conv-existing-mode/messages",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      },
+    );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await expect(page.locator(".chat-sidebar-item-title").first()).toContainText("已有会话");
+    await expect(
+      page.locator(".chat-sidebar-item-title").first(),
+    ).toContainText("已有会话");
     const modeSwitcher = page.locator(".chat-mode-switcher").first();
 
     await modeSwitcher.getByRole("button", { name: /Omni 实时/ }).click();
-    await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("Omni 实时");
+    await expect(
+      modeSwitcher.locator(".chat-mode-chip.is-active"),
+    ).toContainText("Omni 实时");
 
     await modeSwitcher.getByRole("button", { name: /合成实时/ }).click();
-    await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("合成实时");
+    await expect(
+      modeSwitcher.locator(".chat-mode-chip.is-active"),
+    ).toContainText("合成实时");
 
     await modeSwitcher.getByRole("button", { name: /普通对话/ }).click();
-    await expect(modeSwitcher.locator(".chat-mode-chip.is-active")).toContainText("普通对话");
+    await expect(
+      modeSwitcher.locator(".chat-mode-chip.is-active"),
+    ).toContainText("普通对话");
     expect(createConversationCalls).toBe(0);
   });
 
-  test("memory graph controls stay visible after zooming out", async ({ page }) => {
+  test("memory graph controls stay visible after zooming out", async ({
+    page,
+  }) => {
     test.slow();
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
@@ -1945,21 +2549,26 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".graph-controls-btn.is-add")).toBeVisible();
   });
 
-  test("personality card shows a friendly placeholder when empty", async ({ page }) => {
+  test("personality card shows a friendly placeholder when empty", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/projects/${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: handle.seedProjectId,
-          name: "Seed Console Project",
-          description: "",
-          created_at: "2026-03-14T12:00:00.000Z",
-        }),
-      });
-    });
+    await page.route(
+      `**/api/v1/projects/${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: handle.seedProjectId,
+            name: "Seed Console Project",
+            description: "",
+            created_at: "2026-03-14T12:00:00.000Z",
+          }),
+        });
+      },
+    );
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
     const personalityCard = page.locator(".profile-card").first();
@@ -1968,21 +2577,26 @@ test.describe("Console Shell", () => {
     await expect(personalityCard).not.toContainText("---");
   });
 
-  test("session expiry shows a toast and redirects back to login", async ({ page }) => {
+  test("session expiry shows a toast and redirects back to login", async ({
+    page,
+  }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
-    await page.route(`**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`, async (route) => {
-      await route.fulfill({
-        status: 401,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error: {
-            code: "unauthorized",
-            message: "Unauthorized",
-          },
-        }),
-      });
-    });
+    await page.route(
+      `**/api/v1/chat/conversations?project_id=${handle.seedProjectId}`,
+      async (route) => {
+        await route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "unauthorized",
+              message: "Unauthorized",
+            },
+          }),
+        });
+      },
+    );
 
     await page.goto("/app/chat");
     await expect(

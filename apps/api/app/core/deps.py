@@ -17,6 +17,7 @@ from app.services.runtime_state import runtime_state
 _AUTH_TOKEN_STATE_SCOPE = "auth_token_state"
 _WORKSPACE_WRITE_ROLES = {"owner", "admin", "editor"}
 _WORKSPACE_PRIVILEGED_ROLES = {"owner", "admin"}
+_WORKSPACE_COOKIE_NAMES = ("mingrun_workspace_id", "qihang_workspace_id")
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -62,7 +63,13 @@ def get_current_workspace_membership(
     db: Session = Depends(get_db_session),
     current_user: User = Depends(get_current_user),
 ) -> Membership:
-    workspace_id = request.headers.get("x-workspace-id")
+    workspace_id = request.headers.get("x-workspace-id") or request.query_params.get("workspace_id")
+    if not workspace_id:
+        for cookie_name in _WORKSPACE_COOKIE_NAMES:
+            cookie_value = request.cookies.get(cookie_name)
+            if cookie_value:
+                workspace_id = cookie_value
+                break
     memberships = (
         db.query(Membership)
         .filter(Membership.user_id == current_user.id)

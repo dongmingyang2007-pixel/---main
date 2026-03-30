@@ -16,7 +16,7 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE messages
-        ADD COLUMN metadata_json JSON NOT NULL DEFAULT '{}'
+        ADD COLUMN IF NOT EXISTS metadata_json JSON NOT NULL DEFAULT '{}'
         """
     )
 
