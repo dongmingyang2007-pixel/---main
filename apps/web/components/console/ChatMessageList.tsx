@@ -20,11 +20,16 @@ import "katex/dist/katex.min.css";
 
 import { apiPost } from "@/lib/api";
 import {
+  type InspectorSection,
+  type InspectorTab,
   type Message,
+  type MessageInspectorOverride,
   type SearchSource,
   type SpeechResponse,
   createAudioPlayer,
 } from "./chat-types";
+import { ChatMessageMetaRail } from "./chat/ChatMessageMetaRail";
+import { buildChatMetaRailItems } from "./chat/chat-view-models";
 
 const FENCED_CODE_BLOCK_SPLIT_PATTERN = /(```[\s\S]*?```)/g;
 const FENCED_CODE_BLOCK_FULL_PATTERN = /^```[\s\S]*```$/;
@@ -294,399 +299,6 @@ function AnimatedMessageText({
         {renderableText}
       </ReactMarkdown>
       {showCursor ? <span className="chat-inline-cursor">&#x2588;</span> : null}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  CollapsibleReasoning                                               */
-/* ------------------------------------------------------------------ */
-
-function CollapsibleReasoning({
-  content,
-  animate,
-  label,
-}: {
-  content: string;
-  animate: boolean;
-  label: string;
-}) {
-  const [expanded, setExpanded] = useState(() => animate);
-  const previewLength = 80;
-  const isLong = content.length > previewLength;
-  const preview = isLong ? content.slice(0, previewLength) + "..." : content;
-
-  return (
-    <div className="chat-reasoning" aria-label={label}>
-      <button
-        type="button"
-        className="chat-reasoning-toggle"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <svg
-          width={12}
-          height={12}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-            transition: "transform 200ms",
-            flexShrink: 0,
-          }}
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-        <span className="chat-reasoning-label">{label}</span>
-        {!expanded && isLong && (
-          <span className="chat-reasoning-preview">{preview}</span>
-        )}
-      </button>
-      {expanded && (
-        <div className="chat-reasoning-content">
-          <AnimatedMessageText text={content} animate={animate} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function formatRetrievalPercent(value?: number | null): string | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatRetrievalSourceLabel(
-  source: string | null | undefined,
-  t: (key: string) => string,
-): string {
-  const labels: Record<string, string> = {
-    static: t("retrievalSourceStatic"),
-    semantic: t("retrievalSourceSemantic"),
-    lexical: t("retrievalSourceLexical"),
-    graph_parent: t("retrievalSourceGraphParent"),
-    graph_child: t("retrievalSourceGraphChild"),
-    graph_edge: t("retrievalSourceGraphEdge"),
-    recent_temporary: t("retrievalSourceRecentTemporary"),
-    context: t("retrievalSourceContext"),
-  };
-  if (!source) {
-    return labels.context;
-  }
-  return labels[source] || source.replace(/_/g, " ");
-}
-
-function formatRetrievalMemoryKind(
-  memoryKind: string | null | undefined,
-  t: (key: string) => string,
-): string {
-  const labels: Record<string, string> = {
-    profile: t("retrievalKindProfile"),
-    preference: t("retrievalKindPreference"),
-    goal: t("retrievalKindGoal"),
-    episodic: t("retrievalKindEpisodic"),
-    fact: t("retrievalKindFact"),
-    summary: t("retrievalKindSummary"),
-  };
-  if (!memoryKind) {
-    return t("retrievalKindUnknown");
-  }
-  return labels[memoryKind] || memoryKind;
-}
-
-function formatMemoryResultLabel(
-  status: string | null | undefined,
-  t: (key: string) => string,
-): string {
-  const labels: Record<string, string> = {
-    permanent: t("memory.resultPermanent"),
-    temporary: t("memory.resultTemporary"),
-    appended: t("memory.resultAppended"),
-    merged: t("memory.resultMerged"),
-    replaced: t("memory.resultReplaced"),
-    duplicate: t("memory.resultDuplicate"),
-    discarded: t("memory.resultDiscarded"),
-    ignored: t("memory.resultIgnored"),
-  };
-  if (!status) {
-    return t("memory.resultUnknown");
-  }
-  return labels[status] || status;
-}
-
-function formatMemoryTriageActionLabel(
-  action: string | null | undefined,
-  t: (key: string) => string,
-): string | null {
-  const labels: Record<string, string> = {
-    create: t("memory.actionCreate"),
-    append: t("memory.actionAppend"),
-    merge: t("memory.actionMerge"),
-    replace: t("memory.actionReplace"),
-    discard: t("memory.actionDiscard"),
-  };
-  if (!action) {
-    return null;
-  }
-  return labels[action] || action;
-}
-
-function CollapsibleRetrievalTrace({
-  message,
-  t,
-}: {
-  message: Message;
-  t: (key: string, values?: Record<string, string | number>) => string;
-}) {
-  const trace = message.retrievalTrace;
-  const [expanded, setExpanded] = useState(false);
-
-  if (!trace || message.isStreaming) {
-    return null;
-  }
-
-  const contextLevel = trace.context_level ?? null;
-  if (contextLevel === "none" || contextLevel === "profile_only") {
-    return null;
-  }
-
-  const memories = trace.memories ?? [];
-  const knowledgeChunks = trace.knowledge_chunks ?? [];
-  const linkedFileChunks = trace.linked_file_chunks ?? [];
-  const hasRetrievedItems =
-    memories.length > 0 ||
-    knowledgeChunks.length > 0 ||
-    linkedFileChunks.length > 0;
-  const shouldForceVisible =
-    contextLevel === "memory_only" || contextLevel === "full_rag";
-  const countBadges = [
-    { label: t("retrievalBadgeMemory"), value: memories.length },
-    { label: t("retrievalBadgeKnowledge"), value: knowledgeChunks.length },
-    { label: t("retrievalBadgeLinked"), value: linkedFileChunks.length },
-  ].filter((item) => item.value > 0);
-
-  if (!shouldForceVisible && !countBadges.length) {
-    return null;
-  }
-
-  return (
-    <div className="chat-context-trace" aria-label={t("retrievalLabel")}>
-      <button
-        type="button"
-        className="chat-context-trace-toggle"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <div className="chat-context-trace-toggle-main">
-          <svg
-            width={12}
-            height={12}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-              transition: "transform 200ms",
-              flexShrink: 0,
-            }}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-          <span className="chat-context-trace-label">
-            {t("retrievalLabel")}
-          </span>
-          {trace.strategy ? (
-            <span className="chat-context-trace-strategy">
-              {trace.strategy}
-            </span>
-          ) : null}
-        </div>
-        <div className="chat-context-trace-badges">
-          {countBadges.map((item) => (
-            <span key={item.label} className="chat-context-trace-badge">
-              {t("retrievalBadgeCount", {
-                label: item.label,
-                count: item.value,
-              })}
-            </span>
-          ))}
-        </div>
-      </button>
-      {expanded ? (
-        <div className="chat-context-trace-content">
-          {trace.memory_counts ? (
-            <div className="chat-context-trace-summary">
-              {typeof trace.memory_counts.static === "number" ? (
-                <span>
-                  {t("retrievalSummaryStatic", {
-                    count: trace.memory_counts.static,
-                  })}
-                </span>
-              ) : null}
-              {typeof trace.memory_counts.relevant === "number" ? (
-                <span>
-                  {t("retrievalSummaryRelevant", {
-                    count: trace.memory_counts.relevant,
-                  })}
-                </span>
-              ) : null}
-              {typeof trace.memory_counts.graph === "number" ? (
-                <span>
-                  {t("retrievalSummaryGraph", {
-                    count: trace.memory_counts.graph,
-                  })}
-                </span>
-              ) : null}
-              {typeof trace.memory_counts.temporary === "number" ? (
-                <span>
-                  {t("retrievalSummaryTemporary", {
-                    count: trace.memory_counts.temporary,
-                  })}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-
-          {memories.length ? (
-            <div className="chat-context-section">
-              <div className="chat-context-section-title">
-                {t("retrievalMemories")}
-              </div>
-              <div className="chat-context-list">
-                {memories.map((memory) => (
-                  <article key={memory.id} className="chat-context-card">
-                    <div className="chat-context-card-head">
-                      <div className="chat-context-card-tags">
-                        <span className="chat-context-card-tag is-kind">
-                          {formatRetrievalMemoryKind(memory.memory_kind, t)}
-                        </span>
-                        {memory.source ? (
-                          <span className="chat-context-card-tag">
-                            {formatRetrievalSourceLabel(memory.source, t)}
-                          </span>
-                        ) : null}
-                        {memory.pinned ? (
-                          <span className="chat-context-card-tag is-pinned">
-                            {t("retrievalPinned")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="chat-context-card-metrics">
-                        {formatRetrievalPercent(
-                          typeof memory.score === "number"
-                            ? memory.score
-                            : memory.semantic_score,
-                        ) ? (
-                          <span>
-                            {formatRetrievalPercent(
-                              typeof memory.score === "number"
-                                ? memory.score
-                                : memory.semantic_score,
-                            )}
-                          </span>
-                        ) : null}
-                        {formatRetrievalPercent(memory.salience) ? (
-                          <span>
-                            {t("retrievalSalience", {
-                              score:
-                                formatRetrievalPercent(memory.salience) || "",
-                            })}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    {memory.category ? (
-                      <div className="chat-context-card-subtitle">
-                        {memory.category}
-                      </div>
-                    ) : null}
-                    <div className="chat-context-card-body">
-                      {memory.content}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {knowledgeChunks.length ? (
-            <div className="chat-context-section">
-              <div className="chat-context-section-title">
-                {t("retrievalKnowledge")}
-              </div>
-              <div className="chat-context-list">
-                {knowledgeChunks.map((chunk, index) => (
-                  <article
-                    key={`${chunk.id || chunk.data_item_id || "knowledge"}-${index}`}
-                    className="chat-context-card"
-                  >
-                    <div className="chat-context-card-head">
-                      <div className="chat-context-card-tags">
-                        <span className="chat-context-card-tag is-knowledge">
-                          {chunk.filename || t("retrievalKnowledgeChunk")}
-                        </span>
-                      </div>
-                      {formatRetrievalPercent(chunk.score) ? (
-                        <div className="chat-context-card-metrics">
-                          <span>{formatRetrievalPercent(chunk.score)}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="chat-context-card-body">
-                      {chunk.chunk_text}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {linkedFileChunks.length ? (
-            <div className="chat-context-section">
-              <div className="chat-context-section-title">
-                {t("retrievalLinkedFiles")}
-              </div>
-              <div className="chat-context-list">
-                {linkedFileChunks.map((chunk, index) => (
-                  <article
-                    key={`${chunk.id || chunk.data_item_id || "linked"}-${index}`}
-                    className="chat-context-card"
-                  >
-                    <div className="chat-context-card-head">
-                      <div className="chat-context-card-tags">
-                        <span className="chat-context-card-tag is-linked">
-                          {chunk.filename || t("retrievalLinkedChunk")}
-                        </span>
-                      </div>
-                      {formatRetrievalPercent(chunk.score) ? (
-                        <div className="chat-context-card-metrics">
-                          <span>{formatRetrievalPercent(chunk.score)}</span>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="chat-context-card-body">
-                      {chunk.chunk_text}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {!hasRetrievedItems ? (
-            <div className="chat-context-trace-empty">
-              {t("retrievalEmpty")}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -1102,104 +714,6 @@ function AssistantMessageBody({
   );
 }
 
-function MemorySummaryCard({
-  message,
-  t,
-}: {
-  message: Message;
-  t: (key: string, values?: Record<string, string | number>) => string;
-}) {
-  const facts = message.extracted_facts ?? [];
-
-  if (
-    !facts.length &&
-    !message.memories_extracted &&
-    message.memory_extraction_status !== "pending"
-  ) {
-    return null;
-  }
-
-  return (
-    <div className="chat-memory-card">
-      <div className="chat-memory-card-header">
-        <div className="chat-memory-card-icon">
-          <svg
-            width={14}
-            height={14}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx={12} cy={12} r={10} />
-            <path d="M12 8v4l3 3" />
-          </svg>
-        </div>
-        <span className="chat-memory-card-label">{t("memory.remembered")}</span>
-      </div>
-      {message.memories_extracted ? (
-        <div className="chat-memory-card-body">
-          {message.memories_extracted}
-        </div>
-      ) : null}
-      {facts.length ? (
-        <div className="chat-memory-card-facts">
-          {facts.map((fact, idx) => (
-            <div key={idx} className="chat-memory-fact">
-              <div className="chat-memory-fact-header">
-                <span className="chat-memory-fact-category">
-                  {fact.category || "general"}
-                </span>
-                <div className="chat-memory-fact-metrics">
-                  <span
-                    className={`chat-memory-fact-result ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                  >
-                    {formatMemoryResultLabel(fact.status, t)}
-                  </span>
-                  <span
-                    className={`chat-memory-fact-score ${fact.importance >= 0.9 ? "is-high" : fact.importance >= 0.7 ? "is-medium" : "is-low"}`}
-                    title={t("memory.importanceTitle", {
-                      score: (fact.importance * 100).toFixed(0),
-                    })}
-                  >
-                    {t("memory.importanceValue", {
-                      score: (fact.importance * 100).toFixed(0),
-                    })}
-                  </span>
-                </div>
-              </div>
-              <div className="chat-memory-fact-text">{fact.fact}</div>
-              {fact.triage_action || fact.triage_reason ? (
-                <div className="chat-memory-fact-meta">
-                  {fact.triage_action ? (
-                    <span className="chat-memory-fact-decision">
-                      {t("memory.decisionPrefix")}
-                      {formatMemoryTriageActionLabel(fact.triage_action, t)}
-                    </span>
-                  ) : null}
-                  {fact.triage_reason ? (
-                    <span className="chat-memory-fact-reason">
-                      {t("memory.reasonPrefix")}
-                      {fact.triage_reason}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {!facts.length &&
-      !message.memories_extracted &&
-      message.memory_extraction_status === "pending" ? (
-        <div className="chat-memory-card-body">{t("memory.processing")}</div>
-      ) : null}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -1210,6 +724,12 @@ export interface ChatMessageListProps {
   isTyping: boolean;
   conversationId?: string | null;
   noConversation: boolean;
+  messageInspectorOverrides: Record<string, MessageInspectorOverride>;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
   onError?: (message: string) => void;
 }
 
@@ -1249,6 +769,8 @@ export const ChatMessageList = forwardRef<
     isTyping,
     conversationId,
     noConversation,
+    messageInspectorOverrides,
+    onOpenInspector,
     onError,
   },
   ref,
@@ -1509,19 +1031,16 @@ export const ChatMessageList = forwardRef<
         const showAvatar =
           msg.role === "assistant" &&
           (index === 0 || messages[index - 1]?.role !== "assistant");
-        const showReasoning =
-          msg.role === "assistant" && Boolean(msg.reasoningContent?.trim());
-        const showMemoryCard =
-          msg.role === "assistant" &&
-          ((msg.extracted_facts?.length ?? 0) > 0 ||
-            Boolean(msg.memories_extracted) ||
-            msg.memory_extraction_status === "pending");
         const showMessageActions =
           msg.role === "assistant" &&
           (msg.content.trim() ||
             msg.audioBase64 ||
             loadingReadAloudId === msg.id ||
             readingMessageId === msg.id);
+        const metaRailItems =
+          msg.role === "assistant"
+            ? buildChatMetaRailItems(msg, messageInspectorOverrides, t)
+            : [];
 
         return (
           <div
@@ -1591,13 +1110,6 @@ export const ChatMessageList = forwardRef<
                 </div>
                 {msg.role === "assistant" ? (
                   <div className="chat-message-support">
-                    {showReasoning ? (
-                      <CollapsibleReasoning
-                        content={msg.reasoningContent?.trim() || ""}
-                        animate={Boolean(msg.animateOnMount)}
-                        label={t("reasoningLabel")}
-                      />
-                    ) : null}
                     {assistantSources.length ? (
                       <div
                         className="chat-sources-compact"
@@ -1630,10 +1142,11 @@ export const ChatMessageList = forwardRef<
                         })}
                       </div>
                     ) : null}
-                    <CollapsibleRetrievalTrace message={msg} t={t} />
-                    {showMemoryCard ? (
-                      <MemorySummaryCard message={msg} t={t} />
-                    ) : null}
+                    <ChatMessageMetaRail
+                      items={metaRailItems}
+                      messageId={msg.id}
+                      onOpenInspector={onOpenInspector}
+                    />
                   </div>
                 ) : null}
               </div>

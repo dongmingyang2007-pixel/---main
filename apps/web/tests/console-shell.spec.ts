@@ -349,6 +349,11 @@ async function stubAssistantMessageWithRetrievalTrace(
   );
 }
 
+async function openChatToolsMenu(page: Page) {
+  await page.getByRole("button", { name: "工具" }).click();
+  await expect(page.locator(".chat-tools-menu")).toBeVisible();
+}
+
 test.describe("Console Shell", () => {
   test.beforeEach(async ({ page }) => {
     await installWorkbenchApiMock(page, { authenticated: true });

@@ -136,6 +136,9 @@ async def find_duplicate_memory_with_vector(
               AND e.project_id = :project_id
               AND e.memory_id IS NOT NULL
               AND e.vector IS NOT NULL
+              AND m.type = 'permanent'
+              AND COALESCE(m.node_type, 'fact') = 'fact'
+              AND COALESCE(m.node_status, 'active') = 'active'
               AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :threshold
             ORDER BY e.vector <=> CAST(:query_vector AS vector)
             LIMIT 1
@@ -203,6 +206,9 @@ async def find_related_memories(
               AND e.project_id = :project_id
               AND e.memory_id IS NOT NULL
               AND e.vector IS NOT NULL
+              AND m.type = 'permanent'
+              AND COALESCE(m.node_type, 'fact') = 'fact'
+              AND COALESCE(m.node_status, 'active') = 'active'
               AND 1 - (e.vector <=> CAST(:query_vector AS vector)) >= :low
               AND 1 - (e.vector <=> CAST(:query_vector AS vector)) < :high
             ORDER BY e.vector <=> CAST(:query_vector AS vector)

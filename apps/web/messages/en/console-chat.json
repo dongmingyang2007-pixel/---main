@@ -25,9 +25,12 @@
   "imageClear": "Clear image",
   "imageDefaultPrompt": "Please describe this image",
   "mode.standard": "Standard",
-  "mode.omni": "Omni realtime",
+  "mode.omni": "Realtime Voice",
   "mode.synthetic": "Synthetic realtime",
   "mode.default": "Default",
+  "mode.helper.standard": "Text-first for steady question answering",
+  "mode.helper.omni": "End-to-end realtime voice for duplex conversations",
+  "mode.helper.synthetic": "ASR + reasoning + playback for controllable voice interactions",
   "micPermissionDenied": "Microphone permission denied",
   "realtimeEntry": "Realtime Voice",
   "realtimeRetry": "Retry Voice",
@@ -61,6 +64,17 @@
   "dateGroup.earlier": "Earlier",
   "tool.search": "Search",
   "tool.think": "Deep Think",
+  "tool.searchExpanded": "Web search",
+  "tool.thinkExpanded": "Deep analysis",
+  "tool.addImage": "Add image",
+  "toolsLabel": "Tools",
+  "toolState.auto": "Auto",
+  "toolState.on": "On",
+  "toolState.off": "Off",
+  "activeTool.autoRead": "Auto read",
+  "activeTool.search": "Web search",
+  "activeTool.think": "Deep analysis",
+  "activeTool.image": "Image attached",
   "toolbar.messages": "{count} messages",
   "stopGenerating": "Stop generating",
   "reasoningLabel": "Thinking",
@@ -126,6 +140,86 @@
   "calibrating": "Calibrating microphone...",
   "drawerOpen": "Open sidebar",
   "noPreview": "No messages yet",
+  "inspector": {
+    "meta": {
+      "sources": "Referenced {count} sources",
+      "profile": "Used your long-term profile",
+      "memoryOnly": "Referenced {memoryCount} memories",
+      "fullRag": "Referenced {memoryCount} memories and {materialCount} materials",
+      "memoryWrite": "Wrote {count} memories",
+      "thinking": "View thinking"
+    },
+    "tabs": {
+      "context": "Sources & context",
+      "memory": "Memory writes",
+      "thinking": "Thinking",
+      "debug": "Debug"
+    },
+    "actions": {
+      "debugMode": "Debug view",
+      "userMode": "User view",
+      "close": "Close inspector"
+    },
+    "empty": {
+      "title": "No message details selected",
+      "description": "Open a source, context, memory, or thinking chip under a message to inspect it here."
+    },
+    "context": {
+      "title": "Sources & context",
+      "description": "Inspect the sources, memories, and supporting materials behind this answer.",
+      "sources": "Web sources",
+      "profile": "Long-term profile",
+      "recent": "Recent conversation",
+      "knowledge": "Knowledge chunks",
+      "files": "Linked files",
+      "debug": "Debug scores",
+      "emptyTitle": "No extra context for this turn",
+      "emptyDescription": "This answer did not expose sources or retrievable context snippets."
+    },
+    "memory": {
+      "title": "Memory writes",
+      "description": "Review memory items from this turn and edit, delete, or promote them when needed.",
+      "badge": {
+        "longTerm": "Long-term profile",
+        "temporary": "Remembered this turn",
+        "merged": "Merged",
+        "notWritten": "Not written"
+      },
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "noReason": "No additional write rationale was provided.",
+      "loading": "Loading memory details…",
+      "save": "Save",
+      "cancel": "Cancel",
+      "edit": "Edit content",
+      "delete": "Delete",
+      "promote": "Promote",
+      "emptyTitle": "No memory writes for this turn",
+      "emptyDescription": "When a reply produces memory write candidates, they will be managed here.",
+      "actionFailed": "Memory action failed. Please try again."
+    },
+    "thinking": {
+      "title": "Thinking",
+      "description": "Inspect the model's raw reasoning content.",
+      "note": "This is the model's raw reasoning content. It is for inspection only and is not the final answer body.",
+      "emptyTitle": "No thinking content returned",
+      "emptyDescription": "This answer did not return reasoning text."
+    },
+    "debug": {
+      "title": "Debug data",
+      "description": "Inspect raw metadata, retrieval counts, and debug fields.",
+      "strategy": "Retrieval strategy",
+      "contextLevel": "Context level",
+      "decisionSource": "Decision source",
+      "confidence": "Confidence",
+      "sources": "Sources",
+      "memories": "Memories",
+      "knowledge": "Knowledge chunks",
+      "files": "Linked files",
+      "emptyTitle": "Debug view is off",
+      "emptyDescription": "Switch to debug view to inspect raw metadata and retrieval details."
+    }
+  },
   "errors": {
     "generic": "Sorry, something went wrong. Please try again.",
     "inferenceTimeout": "The AI response timed out. Please try again shortly.",

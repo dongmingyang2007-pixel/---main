@@ -47,6 +47,7 @@ class MemoryOut(BaseModel):
     subject_memory_id: str | None = None
     node_status: str | None = None
     canonical_key: str | None = None
+    lineage_key: str | None = None
     source_conversation_id: str | None
     parent_memory_id: str | None
     position_x: float | None
@@ -96,6 +97,8 @@ class MemoryFileCandidateOut(BaseModel):
 class MemoryDetailOut(MemoryOut):
     edges: list[MemoryEdgeOut] = []
     files: list[MemoryFileOut] = []
+    lineage_nodes: list[MemoryOut] = []
+    lineage_edges: list[MemoryEdgeOut] = []
 
 
 class MemoryGraphOut(BaseModel):
@@ -157,3 +160,9 @@ class SubgraphRequest(BaseModel):
 class SubgraphOut(BaseModel):
     nodes: list[MemoryOut] = Field(default_factory=list)
     edges: list[MemoryEdgeOut] = Field(default_factory=list)
+
+
+class MemorySupersedeRequest(BaseModel):
+    content: str
+    category: str | None = None
+    reason: str | None = None

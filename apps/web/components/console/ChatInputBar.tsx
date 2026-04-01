@@ -20,9 +20,7 @@ export interface ChatInputBarProps {
   searchAvailable: boolean;
   autoReadEnabled: boolean;
   onAutoReadToggle: () => void;
-  /** Streaming dictation text that should replace the current dictated draft. */
   liveExternalInputText?: string | null;
-  /** Whether a streaming dictation session is active. */
   isLiveExternalInputActive?: boolean;
 }
 
@@ -42,11 +40,14 @@ export function ChatInputBar({
   const [searchState, setSearchState] = useState<"auto" | "on" | "off">("auto");
   const [thinkState, setThinkState] = useState<"auto" | "on" | "off">("auto");
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [imageMenuOpen, setImageMenuOpen] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageUploadRef = useRef<HTMLInputElement>(null);
   const imageCaptureRef = useRef<HTMLInputElement>(null);
   const liveExternalBaseRef = useRef<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const effectiveSearchState = searchAvailable ? searchState : "auto";
 
   useEffect(() => {
@@ -67,18 +68,34 @@ export function ChatInputBar({
     textareaRef.current?.focus();
   }, [isLiveExternalInputActive, liveExternalInputText]);
 
+  useEffect(() => {
+    if (!menuOpen) {
+      setImageMenuOpen(false);
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+        setImageMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [menuOpen]);
+
   const handleInput = useCallback(() => {
     const el = textareaRef.current;
-    if (!el) return;
+    if (!el) {
+      return;
+    }
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, []);
 
   const handleImageFileSelected = useCallback((file: File | null) => {
-    if (!file) {
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
+    if (!file || !file.type.startsWith("image/")) {
       return;
     }
     setPendingImageFile(file);
@@ -117,6 +134,8 @@ export function ChatInputBar({
 
     setInput("");
     setPendingImageFile(null);
+    setMenuOpen(false);
+    setImageMenuOpen(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -132,11 +151,60 @@ export function ChatInputBar({
     thinkState,
   ]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       handleSubmit();
     }
+  };
+
+  const activeTools = [
+    isStandardMode && autoReadEnabled
+      ? {
+          key: "auto-read",
+          label: t("activeTool.autoRead"),
+          onRemove: onAutoReadToggle,
+        }
+      : null,
+    searchAvailable && effectiveSearchState === "on"
+      ? {
+          key: "search",
+          label: t("activeTool.search"),
+          onRemove: () => setSearchState("auto"),
+        }
+      : null,
+    thinkState === "on"
+      ? {
+          key: "think",
+          label: t("activeTool.think"),
+          onRemove: () => setThinkState("auto"),
+        }
+      : null,
+    isStandardMode && pendingImageFile
+      ? {
+          key: "image",
+          label: t("activeTool.image"),
+          onRemove: clearPendingImage,
+        }
+      : null,
+  ].filter(
+    (
+      item,
+    ): item is {
+      key: string;
+      label: string;
+      onRemove: () => void;
+    } => item !== null,
+  );
+
+  const stateLabel = (state: "auto" | "on" | "off") => {
+    if (state === "on") {
+      return t("toolState.on");
+    }
+    if (state === "off") {
+      return t("toolState.off");
+    }
+    return t("toolState.auto");
   };
 
   return (
@@ -168,13 +236,29 @@ export function ChatInputBar({
       />
       <div className="chat-input-bar">
         <div className="chat-input-shell">
+          {activeTools.length ? (
+            <div className="chat-active-tools" aria-label={t("toolsLabel")}>
+              {activeTools.map((tool) => (
+                <button
+                  key={tool.key}
+                  type="button"
+                  className="chat-active-tool"
+                  onClick={tool.onRemove}
+                >
+                  <span>{tool.label}</span>
+                  <span className="chat-active-tool-dismiss">×</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           <div className="chat-input-container">
             <textarea
               ref={textareaRef}
               className="chat-input-textarea"
               value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
+              onChange={(event) => {
+                setInput(event.target.value);
                 handleInput();
               }}
               onKeyDown={handleKeyDown}
@@ -183,6 +267,7 @@ export function ChatInputBar({
               rows={1}
               disabled={isTyping || disabled || isLiveExternalInputActive}
             />
+
             {isStandardMode && pendingImageFile ? (
               <div className="chat-attachment-chip">
                 <span className="chat-attachment-name">
@@ -197,124 +282,129 @@ export function ChatInputBar({
                 </button>
               </div>
             ) : null}
+
             <div className="chat-input-toolbar">
-              <div className="chat-input-toolbar-group chat-input-toolbar-group--utilities">
-                {isStandardMode ? (
-                  <button
-                    type="button"
-                    className="chat-tool-chip"
-                    data-state={autoReadEnabled ? "on" : "auto"}
-                    aria-pressed={autoReadEnabled}
-                    onClick={onAutoReadToggle}
-                  >
-                    <svg
-                      width={12}
-                      height={12}
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    </svg>
-                    {t("voiceAutoRead")}
-                  </button>
-                ) : null}
-                {isStandardMode ? (
-                  <button
-                    type="button"
-                    className="chat-tool-chip"
-                    onClick={() => imageUploadRef.current?.click()}
-                    disabled={isTyping || disabled || isLiveExternalInputActive}
-                  >
-                    <svg
-                      width={12}
-                      height={12}
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x={3} y={3} width={18} height={18} rx={2} ry={2} />
-                      <circle cx={8.5} cy={8.5} r={1.5} />
-                      <path d="M21 15l-5-5L5 21" />
-                    </svg>
-                    {t("imageUpload")}
-                  </button>
-                ) : null}
-                {isStandardMode ? (
-                  <button
-                    type="button"
-                    className="chat-tool-chip"
-                    onClick={() => imageCaptureRef.current?.click()}
-                    disabled={isTyping || disabled || isLiveExternalInputActive}
-                  >
-                    <svg
-                      width={12}
-                      height={12}
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                      <circle cx={12} cy={13} r={4} />
-                    </svg>
-                    {t("imageCapture")}
-                  </button>
-                ) : null}
-                {searchAvailable ? (
-                  <button
-                    type="button"
-                    className="chat-tool-chip"
-                    data-state={effectiveSearchState}
-                    aria-pressed={effectiveSearchState === "on"}
-                    onClick={() => setSearchState((s) => cycleState(s))}
-                  >
-                    <svg
-                      width={12}
-                      height={12}
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                    >
-                      <circle cx={11} cy={11} r={8} />
-                      <line x1={21} y1={21} x2={16.65} y2={16.65} />
-                    </svg>
-                    {t("tool.search")}
-                  </button>
-                ) : null}
+              <div
+                className="chat-input-toolbar-group chat-input-toolbar-group--utilities"
+                ref={menuRef}
+              >
                 <button
                   type="button"
-                  className="chat-tool-chip"
-                  data-state={thinkState}
-                  aria-pressed={thinkState === "on"}
-                  onClick={() => setThinkState((s) => cycleState(s))}
+                  className={`chat-tools-trigger${menuOpen ? " is-open" : ""}`}
+                  onClick={() => setMenuOpen((current) => !current)}
+                  disabled={disabled || isLiveExternalInputActive}
+                  aria-expanded={menuOpen}
+                  aria-haspopup="menu"
                 >
                   <svg
-                    width={12}
-                    height={12}
+                    width={14}
+                    height={14}
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth={2}
                     strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7.5V19h6v-2.5c2-2 4-4.5 4-7.5a7 7 0 0 0-7-7z" />
-                    <line x1={9} y1={22} x2={15} y2={22} />
+                    <path d="M12 3v18" />
+                    <path d="M3 12h18" />
                   </svg>
-                  {t("tool.think")}
+                  <span>{t("toolsLabel")}</span>
                 </button>
+
+                {menuOpen ? (
+                  <div className="chat-tools-menu" role="menu">
+                    {isStandardMode ? (
+                      <button
+                        type="button"
+                        className="chat-tools-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          onAutoReadToggle();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        <span>{t("voiceAutoRead")}</span>
+                        <span>
+                          {autoReadEnabled ? t("toolState.on") : t("toolState.off")}
+                        </span>
+                      </button>
+                    ) : null}
+
+                    {isStandardMode ? (
+                      <div className="chat-tools-menu-group">
+                        <button
+                          type="button"
+                          className="chat-tools-menu-item"
+                          role="menuitem"
+                          onClick={() => setImageMenuOpen((current) => !current)}
+                          disabled={
+                            isTyping || disabled || isLiveExternalInputActive
+                          }
+                        >
+                          <span>{t("tool.addImage")}</span>
+                          <span>{imageMenuOpen ? "−" : "+"}</span>
+                        </button>
+                        {imageMenuOpen ? (
+                          <div className="chat-tools-submenu">
+                            <button
+                              type="button"
+                              className="chat-tools-menu-item is-subitem"
+                              role="menuitem"
+                              onClick={() => {
+                                imageUploadRef.current?.click();
+                                setMenuOpen(false);
+                                setImageMenuOpen(false);
+                              }}
+                            >
+                              <span>{t("imageUpload")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="chat-tools-menu-item is-subitem"
+                              role="menuitem"
+                              onClick={() => {
+                                imageCaptureRef.current?.click();
+                                setMenuOpen(false);
+                                setImageMenuOpen(false);
+                              }}
+                            >
+                              <span>{t("imageCapture")}</span>
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {searchAvailable ? (
+                      <button
+                        type="button"
+                        className="chat-tools-menu-item"
+                        role="menuitem"
+                        onClick={() =>
+                          setSearchState((current) => cycleState(current))
+                        }
+                      >
+                        <span>{t("tool.searchExpanded")}</span>
+                        <span>{stateLabel(effectiveSearchState)}</span>
+                      </button>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      className="chat-tools-menu-item"
+                      role="menuitem"
+                      onClick={() =>
+                        setThinkState((current) => cycleState(current))
+                      }
+                    >
+                      <span>{t("tool.thinkExpanded")}</span>
+                      <span>{stateLabel(thinkState)}</span>
+                    </button>
+                  </div>
+                ) : null}
               </div>
+
               <div className="chat-input-toolbar-group chat-input-toolbar-group--send">
                 <button
                   type="button"

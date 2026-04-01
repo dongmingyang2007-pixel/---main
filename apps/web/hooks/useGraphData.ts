@@ -23,6 +23,7 @@ export interface MemoryMetadataJson extends Record<string, unknown> {
   subject_memory_id?: string | null;
   node_status?: string;
   canonical_key?: string;
+  lineage_key?: string;
   concept_source?: string;
   parent_binding?: "auto" | "manual" | string;
   manual_parent_id?: string | null;
@@ -62,6 +63,7 @@ export interface MemoryNode {
   subject_memory_id?: string | null;
   node_status?: string | null;
   canonical_key?: string | null;
+  lineage_key?: string | null;
   source_conversation_id: string | null;
   parent_memory_id: string | null;
   position_x: number | null;
@@ -323,7 +325,18 @@ export interface MemoryEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center" | "parent" | "prerequisite" | "evidence";
+  edge_type:
+    | "auto"
+    | "manual"
+    | "related"
+    | "summary"
+    | "file"
+    | "center"
+    | "parent"
+    | "prerequisite"
+    | "evidence"
+    | "supersedes"
+    | "conflict";
   strength: number;
   created_at: string;
   // D3 fields
@@ -348,7 +361,12 @@ interface GraphData {
 function augmentGraphDataWithCategoryBranches(raw: GraphData): GraphData {
   return {
     nodes: (Array.isArray(raw.nodes) ? raw.nodes : [])
-      .filter((node) => !isSyntheticGraphNode(node)),
+      .filter(
+        (node) =>
+          !isSyntheticGraphNode(node) &&
+          node.node_status !== "superseded" &&
+          node.node_status !== "archived",
+      ),
     edges: (Array.isArray(raw.edges) ? raw.edges : []).filter((edge) => !edge.id.startsWith("graph-category:")),
   };
 }
@@ -391,6 +409,10 @@ function normalizeStreamNode(
       node.canonical_key !== undefined
         ? node.canonical_key
         : (previous?.canonical_key ?? null),
+    lineage_key:
+      node.lineage_key !== undefined
+        ? node.lineage_key
+        : (previous?.lineage_key ?? null),
     source_conversation_id:
       node.source_conversation_id !== undefined
         ? node.source_conversation_id
@@ -410,6 +432,20 @@ function normalizeStreamNode(
     created_at: node.created_at || previous?.created_at || now,
     updated_at: node.updated_at || previous?.updated_at || node.created_at || now,
   };
+}
+
+export function getMemoryLineageKey(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): string | null {
+  const metadata = getMemoryMetadata(node);
+  if (node && typeof node === "object" && "lineage_key" in node) {
+    const value = node.lineage_key;
+    if (typeof value === "string" && value) {
+      return value;
+    }
+  }
+  const value = metadata.lineage_key;
+  return typeof value === "string" && value ? value : null;
 }
 
 interface UseGraphDataOptions {
@@ -587,7 +623,27 @@ export function useGraphData(projectId: string, options: UseGraphDataOptions = {
   };
 
   const updateMemory = async (id: string, updates: Partial<MemoryNode>) => {
-    await apiPatch<MemoryNode>(`/api/v1/memory/${id}`, updates);
+    const currentNode = data.nodes.find((node) => node.id === id) || null;
+    const contentChanged =
+      typeof updates.content === "string" && currentNode && updates.content !== currentNode.content;
+    const categoryChanged =
+      typeof updates.category === "string" && currentNode && updates.category !== currentNode.category;
+    const shouldSupersede =
+      currentNode !== null &&
+      currentNode.type === "permanent" &&
+      currentNode.node_type === "fact" &&
+      currentNode.node_status !== "superseded" &&
+      (contentChanged || categoryChanged);
+
+    if (shouldSupersede && currentNode) {
+      await apiPost<MemoryNode>(`/api/v1/memory/${id}/supersede`, {
+        content: typeof updates.content === "string" ? updates.content : currentNode.content,
+        category: typeof updates.category === "string" ? updates.category : currentNode.category,
+        reason: "manual_edit",
+      });
+    } else {
+      await apiPatch<MemoryNode>(`/api/v1/memory/${id}`, updates);
+    }
     await fetchGraph();
   };
 

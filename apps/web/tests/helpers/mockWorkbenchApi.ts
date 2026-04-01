@@ -1235,6 +1235,82 @@ export async function installWorkbenchApiMock(
       return;
     }
 
+    const memoryDetailMatch = pathname.match(/^\/api\/v1\/memory\/([^/]+)$/);
+    if (memoryDetailMatch && method === "GET") {
+      const memoryId = memoryDetailMatch[1];
+      const node = Object.values(db.memoryNodesByProjectId)
+        .flat()
+        .find((item) => item.id === memoryId);
+      if (!node) {
+        await fulfillJson(route, { error: { message: "memory not found" } }, 404);
+        return;
+      }
+      await fulfillJson(route, node);
+      return;
+    }
+
+    if (memoryDetailMatch && method === "PATCH") {
+      const memoryId = memoryDetailMatch[1];
+      const node = Object.values(db.memoryNodesByProjectId)
+        .flat()
+        .find((item) => item.id === memoryId);
+      if (!node) {
+        await fulfillJson(route, { error: { message: "memory not found" } }, 404);
+        return;
+      }
+      const body = readJsonBody<{ content?: string; category?: string }>(route);
+      if (typeof body.content === "string") {
+        node.content = body.content;
+      }
+      if (typeof body.category === "string") {
+        node.category = body.category;
+      }
+      node.updated_at = nowIso();
+      await fulfillJson(route, node);
+      return;
+    }
+
+    if (memoryDetailMatch && method === "DELETE") {
+      const memoryId = memoryDetailMatch[1];
+      let removed = false;
+      for (const [projectId, nodes] of Object.entries(db.memoryNodesByProjectId)) {
+        const nextNodes = nodes.filter((item) => item.id !== memoryId);
+        if (nextNodes.length !== nodes.length) {
+          db.memoryNodesByProjectId[projectId] = nextNodes;
+          removed = true;
+        }
+      }
+      if (!removed) {
+        await fulfillJson(route, { error: { message: "memory not found" } }, 404);
+        return;
+      }
+      await route.fulfill({
+        status: 204,
+        headers: {
+          "access-control-allow-origin": route.request().headers().origin || COOKIE_ORIGINS[0] || APP_ORIGIN,
+          "access-control-allow-credentials": "true",
+        },
+        body: "",
+      });
+      return;
+    }
+
+    const memoryPromoteMatch = pathname.match(/^\/api\/v1\/memory\/([^/]+)\/promote$/);
+    if (memoryPromoteMatch && method === "POST") {
+      const memoryId = memoryPromoteMatch[1];
+      const node = Object.values(db.memoryNodesByProjectId)
+        .flat()
+        .find((item) => item.id === memoryId);
+      if (!node) {
+        await fulfillJson(route, { error: { message: "memory not found" } }, 404);
+        return;
+      }
+      node.type = "permanent";
+      node.updated_at = nowIso();
+      await fulfillJson(route, node);
+      return;
+    }
+
     const projectStreamMatch = pathname.match(/^\/api\/v1\/memory\/([^/]+)\/stream$/);
     if (projectStreamMatch && method === "GET") {
       await route.fulfill({

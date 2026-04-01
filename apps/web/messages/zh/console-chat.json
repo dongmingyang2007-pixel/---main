@@ -25,9 +25,12 @@
   "imageClear": "清除图片",
   "imageDefaultPrompt": "请描述这张图片",
   "mode.standard": "普通对话",
-  "mode.omni": "Omni 实时",
+  "mode.omni": "实时语音",
   "mode.synthetic": "合成实时",
   "mode.default": "默认",
+  "mode.helper.standard": "文本优先，适合稳定问答",
+  "mode.helper.omni": "端到端实时语音，适合双工通话",
+  "mode.helper.synthetic": "识别 + 推理 + 播报，适合可控语音交互",
   "micPermissionDenied": "麦克风权限被拒绝",
   "realtimeEntry": "实时对话",
   "realtimeRetry": "重试对话",
@@ -61,6 +64,17 @@
   "dateGroup.earlier": "更早",
   "tool.search": "搜索",
   "tool.think": "深度思考",
+  "tool.searchExpanded": "联网搜索",
+  "tool.thinkExpanded": "深入分析",
+  "tool.addImage": "添加图片",
+  "toolsLabel": "工具",
+  "toolState.auto": "自动",
+  "toolState.on": "开启",
+  "toolState.off": "关闭",
+  "activeTool.autoRead": "自动朗读",
+  "activeTool.search": "联网搜索",
+  "activeTool.think": "深入分析",
+  "activeTool.image": "已附图片",
   "toolbar.messages": "{count} 条消息",
   "stopGenerating": "停止生成",
   "reasoningLabel": "思考过程",
@@ -126,6 +140,86 @@
   "calibrating": "正在校准麦克风...",
   "drawerOpen": "打开侧边栏",
   "noPreview": "暂无消息",
+  "inspector": {
+    "meta": {
+      "sources": "引用 {count} 个来源",
+      "profile": "用了你的长期档案",
+      "memoryOnly": "参考了 {memoryCount} 条记忆",
+      "fullRag": "参考了 {memoryCount} 条记忆和 {materialCount} 份资料",
+      "memoryWrite": "写入了 {count} 条记忆",
+      "thinking": "查看思路"
+    },
+    "tabs": {
+      "context": "来源与上下文",
+      "memory": "记忆写入",
+      "thinking": "思路原文",
+      "debug": "调试"
+    },
+    "actions": {
+      "debugMode": "调试视图",
+      "userMode": "用户视图",
+      "close": "关闭详情"
+    },
+    "empty": {
+      "title": "还没有可查看的详情",
+      "description": "点开消息下方的来源、上下文、记忆或思路标签，就会在这里展开。"
+    },
+    "context": {
+      "title": "来源与上下文",
+      "description": "查看这一轮回答用到的来源、记忆和资料片段。",
+      "sources": "网页来源",
+      "profile": "一贯信息",
+      "recent": "最近对话",
+      "knowledge": "资料片段",
+      "files": "关联文件",
+      "debug": "调试分数",
+      "emptyTitle": "这轮没有额外上下文",
+      "emptyDescription": "当前回答没有引用来源，也没有展示可检查的检索片段。"
+    },
+    "memory": {
+      "title": "记忆写入",
+      "description": "查看这轮抽取出的记忆，并按需编辑、删除或升为长期。",
+      "badge": {
+        "longTerm": "长期档案",
+        "temporary": "本轮记住",
+        "merged": "已合并",
+        "notWritten": "未写入"
+      },
+      "expand": "展开",
+      "collapse": "收起",
+      "noReason": "当前没有额外写入说明。",
+      "loading": "正在载入记忆详情…",
+      "save": "保存",
+      "cancel": "取消",
+      "edit": "编辑内容",
+      "delete": "删除",
+      "promote": "升为长期",
+      "emptyTitle": "这轮没有写入记忆",
+      "emptyDescription": "当回答生成了可落地的记忆写入项时，会在这里集中管理。",
+      "actionFailed": "记忆操作失败，请稍后重试。"
+    },
+    "thinking": {
+      "title": "思路原文",
+      "description": "查看模型的原始思路内容。",
+      "note": "这是模型思路原文，仅供查看，不代表最终回答正文。",
+      "emptyTitle": "这轮没有思路内容",
+      "emptyDescription": "当前回答没有返回可查看的 reasoning 原文。"
+    },
+    "debug": {
+      "title": "调试信息",
+      "description": "查看原始 metadata、检索统计和调试字段。",
+      "strategy": "检索策略",
+      "contextLevel": "上下文等级",
+      "decisionSource": "决策来源",
+      "confidence": "置信度",
+      "sources": "来源数",
+      "memories": "记忆数",
+      "knowledge": "资料片段数",
+      "files": "关联文件数",
+      "emptyTitle": "调试视图已关闭",
+      "emptyDescription": "切换到调试视图后，这里会显示原始 metadata 和检索细节。"
+    }
+  },
   "errors": {
     "generic": "抱歉，刚才出错了，请重试。",
     "inferenceTimeout": "AI 回复超时，请稍后重试。",

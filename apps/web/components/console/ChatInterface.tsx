@@ -3,7 +3,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
 
-import { apiGet, apiPost, apiPostFormData, isApiRequestError } from "@/lib/api";
+import {
+  apiDelete,
+  apiGet,
+  apiPatch,
+  apiPost,
+  apiPostFormData,
+  isApiRequestError,
+} from "@/lib/api";
 import { apiStream } from "@/lib/api-stream";
 import { getApiHttpBaseUrl } from "@/lib/env";
 import type { PersistedRealtimeTurnPayload } from "@/hooks/useRealtimeVoice";
@@ -13,10 +20,17 @@ import { ChatInputBar } from "./ChatInputBar";
 import { ChatModePanel } from "./ChatModePanel";
 import { StandardVoiceControls } from "./StandardVoiceControls";
 import {
+  ConversationInspector,
+  type InspectorMemoryRecord,
+} from "./chat/ConversationInspector";
+import { getMessageInspectorOverrideKey } from "./chat/chat-view-models";
+import {
   type ChatMode,
   type Message,
   type ApiMessage,
+  type InspectorState,
   type ImageMessageResponse,
+  type MessageInspectorOverride,
   type ProjectChatSettings,
   type PipelineConfigItem,
   type PipelineResponse,
@@ -46,6 +60,45 @@ interface ChatInterfaceProps {
   }) => void;
 }
 
+function normalizeMemoryRecord(
+  value: unknown,
+): InspectorMemoryRecord | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const id =
+    typeof candidate.id === "string" && candidate.id.trim()
+      ? candidate.id.trim()
+      : "";
+  const content =
+    typeof candidate.content === "string" ? candidate.content.trim() : "";
+  const category =
+    typeof candidate.category === "string" ? candidate.category.trim() : "";
+  const type =
+    candidate.type === "temporary" ? "temporary" : "permanent";
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    content,
+    category,
+    type,
+    metadata_json:
+      candidate.metadata_json && typeof candidate.metadata_json === "object"
+        ? (candidate.metadata_json as Record<string, unknown>)
+        : {},
+    created_at:
+      typeof candidate.created_at === "string" ? candidate.created_at : undefined,
+    updated_at:
+      typeof candidate.updated_at === "string" ? candidate.updated_at : undefined,
+  };
+}
+
 export function ChatInterface({
   conversationId,
   projectId,
@@ -72,6 +125,23 @@ export function ChatInterface({
   const [liveDictationText, setLiveDictationText] = useState("");
   const [isLiveDictating, setIsLiveDictating] = useState(false);
   const [isStreamingActive, setIsStreamingActive] = useState(false);
+  const [uiMode, setUiMode] = useState<"user" | "debug">("user");
+  const [inspectorState, setInspectorState] = useState<InspectorState>({
+    open: false,
+    tab: "context",
+    messageId: null,
+    section: null,
+  });
+  const [messageInspectorOverrides, setMessageInspectorOverrides] = useState<
+    Record<string, MessageInspectorOverride>
+  >({});
+  const [memoryDetails, setMemoryDetails] = useState<
+    Record<string, InspectorMemoryRecord>
+  >({});
+  const [memoryStatuses, setMemoryStatuses] = useState<
+    Record<string, "idle" | "loading" | "saving" | "deleting" | "promoting">
+  >({});
+  const [viewportWidth, setViewportWidth] = useState(1440);
   const [pendingAutoRead, setPendingAutoRead] = useState<{
     messageId: string;
     audioBase64?: string | null;
@@ -136,6 +206,20 @@ export function ChatInterface({
   }, [messages]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateViewportWidth = () => {
+      setViewportWidth(window.innerWidth);
+    };
+
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  useEffect(() => {
     const pendingEntries = Object.entries(pendingAssistantMetadataRef.current);
     if (!pendingEntries.length || !messages.length) {
       return;
@@ -162,6 +246,16 @@ export function ChatInterface({
     invalidateActiveRequest();
     liveTurnIdsRef.current = { userId: null, assistantId: null };
     pendingRealtimeTurnPersistenceRef.current = [];
+    setInspectorState({
+      open: false,
+      tab: "context",
+      messageId: null,
+      section: null,
+    });
+    setUiMode("user");
+    setMessageInspectorOverrides({});
+    setMemoryDetails({});
+    setMemoryStatuses({});
   }, [conversationId, invalidateActiveRequest, projectId]);
 
   useEffect(() => {
@@ -420,6 +514,197 @@ export function ChatInterface({
       clearTimeout(timeoutId);
     };
   }, [conversationId, messages, syncConversationMessages]);
+
+  const updateMemoryStatus = useCallback(
+    (
+      memoryId: string,
+      status: "idle" | "loading" | "saving" | "deleting" | "promoting",
+    ) => {
+      setMemoryStatuses((prev) => ({
+        ...prev,
+        [memoryId]: status,
+      }));
+    },
+    [],
+  );
+
+  const applyInspectorOverride = useCallback(
+    (
+      messageId: string,
+      memoryId: string,
+      patch: Partial<MessageInspectorOverride>,
+    ) => {
+      const key = getMessageInspectorOverrideKey(messageId, memoryId);
+      setMessageInspectorOverrides((prev) => ({
+        ...prev,
+        [key]: {
+          ...(prev[key] ?? {}),
+          ...patch,
+          targetMemoryId: memoryId,
+        },
+      }));
+    },
+    [],
+  );
+
+  const ensureMemoryDetail = useCallback(
+    async (memoryId: string) => {
+      if (!memoryId || memoryDetails[memoryId] || memoryStatuses[memoryId] === "loading") {
+        return;
+      }
+
+      updateMemoryStatus(memoryId, "loading");
+      try {
+        const response = await apiGet<InspectorMemoryRecord | { node?: unknown }>(
+          `/api/v1/memory/${memoryId}`,
+        );
+        const record =
+          normalizeMemoryRecord(response) ||
+          normalizeMemoryRecord((response as { node?: unknown }).node);
+        if (record) {
+          setMemoryDetails((prev) => ({
+            ...prev,
+            [memoryId]: record,
+          }));
+        }
+      } catch {
+        setVoiceNotice(t("inspector.memory.actionFailed"));
+      } finally {
+        updateMemoryStatus(memoryId, "idle");
+      }
+    },
+    [memoryDetails, memoryStatuses, t, updateMemoryStatus],
+  );
+
+  const handleUpdateMemory = useCallback(
+    async ({
+      messageId,
+      memoryId,
+      content,
+    }: {
+      messageId: string;
+      memoryId: string;
+      content: string;
+    }) => {
+      updateMemoryStatus(memoryId, "saving");
+      try {
+        const response = await apiPatch<InspectorMemoryRecord>(
+          `/api/v1/memory/${memoryId}`,
+          { content },
+        );
+        const record =
+          normalizeMemoryRecord(response) ?? {
+            id: memoryId,
+            content,
+            category: memoryDetails[memoryId]?.category || "",
+            type: memoryDetails[memoryId]?.type || "permanent",
+            metadata_json: memoryDetails[memoryId]?.metadata_json || {},
+          };
+        setMemoryDetails((prev) => ({
+          ...prev,
+          [memoryId]: record,
+        }));
+        applyInspectorOverride(messageId, memoryId, {
+          fact: record.content,
+        });
+      } catch {
+        setVoiceNotice(t("inspector.memory.actionFailed"));
+      } finally {
+        updateMemoryStatus(memoryId, "idle");
+      }
+    },
+    [applyInspectorOverride, memoryDetails, t, updateMemoryStatus],
+  );
+
+  const handleDeleteMemory = useCallback(
+    async ({
+      messageId,
+      memoryId,
+    }: {
+      messageId: string;
+      memoryId: string;
+    }) => {
+      updateMemoryStatus(memoryId, "deleting");
+      try {
+        await apiDelete(`/api/v1/memory/${memoryId}`);
+        applyInspectorOverride(messageId, memoryId, { hidden: true });
+        setMemoryDetails((prev) => {
+          if (!(memoryId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[memoryId];
+          return next;
+        });
+      } catch {
+        setVoiceNotice(t("inspector.memory.actionFailed"));
+      } finally {
+        updateMemoryStatus(memoryId, "idle");
+      }
+    },
+    [applyInspectorOverride, t, updateMemoryStatus],
+  );
+
+  const handlePromoteMemory = useCallback(
+    async ({
+      messageId,
+      memoryId,
+    }: {
+      messageId: string;
+      memoryId: string;
+    }) => {
+      updateMemoryStatus(memoryId, "promoting");
+      try {
+        const response = await apiPost<InspectorMemoryRecord>(
+          `/api/v1/memory/${memoryId}/promote`,
+        );
+        const record =
+          normalizeMemoryRecord(response) ?? {
+            id: memoryId,
+            content: memoryDetails[memoryId]?.content || "",
+            category: memoryDetails[memoryId]?.category || "",
+            type: "permanent",
+            metadata_json: memoryDetails[memoryId]?.metadata_json || {},
+          };
+        setMemoryDetails((prev) => ({
+          ...prev,
+          [memoryId]: {
+            ...record,
+            type: "permanent",
+          },
+        }));
+        applyInspectorOverride(messageId, memoryId, {
+          memoryType: "permanent",
+          status: "permanent",
+        });
+      } catch {
+        setVoiceNotice(t("inspector.memory.actionFailed"));
+      } finally {
+        updateMemoryStatus(memoryId, "idle");
+      }
+    },
+    [applyInspectorOverride, memoryDetails, t, updateMemoryStatus],
+  );
+
+  const openInspector = useCallback(
+    ({
+      tab,
+      messageId,
+      section,
+    }: {
+      tab: InspectorState["tab"];
+      messageId: string;
+      section?: InspectorState["section"];
+    }) => {
+      setInspectorState({
+        open: true,
+        tab,
+        messageId,
+        section: section ?? null,
+      });
+    },
+    [],
+  );
 
   const handleSend = useCallback(
     async (
@@ -1180,6 +1465,36 @@ export function ChatInterface({
     setSessionModeOverride(null);
   }, [conversationId, projectId]);
 
+  useEffect(() => {
+    if (uiMode === "debug") {
+      return;
+    }
+    setInspectorState((current) =>
+      current.tab === "debug"
+        ? {
+            ...current,
+            tab: "context",
+            section: current.section === "raw" ? null : current.section,
+          }
+        : current,
+    );
+  }, [uiMode]);
+
+  useEffect(() => {
+    if (!inspectorState.messageId) {
+      return;
+    }
+    if (messages.some((message) => message.id === inspectorState.messageId)) {
+      return;
+    }
+    setInspectorState({
+      open: false,
+      tab: "context",
+      messageId: null,
+      section: null,
+    });
+  }, [inspectorState.messageId, messages]);
+
   const handleLiveDictationDraftChange = useCallback((text: string) => {
     setVoiceNotice(null);
     setLiveDictationText(text);
@@ -1275,6 +1590,12 @@ export function ChatInterface({
       : chatMode === "synthetic_realtime"
         ? t("mode.synthetic")
         : t("mode.standard");
+  const inspectorVariant =
+    viewportWidth >= 1360
+      ? "docked"
+      : viewportWidth >= 1024
+        ? "overlay"
+        : "sheet";
 
   return (
     <div className="chat-interface">
@@ -1307,7 +1628,9 @@ export function ChatInterface({
         </div>
       </header>
 
-      <div className="chat-interface-body">
+      <div
+        className={`chat-interface-body chat-interface-body--${inspectorVariant}${inspectorState.open ? " has-inspector" : ""}`}
+      >
         {loadingMessages && (
           <div className="chat-messages">
             <div className="chat-empty">...</div>
@@ -1322,9 +1645,41 @@ export function ChatInterface({
             isTyping={isTyping}
             conversationId={conversationId}
             noConversation={noConversation}
+            messageInspectorOverrides={messageInspectorOverrides}
+            onOpenInspector={openInspector}
             onError={setVoiceNotice}
           />
         )}
+
+        {!loadingMessages ? (
+          <ConversationInspector
+            variant={inspectorVariant}
+            inspectorState={inspectorState}
+            messages={messages}
+            overrides={messageInspectorOverrides}
+            uiMode={uiMode}
+            memoryDetails={memoryDetails}
+            memoryStatuses={memoryStatuses}
+            onClose={() =>
+              setInspectorState((current) => ({
+                ...current,
+                open: false,
+              }))
+            }
+            onTabChange={(tab, section) =>
+              setInspectorState((current) => ({
+                ...current,
+                tab,
+                section: section ?? null,
+              }))
+            }
+            onUiModeChange={setUiMode}
+            onEnsureMemoryDetail={ensureMemoryDetail}
+            onUpdateMemory={handleUpdateMemory}
+            onDeleteMemory={handleDeleteMemory}
+            onPromoteMemory={handlePromoteMemory}
+          />
+        ) : null}
       </div>
 
       {isStreamingActive && (

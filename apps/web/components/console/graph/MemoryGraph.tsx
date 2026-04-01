@@ -1481,6 +1481,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const isSystemRelatedEdge = link.edge_type === "related";
       const isPrerequisiteEdge = link.edge_type === "prerequisite";
       const isEvidenceEdge = link.edge_type === "evidence";
+      const isVersionEdge = link.edge_type === "supersedes";
+      const isConflictEdge = link.edge_type === "conflict";
       const isLateralEdge = isManualRelatedEdge || isSystemRelatedEdge;
       const isStructuralEdge = isStructuralTreeEdgePair(
         simNodeById,
@@ -1505,6 +1507,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
               ? isOrbitMode ? 1.95 : 1.7
               : isPrerequisiteEdge
                 ? isOrbitMode ? 1.7 : 1.45
+              : isConflictEdge
+                ? isOrbitMode ? 1.55 : 1.35
+              : isVersionEdge
+                ? isOrbitMode ? 1.4 : 1.2
               : isSystemRelatedEdge
                 ? isOrbitMode ? 1.65 : 1.4
                 : isSummaryEdge
@@ -1554,6 +1560,18 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([8, 5]);
         ctx.strokeStyle = isOrbitMode ? "rgba(37, 99, 235, 0.72)" : "rgba(37, 99, 235, 0.58)";
+      } else if (isConflictEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([4, 6]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(196, 78, 54, 0.82)" : "rgba(184, 65, 41, 0.66)";
+      } else if (isVersionEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([2, 8]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(130, 120, 108, 0.72)" : "rgba(120, 109, 97, 0.56)";
       } else if (isManualRelatedEdge) {
         ctx.beginPath();
         ctx.moveTo(src.x, src.y);
@@ -1902,6 +1920,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             if (link.edge_type === "prerequisite") {
               return isOrbitMode ? 154 : 138;
             }
+            if (link.edge_type === "conflict") {
+              return isOrbitMode ? 136 : 124;
+            }
+            if (link.edge_type === "supersedes") {
+              return isOrbitMode ? 128 : 118;
+            }
             if (link.edge_type === "related") {
               return isOrbitMode ? 148 : 134;
             }
@@ -1936,6 +1960,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             }
             if (link.edge_type === "prerequisite") {
               return Math.max(0.12, link.strength * (isOrbitMode ? 0.18 : 0.21));
+            }
+            if (link.edge_type === "conflict") {
+              return Math.max(0.14, link.strength * (isOrbitMode ? 0.2 : 0.24));
+            }
+            if (link.edge_type === "supersedes") {
+              return Math.max(0.16, link.strength * (isOrbitMode ? 0.22 : 0.26));
             }
             if (link.edge_type === "related") {
               return Math.max(isOrbitMode ? 0.1 : 0.12, link.strength * (isOrbitMode ? 0.16 : 0.18));

@@ -1,6 +1,6 @@
 {
   "modelGlbPath": "output/debug_v5/qihang_product_pearl_phase2.glb",
-  "modelGlbSha256": "460509beee0ebc6c39e7bf407c3078a88db2ac6043b0372258556ef7a247a454",
+  "modelGlbSha256": "67ee630a32025b506f0fd9f33d045e3c3a18e060e9d7b705c3823e053d23c39b",
   "asset": {
     "generator": "Khronos glTF Blender I/O v5.0.21",
     "version": "2.0"
@@ -10,10 +10,10 @@
     "nodes": 85,
     "meshes": 38,
     "materials": 21,
-    "bufferViews": 157,
-    "accessors": 157,
+    "bufferViews": 163,
+    "accessors": 163,
     "animations": 0,
-    "binBytes": 4150684
+    "binBytes": 4673404
   },
   "sceneRoots": [
     "QIHANG_Product"
@@ -486,7 +486,7 @@
   },
   "sourceInputPath": "output/debug_v4/qihang_product_pearl_phase3.glb",
   "sourceInputSha256": "fd274c48530a893621ae236262aa8a3a31ff7e00bd1ed8a6014eb834dcb1d900",
-  "outputSha256": "460509beee0ebc6c39e7bf407c3078a88db2ac6043b0372258556ef7a247a454",
+  "outputSha256": "67ee630a32025b506f0fd9f33d045e3c3a18e060e9d7b705c3823e053d23c39b",
   "phase": 2,
   "phaseName": "open_front_window_and_rebuild_sidewalls",
   "phaseLogs": [
@@ -589,7 +589,7 @@
       "diagnosticSheetPath": "output/debug_v5/qihang_product_pearl_phase2_six_views.png",
       "rebuildChangeLog": {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_and_repair_front_center_seam",
+        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_repair_front_center_seam_remove_center_spur_node_loft_positive_x_cap_and_align_center_cap_strip",
         "blockerRemovedTriangleCount": 86,
         "afterBlockerTriangleCount": 2474,
         "frontFaceRemovedTriangleCount": 2,
@@ -599,7 +599,7 @@
         "slopedResidualRemovedTriangleCount": 20,
         "afterSlopedResidualTriangleCount": 2450,
         "fillPatchTriangleCount": 44,
-        "finalTriangleCount": 2424,
+        "finalTriangleCount": 2418,
         "boundaryVertexCountBeforeFill": 42,
         "boundaryEdgeCountAfterFill": 0,
         "blockerComponent": {
@@ -1278,16 +1278,18 @@
           }
         },
         "positiveXFrontCenterSeamRepair": {
-          "removedTriangleCount": 5,
+          "removedTriangleCount": 7,
           "removedTriangleIndices": [
             2380,
             2381,
             2382,
             2383,
-            2384
+            2384,
+            2385,
+            2386
           ],
-          "rebuiltTriangleCount": 7,
-          "holeLoopVertexCount": 7,
+          "rebuiltTriangleCount": 9,
+          "holeLoopVertexCount": 9,
           "boundaryEdgeCountAfterRepair": 0,
           "leftApexProductMm": [
             -2.0252,
@@ -1305,13 +1307,13 @@
             -17.0
           ],
           "rebuiltBboxMaxProductMm": [
-            4.2098,
-            -0.4554,
+            6.3021,
+            -0.455,
             -15.552
           ],
           "rebuiltBboxSizeProductMm": [
-            4.21,
-            0.4946,
+            6.3023,
+            0.495,
             1.448
           ],
           "region": {
@@ -1320,28 +1322,30 @@
               2381,
               2382,
               2383,
-              2384
+              2384,
+              2385,
+              2386
             ],
-            "triangleCount": 5,
+            "triangleCount": 7,
             "bboxMinProductMm": [
               -0.0002,
               -0.95,
               -17.0
             ],
             "bboxMaxProductMm": [
-              4.2098,
-              -0.4554,
+              6.3021,
+              -0.455,
               -15.552
             ],
             "bboxSizeProductMm": [
-              4.21,
-              0.4946,
+              6.3023,
+              0.495,
               1.448
             ],
             "selectionRangesProductMm": {
               "x": [
                 -0.1,
-                4.25
+                6.35
               ],
               "y": [
                 -1.1,
@@ -1352,6 +1356,126 @@
                 -15.5
               ]
             }
+          }
+        },
+        "frontCenterSpurRepair": {
+          "removedTriangleCount": 4,
+          "removedTriangleIndices": [
+            514,
+            2371,
+            2422,
+            2423
+          ],
+          "rebuiltTriangleCount": 2,
+          "holeLoopVertexCount": 4,
+          "boundaryEdgeCountAfterRepair": 0,
+          "spurVertexProductMm": [
+            0.2643,
+            -0.7904,
+            -16.29
+          ],
+          "rebuiltBboxMinProductMm": [
+            -2.0252,
+            -0.95,
+            -17.0
+          ],
+          "rebuiltBboxMaxProductMm": [
+            2.0252,
+            -0.4561,
+            -15.552
+          ],
+          "rebuiltBboxSizeProductMm": [
+            4.0504,
+            0.4939,
+            1.448
+          ]
+        },
+        "positiveXCapLoftRepair": {
+          "removedTriangleCount": 8,
+          "removedTriangleIndices": [
+            2413,
+            2414,
+            2415,
+            2416,
+            2417,
+            2418,
+            2419,
+            2421
+          ],
+          "rebuiltTriangleCount": 6,
+          "holeLoopVertexCount": 8,
+          "chainAPointCount": 4,
+          "chainBPointCount": 5,
+          "boundaryEdgeCountAfterRepair": 0,
+          "apexVertexProductMm": [
+            2.0252,
+            -0.4563,
+            -16.9958
+          ],
+          "rebuiltBboxMinProductMm": [
+            -0.0002,
+            -0.95,
+            -17.0
+          ],
+          "rebuiltBboxMaxProductMm": [
+            6.3021,
+            -0.455,
+            -15.552
+          ],
+          "rebuiltBboxSizeProductMm": [
+            6.3023,
+            0.495,
+            1.448
+          ]
+        },
+        "centerCapAlignmentRepair": {
+          "removedTriangleCount": 11,
+          "removedTriangleIndices": [
+            514,
+            2367,
+            2368,
+            2369,
+            2413,
+            2414,
+            2415,
+            2416,
+            2417,
+            2418,
+            2419
+          ],
+          "rebuiltTriangleCount": 9,
+          "holeLoopVertexCount": 11,
+          "chainAPointCount": 6,
+          "chainBPointCount": 5,
+          "boundaryEdgeCountAfterRepair": 0,
+          "rebuiltBboxMinProductMm": [
+            -4.2099,
+            -0.4563,
+            -17.0
+          ],
+          "rebuiltBboxMaxProductMm": [
+            6.3021,
+            -0.455,
+            -16.2
+          ],
+          "rebuiltBboxSizeProductMm": [
+            10.512,
+            0.0013,
+            0.8
+          ],
+          "selectionRangesProductMm": {
+            "x": [
+              -4.25,
+              6.35
+            ],
+            "y": [
+              -1.1,
+              -0.43
+            ],
+            "z": [
+              -17.1,
+              -15.45
+            ]
           }
         },
         "positiveXBackStripRebuild": {
@@ -1412,39 +1536,39 @@
           "components": [
             {
               "triangleIndices": [
+                1646,
                 1648,
-                1650,
+                1664,
                 1666,
-                1668,
+                1682,
                 1684,
-                1686,
+                1700,
                 1702,
-                1704,
+                1718,
                 1720,
-                1722,
+                1736,
                 1738,
-                1740,
+                1754,
                 1756,
-                1758,
+                1772,
                 1774,
-                1776,
+                1790,
                 1792,
-                1794,
+                1808,
                 1810,
-                1812,
+                1826,
                 1828,
-                1830,
+                1844,
                 1846,
-                1848,
+                1862,
                 1864,
-                1866,
+                1880,
                 1882,
-                1884,
+                1898,
                 1900,
-                1902,
+                1916,
                 1918,
-                1920,
-                1936
+                1934
               ],
               "triangleCount": 33,
               "bboxMinProductMm": [

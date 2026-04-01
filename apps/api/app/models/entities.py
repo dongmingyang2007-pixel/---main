@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text as sql_text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
@@ -277,6 +278,7 @@ class Memory(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
     )
     node_status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     canonical_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lineage_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
     position_x: Mapped[float | None] = mapped_column(Float, nullable=True)
     position_y: Mapped[float | None] = mapped_column(Float, nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -284,7 +286,14 @@ class Memory(Base, UUIDPrimaryKeyMixin, TimestampMixin, UpdatedAtMixin):
 
 class MemoryEdge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "memory_edges"
-    __table_args__ = (UniqueConstraint("source_memory_id", "target_memory_id", name="uq_memory_edges_src_tgt"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "source_memory_id",
+            "target_memory_id",
+            "edge_type",
+            name="uq_memory_edges_src_tgt_type",
+        ),
+    )
 
     source_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
     target_memory_id: Mapped[str] = mapped_column(ForeignKey("memories.id", ondelete="CASCADE"), nullable=False)
@@ -330,6 +339,26 @@ Index("idx_memories_project_type", Memory.project_id, Memory.type)
 Index("idx_memories_project_node_type", Memory.project_id, Memory.node_type)
 Index("idx_memories_project_subject", Memory.project_id, Memory.subject_memory_id)
 Index("idx_memories_project_canonical", Memory.project_id, Memory.subject_memory_id, Memory.canonical_key)
+Index(
+    "idx_memories_project_subject_status_type",
+    Memory.project_id,
+    Memory.subject_memory_id,
+    Memory.node_status,
+    Memory.node_type,
+)
+Index("idx_memories_project_lineage_status", Memory.project_id, Memory.lineage_key, Memory.node_status)
+Index(
+    "idx_memories_active_fact_subject",
+    Memory.project_id,
+    Memory.subject_memory_id,
+    postgresql_where=sql_text("node_type = 'fact' AND node_status = 'active'"),
+)
+Index(
+    "idx_memories_active_fact_lineage",
+    Memory.project_id,
+    Memory.lineage_key,
+    postgresql_where=sql_text("node_type = 'fact' AND node_status = 'active'"),
+)
 Index("idx_memories_source_conv", Memory.source_conversation_id)
 Index("idx_embeddings_ws_project", Embedding.workspace_id, Embedding.project_id)
 Index("idx_memory_views_project_type", MemoryView.project_id, MemoryView.view_type)

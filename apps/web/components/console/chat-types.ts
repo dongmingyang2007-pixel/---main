@@ -77,6 +77,7 @@ export interface Message {
   memory_extraction_status?: string | null;
   memory_extraction_attempts?: number | null;
   memory_extraction_error?: string | null;
+  metadataJson?: Record<string, unknown> | null;
   animateOnMount?: boolean;
   isStreaming?: boolean;
 }
@@ -86,12 +87,78 @@ export interface ApiMessage {
   role: "user" | "assistant";
   content: string;
   reasoning_content?: string | null;
-  metadata_json?: {
-    sources?: unknown;
-    retrieval_trace?: unknown;
-    [key: string]: unknown;
-  };
+  metadata_json?: Record<string, unknown> | null;
   created_at?: string;
+}
+
+export type InspectorTab =
+  | "context"
+  | "memory_write"
+  | "thinking"
+  | "debug";
+
+export type InspectorSection =
+  | "sources"
+  | "profile"
+  | "recent"
+  | "knowledge"
+  | "files"
+  | "raw"
+  | null;
+
+export interface InspectorState {
+  open: boolean;
+  tab: InspectorTab;
+  messageId: string | null;
+  section?: InspectorSection;
+}
+
+export interface MessageInspectorOverride {
+  targetMemoryId: string;
+  fact?: string;
+  hidden?: boolean;
+  status?: string | null;
+  memoryType?: "permanent" | "temporary" | null;
+}
+
+export interface RetrievalSummaryView {
+  contextLevel: RetrievalContextLevel | null;
+  memoryCount: number;
+  materialCount: number;
+  label: string | null;
+}
+
+export interface MemoryWriteSummaryItem {
+  id: string;
+  fact: string;
+  category: string;
+  importance: number;
+  triageAction: string | null;
+  triageReason: string | null;
+  status: string | null;
+  targetMemoryId: string | null;
+  memoryType: "permanent" | "temporary" | null;
+  badgeKey: "long_term" | "temporary" | "merged" | "not_written";
+  isActionable: boolean;
+}
+
+export interface MemoryWriteSummaryView {
+  count: number;
+  label: string | null;
+  items: MemoryWriteSummaryItem[];
+}
+
+export interface ThinkingSummaryView {
+  label: string | null;
+  content: string | null;
+}
+
+export interface ChatMetaRailItem {
+  key: "sources" | "context" | "memory_write" | "thinking";
+  label: string;
+  tab: InspectorTab;
+  section?: InspectorSection;
+  count?: number;
 }
 
 function normalizeExtractedFacts(value: unknown): ExtractedFact[] | undefined {
@@ -455,7 +522,7 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
 }
 
 export function toMessage(message: ApiMessage): Message {
-  const meta = message.metadata_json;
+  const meta = message.metadata_json ?? null;
   const extractedFacts = normalizeExtractedFacts(meta?.extracted_facts);
   const memoriesExtracted =
     typeof meta?.memories_extracted === "string" && meta.memories_extracted.trim()
@@ -487,6 +554,7 @@ export function toMessage(message: ApiMessage): Message {
     memory_extraction_status: memoryExtractionStatus,
     memory_extraction_attempts: memoryExtractionAttempts,
     memory_extraction_error: memoryExtractionError,
+    metadataJson: meta,
     animateOnMount: false,
     isStreaming: false,
   };
@@ -501,36 +569,44 @@ export function mergeAssistantMetadataPatch(
   }
 
   const candidate = metadata as Record<string, unknown>;
-  const extractedFacts = normalizeExtractedFacts(candidate.extracted_facts);
-  const sources = normalizeSearchSources(candidate.sources);
-  const retrievalTrace = normalizeRetrievalTrace(candidate.retrieval_trace);
+  const metadataJson = {
+    ...(message.metadataJson ?? {}),
+    ...candidate,
+  };
+  const extractedFacts = normalizeExtractedFacts(metadataJson.extracted_facts);
+  const sources = normalizeSearchSources(metadataJson.sources);
+  const retrievalTrace = normalizeRetrievalTrace(metadataJson.retrieval_trace);
   const memoriesExtracted =
-    typeof candidate.memories_extracted === "string" && candidate.memories_extracted.trim()
-      ? candidate.memories_extracted
+    typeof metadataJson.memories_extracted === "string" &&
+    metadataJson.memories_extracted.trim()
+      ? metadataJson.memories_extracted
       : undefined;
   const memoryExtractionStatus =
-    typeof candidate.memory_extraction_status === "string" && candidate.memory_extraction_status.trim()
-      ? candidate.memory_extraction_status.trim()
+    typeof metadataJson.memory_extraction_status === "string" &&
+    metadataJson.memory_extraction_status.trim()
+      ? metadataJson.memory_extraction_status.trim()
       : null;
   const memoryExtractionAttempts =
-    typeof candidate.memory_extraction_attempts === "number" &&
-    Number.isFinite(candidate.memory_extraction_attempts)
-      ? candidate.memory_extraction_attempts
+    typeof metadataJson.memory_extraction_attempts === "number" &&
+    Number.isFinite(metadataJson.memory_extraction_attempts)
+      ? metadataJson.memory_extraction_attempts
       : null;
   const memoryExtractionError =
-    typeof candidate.memory_extraction_error === "string" && candidate.memory_extraction_error.trim()
-      ? candidate.memory_extraction_error.trim()
+    typeof metadataJson.memory_extraction_error === "string" &&
+    metadataJson.memory_extraction_error.trim()
+      ? metadataJson.memory_extraction_error.trim()
       : null;
 
   return {
     ...message,
-    sources: sources.length ? sources : message.sources,
-    retrievalTrace: retrievalTrace ?? message.retrievalTrace,
-    extracted_facts: extractedFacts ?? message.extracted_facts,
-    memories_extracted: memoriesExtracted ?? message.memories_extracted,
-    memory_extraction_status: memoryExtractionStatus ?? message.memory_extraction_status,
-    memory_extraction_attempts: memoryExtractionAttempts ?? message.memory_extraction_attempts,
-    memory_extraction_error: memoryExtractionError ?? message.memory_extraction_error,
+    metadataJson,
+    sources,
+    retrievalTrace,
+    extracted_facts: extractedFacts,
+    memories_extracted: memoriesExtracted,
+    memory_extraction_status: memoryExtractionStatus,
+    memory_extraction_attempts: memoryExtractionAttempts,
+    memory_extraction_error: memoryExtractionError,
   };
 }
 

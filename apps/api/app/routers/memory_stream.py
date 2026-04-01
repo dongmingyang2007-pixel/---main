@@ -159,6 +159,7 @@ def _build_memory_stream_response(
                     "subject_memory_id": mem.subject_memory_id,
                     "node_status": mem.node_status,
                     "canonical_key": mem.canonical_key,
+                    "lineage_key": mem.lineage_key,
                     "source_conversation_id": mem.source_conversation_id,
                     "parent_memory_id": mem.parent_memory_id,
                     "position_x": mem.position_x,

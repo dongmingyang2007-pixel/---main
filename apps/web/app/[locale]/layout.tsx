@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { Providers } from "@/components/providers";
 import { routing } from "@/i18n/routing";
 import "@/styles/globals.css";
+import "@/styles/chat-workbench.css";
 
 const localFontVariables = {
   "--font-dm-sans": "\"DM Sans\", \"SF Pro Display\", \"PingFang SC\", \"Noto Sans SC\", -apple-system, BlinkMacSystemFont, sans-serif",

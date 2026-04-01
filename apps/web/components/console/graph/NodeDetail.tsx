@@ -9,6 +9,7 @@ import {
   getGraphNodeDisplayType,
   getMemoryCategoryLabel,
   getMemoryCategorySegments,
+  getMemoryLineageKey,
   getMemoryKind,
   getMemoryLastUsedAt,
   getMemoryLastUsedSource,
@@ -30,7 +31,18 @@ interface MemoryDetailEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center" | "parent" | "prerequisite" | "evidence";
+  edge_type:
+    | "auto"
+    | "manual"
+    | "related"
+    | "summary"
+    | "file"
+    | "center"
+    | "parent"
+    | "prerequisite"
+    | "evidence"
+    | "supersedes"
+    | "conflict";
   strength: number;
   created_at: string;
 }
@@ -47,6 +59,8 @@ interface MemoryDetailFile {
 interface MemoryDetailData extends MemoryNode {
   edges: MemoryDetailEdge[];
   files: MemoryDetailFile[];
+  lineage_nodes: MemoryNode[];
+  lineage_edges: MemoryDetailEdge[];
 }
 
 interface MemoryFileCandidate {
@@ -125,6 +139,8 @@ function formatEdgeTypeLabel(edgeType: MemoryDetailEdge["edge_type"], t: (key: s
     parent: t("graph.parentEdge"),
     prerequisite: t("graph.prerequisiteEdge"),
     evidence: t("graph.evidenceEdge"),
+    supersedes: t("graph.versionEdge"),
+    conflict: t("graph.conflictEdge"),
   };
   return labels[edgeType] || edgeType;
 }
@@ -309,6 +325,33 @@ export default function NodeDetail({
   const evidenceEdges = useMemo(
     () => connectedEdges.filter((edge) => edge.edge_type === "evidence"),
     [connectedEdges],
+  );
+  const lineageNodes = useMemo(() => detail?.lineage_nodes ?? [], [detail?.lineage_nodes]);
+  const lineageEdges = useMemo(() => detail?.lineage_edges ?? [], [detail?.lineage_edges]);
+  const currentLineageKey = useMemo(() => getMemoryLineageKey(node), [node]);
+  const versionChainNodes = useMemo(
+    () =>
+      lineageNodes.filter(
+        (candidate) =>
+          candidate.id !== node.id &&
+          getMemoryLineageKey(candidate) === currentLineageKey &&
+          candidate.node_status === "superseded",
+      ),
+    [currentLineageKey, lineageNodes, node.id],
+  );
+  const conflictNodes = useMemo(
+    () =>
+      lineageNodes.filter(
+        (candidate) =>
+          candidate.id !== node.id &&
+          getMemoryLineageKey(candidate) === currentLineageKey &&
+          candidate.node_status !== "superseded",
+      ),
+    [currentLineageKey, lineageNodes, node.id],
+  );
+  const hasLineageRelations = useMemo(
+    () => lineageNodes.length > 1 || lineageEdges.length > 0,
+    [lineageEdges.length, lineageNodes.length],
   );
 
   const nodeHeading = fileNode
@@ -569,6 +612,50 @@ export default function NodeDetail({
               >
                 {variant === "system" ? t("graph.disconnectAndIgnore") : t("graph.disconnect")}
               </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderLineageList = (
+    memories: MemoryNode[],
+    emptyLabel: string,
+    variant: "history" | "conflict",
+  ) => {
+    if (loadingDetail) {
+      return <div className="graph-detail-empty">{t("graph.loading")}</div>;
+    }
+    if (memories.length === 0) {
+      return <div className="graph-detail-empty">{emptyLabel}</div>;
+    }
+    return (
+      <div className="graph-detail-relation-list">
+        {memories.map((memory) => {
+          const focusableNode = resolveNodeById(memory.id);
+          return (
+            <div key={memory.id} className={`graph-detail-related-item is-${variant}`}>
+              <div className="graph-detail-related-copy">
+                {focusableNode ? (
+                  <button
+                    type="button"
+                    className="graph-detail-link-button"
+                    onClick={() => onFocusNode(focusableNode)}
+                  >
+                    {formatNodeLabel(memory)}
+                  </button>
+                ) : (
+                  <span>{formatNodeLabel(memory)}</span>
+                )}
+                <span className="graph-detail-related-meta">
+                  {memory.node_status === "superseded"
+                    ? t("graph.versionSuperseded")
+                    : variant === "conflict"
+                      ? t("graph.conflictEdge")
+                      : t("graph.versionEdge")}
+                </span>
+              </div>
             </div>
           );
         })}
@@ -990,6 +1077,20 @@ export default function NodeDetail({
                     <span className="graph-detail-section-title">{t("graph.relatedInfo")}</span>
                     <span className="graph-detail-section-note">{t("graph.relatedAutoHint")}</span>
                   </div>
+
+                  {currentLineageKey && hasLineageRelations ? (
+                    <>
+                      <div className="graph-detail-subsection">
+                        <span className="graph-detail-subsection-title">{t("graph.versionHistory")}</span>
+                        {renderLineageList(versionChainNodes, t("graph.noVersionHistory"), "history")}
+                      </div>
+
+                      <div className="graph-detail-subsection">
+                        <span className="graph-detail-subsection-title">{t("graph.conflictGroup")}</span>
+                        {renderLineageList(conflictNodes, t("graph.noConflictGroup"), "conflict")}
+                      </div>
+                    </>
+                  ) : null}
 
                   <div className="graph-detail-subsection">
                     <span className="graph-detail-subsection-title">{t("graph.prerequisites")}</span>

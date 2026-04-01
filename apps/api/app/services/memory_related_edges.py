@@ -10,6 +10,7 @@ from app.models import Memory, MemoryEdge
 from app.services.memory_metadata import (
     get_memory_category_segments,
     get_related_edge_exclusions,
+    is_active_memory,
     is_concept_memory,
     is_subject_memory,
     is_structural_only_memory,
@@ -206,7 +207,9 @@ def ensure_project_related_edges(
             .all()
         )
         if not is_assistant_root_memory(memory)
+        and is_active_memory(memory)
         and not is_subject_memory(memory)
+        and not is_concept_memory(memory)
         and not is_structural_only_memory(memory)
         and not is_summary_memory(memory)
         and memory.content.strip()
@@ -342,6 +345,7 @@ def ensure_project_prerequisite_edges(
             .all()
         )
         if not is_assistant_root_memory(memory)
+        and is_active_memory(memory)
         and is_concept_memory(memory)
         and memory.content.strip()
     ]

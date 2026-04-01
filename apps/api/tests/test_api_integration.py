@@ -54,6 +54,7 @@ import app.services.memory_graph_events as memory_graph_events_service
 import app.services.memory_file_context as memory_file_context_service
 import app.services.memory_graph_repair as memory_graph_repair_service
 import app.services.memory_category_tree as memory_category_tree_service
+import app.services.memory_context as memory_context_service
 import app.services.memory_metadata as memory_metadata_service
 import app.services.project_cleanup as project_cleanup_service
 import app.services.orchestrator as orchestrator_service
@@ -79,7 +80,7 @@ from app.models import (
     Workspace,
 )
 from app.services.model_catalog_seed import seed_model_catalog
-from app.services.memory_roots import ensure_project_assistant_root
+from app.services.memory_roots import ensure_project_assistant_root, ensure_project_user_subject
 from app.services import storage as storage_service
 from app.services.runtime_state import runtime_state
 import app.tasks.worker_tasks as worker_tasks
@@ -5344,15 +5345,33 @@ def test_extract_memories_persists_triage_results_for_frontend(monkeypatch) -> N
         assert isinstance(extracted_facts, list)
         assert extracted_facts[0]["fact"] == "用户是帝国理工大学学习物理本科的中国留学生"
         assert extracted_facts[0]["importance"] == 0.95
-        assert extracted_facts[0]["status"] == "merged"
+        assert extracted_facts[0]["status"] == "superseded"
         assert extracted_facts[0]["triage_action"] == "merge"
         assert extracted_facts[0]["triage_reason"] == "新事实是对同一身份信息的更完整表述"
-        assert extracted_facts[0]["target_memory_id"] == existing_memory_id
-        assert metadata["memories_extracted"] == "合并已有记忆 1 条"
+        successor_id = extracted_facts[0]["target_memory_id"]
+        assert successor_id != existing_memory_id
+        assert extracted_facts[0]["supersedes_memory_id"] == existing_memory_id
+        assert metadata["memories_extracted"] == "创建新版并替代旧事实 1 条"
 
-        updated_memory = db.get(Memory, existing_memory_id)
-        assert updated_memory is not None
-        assert updated_memory.content == "用户是帝国理工大学学习物理本科的中国留学生。"
+        previous_memory = db.get(Memory, existing_memory_id)
+        successor_memory = db.get(Memory, successor_id)
+        assert previous_memory is not None
+        assert successor_memory is not None
+        assert previous_memory.content == "用户在帝国理工大学学习物理本科。"
+        assert previous_memory.node_status == "superseded"
+        assert successor_memory.content == "用户是帝国理工大学学习物理本科的中国留学生。"
+        assert successor_memory.node_status == "active"
+        assert successor_memory.lineage_key == previous_memory.lineage_key
+        version_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == successor_id,
+                MemoryEdge.target_memory_id == existing_memory_id,
+                MemoryEdge.edge_type == "supersedes",
+            )
+            .first()
+        )
+        assert version_edge is not None
 
 
 def test_extract_memories_targets_explicit_assistant_message_id(monkeypatch) -> None:
@@ -5441,6 +5460,152 @@ def test_extract_memories_targets_explicit_assistant_message_id(monkeypatch) -> 
         assert second_message is not None
         assert isinstance((first_message.metadata_json or {}).get("extracted_facts"), list)
         assert not (second_message.metadata_json or {}).get("extracted_facts")
+
+
+def test_patch_active_fact_rejects_destructive_edit_and_supersede_route_versions_fact() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-supersede@example.com", "Memory Supersede")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Supersede Project")
+
+    memory = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "项目当前使用 REST API。",
+            "category": "项目.接口",
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert memory.status_code == 200
+    memory_id = memory.json()["id"]
+
+    patch_response = client.patch(
+        f"/api/v1/memory/{memory_id}",
+        json={"content": "项目当前使用 GraphQL API。"},
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert patch_response.status_code == 400
+
+    supersede_response = client.post(
+        f"/api/v1/memory/{memory_id}/supersede",
+        json={
+            "content": "项目当前使用 GraphQL API。",
+            "category": "项目.接口",
+            "reason": "manual_edit",
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert supersede_response.status_code == 200
+    successor = supersede_response.json()
+
+    graph_response = client.get(
+        "/api/v1/memory",
+        params={"project_id": project["id"]},
+        headers={"x-workspace-id": workspace_id},
+    )
+    assert graph_response.status_code == 200
+    graph_node_ids = {node["id"] for node in graph_response.json()["nodes"]}
+    assert successor["id"] in graph_node_ids
+    assert memory_id not in graph_node_ids
+
+    detail_response = client.get(
+        f"/api/v1/memory/{successor['id']}",
+        headers={"x-workspace-id": workspace_id},
+    )
+    assert detail_response.status_code == 200
+    detail_body = detail_response.json()
+    lineage_ids = {node["id"] for node in detail_body["lineage_nodes"]}
+    assert memory_id in lineage_ids
+    assert successor["id"] in lineage_ids
+    assert any(edge["edge_type"] == "supersedes" for edge in detail_body["lineage_edges"])
+
+    with SessionLocal() as db:
+        previous = db.get(Memory, memory_id)
+        current = db.get(Memory, successor["id"])
+        assert previous is not None
+        assert current is not None
+        assert previous.node_status == "superseded"
+        assert current.node_status == "active"
+        assert previous.lineage_key == current.lineage_key
+
+
+def test_build_memory_context_graph_first_dedupes_conflict_lineage_by_default() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "graph-first-conflict@example.com", "Graph First Conflict")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Graph First Conflict Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Graph First Conflict Conversation",
+    )
+
+    with SessionLocal() as db:
+        project_record = db.get(Project, project["id"])
+        assert project_record is not None
+        ensure_project_assistant_root(db, project_record, reparent_orphans=False)
+        subject_memory, _ = ensure_project_user_subject(
+            db,
+            project_record,
+            owner_user_id=user_info["user"]["id"],
+        )
+        lineage_key = "family-api-conflict"
+        for content in ("项目当前使用 REST API。", "项目当前使用 GraphQL API。"):
+            metadata = memory_metadata_service.normalize_memory_metadata(
+                content=content,
+                category="项目.接口",
+                memory_type="permanent",
+                metadata={
+                    "node_type": "fact",
+                    "node_status": "active",
+                    "subject_memory_id": subject_memory.id,
+                    "lineage_key": lineage_key,
+                },
+            )
+            db.add(
+                Memory(
+                    workspace_id=workspace_id,
+                    project_id=project["id"],
+                    content=content,
+                    category="项目.接口",
+                    type="permanent",
+                    node_type="fact",
+                    parent_memory_id=subject_memory.id,
+                    subject_memory_id=subject_memory.id,
+                    node_status="active",
+                    canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+                    lineage_key=lineage_key,
+                    metadata_json=metadata,
+                )
+            )
+        db.commit()
+
+    with SessionLocal() as db:
+        context = asyncio.run(
+            memory_context_service.build_memory_context(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation_id,
+                user_message="这个项目现在用什么 API？",
+                recent_messages=[],
+                context_level="memory_only",
+            )
+        )
+
+    fact_candidates = [
+        candidate
+        for candidate in context.selected_memories
+        if candidate.memory.node_type == "fact" and candidate.memory.category == "项目.接口"
+    ]
+    assert len(fact_candidates) == 1
+    assert context.retrieval_trace["graph_first"] is True
+    assert context.retrieval_trace["has_conflict"] is True
+    assert len(context.retrieval_trace["conflict_memory_ids"]) == 2
+    assert len(context.retrieval_trace["active_fact_ids"]) == 1
+    assert "项目当前使用 REST API。" not in context.system_prompt or "项目当前使用 GraphQL API。" not in context.system_prompt
 
 
 def test_extract_memories_retries_with_user_only_fallback_when_primary_returns_empty(monkeypatch) -> None:

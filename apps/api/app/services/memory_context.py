@@ -15,13 +15,16 @@ from app.services.memory_metadata import (
     MEMORY_KIND_PREFERENCE,
     MEMORY_KIND_PROFILE,
     MEMORY_KIND_SUMMARY,
+    get_lineage_key,
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
+    is_active_memory,
     get_subject_kind,
     get_subject_memory_id,
     is_category_path_memory,
     is_concept_memory,
+    is_fact_memory,
     is_pinned_memory,
     is_subject_memory,
     is_structural_only_memory,
@@ -77,6 +80,26 @@ class MemoryContextResult:
     retrieval_trace: dict[str, Any]
 
 
+@dataclass(slots=True)
+class GraphPreflightResult:
+    active_subjects: list[MemoryCandidate]
+    primary_subject: Memory | None
+    active_concepts: list[MemoryCandidate]
+    active_facts: list[MemoryCandidate]
+    static_memories: list[MemoryCandidate]
+    graph_memories: list[MemoryCandidate]
+    temporary_memories: list[MemoryCandidate]
+    knowledge_chunks: list[dict[str, Any]]
+    linked_file_chunks: list[dict[str, Any]]
+    explanation_path: dict[str, Any] | None
+    evidence_query_set: list[str]
+    primary_fact_ids_by_lineage: dict[str, str]
+    has_conflict: bool
+    conflict_memory_ids: list[str]
+    preflight_steps: list[str]
+    selected_edge_types: list[str]
+
+
 def _memory_visible_to_conversation(memory: Memory, *, conversation_id: str, conversation_created_by: str | None) -> bool:
     if memory.type == "temporary":
         return memory.source_conversation_id == conversation_id
@@ -92,6 +115,7 @@ def _load_visible_memories(
     project_id: str,
     conversation_id: str,
     conversation_created_by: str | None,
+    include_inactive: bool = False,
 ) -> tuple[list[Memory], list[Memory]]:
     memories = (
         db.query(Memory)
@@ -111,6 +135,8 @@ def _load_visible_memories(
             conversation_id=conversation_id,
             conversation_created_by=conversation_created_by,
         ):
+            continue
+        if not include_inactive and not is_active_memory(memory):
             continue
         if memory.type == "temporary":
             visible_temporary.append(memory)
@@ -197,6 +223,110 @@ def _select_best_candidates(candidates: list[MemoryCandidate], *, limit: int) ->
         if current is None or candidate.score > current.score:
             deduped[candidate.id] = candidate
     return list(sorted(deduped.values(), key=lambda item: item.score, reverse=True)[:limit])
+
+
+def _lineage_bucket_id(memory: Memory) -> str:
+    return get_lineage_key(memory) or memory.id
+
+
+def _query_requests_conflict_expansion(query: str) -> bool:
+    lowered = query.casefold()
+    return any(
+        token in lowered
+        for token in (
+            "矛盾",
+            "冲突",
+            "变化",
+            "前后不一致",
+            "有没有变",
+            "是否变了",
+            "conflict",
+            "contradict",
+            "changed",
+            "difference",
+        )
+    )
+
+
+def _fact_source_confidence(memory: Memory) -> float:
+    metadata = get_memory_metadata(memory)
+    raw_confidence = metadata.get("source_confidence")
+    try:
+        confidence = float(raw_confidence)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    source = str(metadata.get("source") or "").strip().lower()
+    if source in {"manual", "user_edit", "manual_supersede"}:
+        confidence += 1.0
+    return confidence
+
+
+def _candidate_updated_at(memory: Memory) -> datetime:
+    return (
+        _coerce_utc(memory.updated_at)
+        or _coerce_utc(memory.created_at)
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+
+
+def _select_primary_lineage_candidates(
+    candidates: list[MemoryCandidate],
+    *,
+    limit: int,
+    allow_conflicts: bool = False,
+) -> list[MemoryCandidate]:
+    if allow_conflicts:
+        return _select_best_candidates(candidates, limit=limit)
+
+    selected: dict[str, MemoryCandidate] = {}
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (
+            item.semantic_score if item.semantic_score is not None else item.score,
+            _fact_source_confidence(item.memory),
+            _candidate_updated_at(item.memory),
+            item.score,
+        ),
+        reverse=True,
+    ):
+        memory = candidate.memory
+        if not is_fact_memory(memory):
+            key = memory.id
+        else:
+            key = _lineage_bucket_id(memory)
+        current = selected.get(key)
+        if current is None:
+            selected[key] = candidate
+            continue
+        current_key = (
+            current.semantic_score if current.semantic_score is not None else current.score,
+            _fact_source_confidence(current.memory),
+            _candidate_updated_at(current.memory),
+            current.score,
+        )
+        next_key = (
+            candidate.semantic_score if candidate.semantic_score is not None else candidate.score,
+            _fact_source_confidence(candidate.memory),
+            _candidate_updated_at(candidate.memory),
+            candidate.score,
+        )
+        if next_key > current_key:
+            selected[key] = candidate
+    return list(sorted(selected.values(), key=lambda item: item.score, reverse=True)[:limit])
+
+
+def _collect_conflict_memory_ids(memories: list[Memory]) -> list[str]:
+    grouped: dict[str, list[str]] = {}
+    for memory in memories:
+        if not is_fact_memory(memory) or not is_active_memory(memory):
+            continue
+        grouped.setdefault(_lineage_bucket_id(memory), []).append(memory.id)
+    ids: list[str] = []
+    for group_ids in grouped.values():
+        if len(group_ids) <= 1:
+            continue
+        ids.extend(sorted(group_ids))
+    return ids
 
 
 def _build_graph_neighbors(
@@ -527,6 +657,7 @@ def _pick_subject_facts(
     semantic_results: list[dict[str, Any]],
     query_tokens: list[str],
     context_level: ContextLevel,
+    allow_conflicts: bool = False,
 ) -> list[MemoryCandidate]:
     scope_by_id = {memory.id: memory for memory in subject_scope_memories}
     candidates: list[MemoryCandidate] = []
@@ -576,7 +707,11 @@ def _pick_subject_facts(
                     )
                 )
 
-    selected = _select_best_candidates(candidates, limit=RELEVANT_MEMORY_LIMIT)
+    selected = _select_primary_lineage_candidates(
+        candidates,
+        limit=RELEVANT_MEMORY_LIMIT,
+        allow_conflicts=allow_conflicts,
+    )
     if selected:
         return selected
 
@@ -585,10 +720,10 @@ def _pick_subject_facts(
         for memory in _sort_memories_by_activity(subject_scope_memories)
         if not is_subject_memory(memory) and not is_concept_memory(memory) and not is_structural_only_memory(memory)
     ][: max(2, min(4, RELEVANT_MEMORY_LIMIT))]
-    return [
+    return _select_primary_lineage_candidates([
         MemoryCandidate(memory=memory, source="fallback", score=_candidate_score(memory, source="lexical", semantic_score=0.58))
         for memory in fallback_facts
-    ]
+    ], limit=max(2, min(4, RELEVANT_MEMORY_LIMIT)), allow_conflicts=allow_conflicts)
 
 
 def _build_graph_guided_system_prompt(
@@ -822,10 +957,16 @@ def get_subject_overview(
         memory for memory in _sort_memories_by_activity(scope_memories)
         if is_concept_memory(memory)
     ][:6]
-    facts = [
-        memory for memory in _sort_memories_by_activity(scope_memories)
+    fact_candidates = [
+        MemoryCandidate(
+            memory=memory,
+            source="subject_overview",
+            score=_candidate_score(memory, source="lexical", semantic_score=0.6),
+        )
+        for memory in _sort_memories_by_activity(scope_memories)
         if not is_subject_memory(memory) and not is_concept_memory(memory) and not is_structural_only_memory(memory)
-    ][:8]
+    ]
+    facts = [candidate.memory for candidate in _select_primary_lineage_candidates(fact_candidates, limit=8)]
     suggested_paths = [memory.content for memory in concepts[:4]]
     return {
         "subject": subject,
@@ -1016,6 +1157,7 @@ async def search_subject_facts(
         semantic_results=semantic_results,
         query_tokens=_normalize_query_tokens(query),
         context_level="memory_only",
+        allow_conflicts=_query_requests_conflict_expansion(query),
     )[:top_k]
     return [
         {
@@ -1262,8 +1404,11 @@ def _serialize_memory_candidate(candidate: MemoryCandidate) -> dict[str, Any]:
     return {
         "id": memory.id,
         "type": memory.type,
+        "node_type": memory.node_type,
+        "node_status": memory.node_status,
         "category": memory.category,
         "memory_kind": get_memory_kind(memory),
+        "lineage_key": get_lineage_key(memory),
         "source": candidate.source,
         "score": round(candidate.score, 4),
         "semantic_score": round(candidate.semantic_score, 4) if candidate.semantic_score is not None else None,
@@ -1303,6 +1448,11 @@ def build_conversation_focus_metadata(
         for concept_id in retrieval_trace.get("active_concept_ids", [])
         if isinstance(concept_id, str) and concept_id.strip()
     ]
+    active_fact_ids = [
+        fact_id
+        for fact_id in retrieval_trace.get("active_fact_ids", [])
+        if isinstance(fact_id, str) and fact_id.strip()
+    ]
     primary_subject_id = retrieval_trace.get("primary_subject_id")
     if isinstance(primary_subject_id, str) and primary_subject_id.strip():
         payload["primary_subject_id"] = primary_subject_id.strip()
@@ -1310,6 +1460,31 @@ def build_conversation_focus_metadata(
         payload["active_subject_ids"] = active_subject_ids[:3]
     if active_concept_ids:
         payload["active_concept_ids"] = active_concept_ids[:6]
+    if active_fact_ids:
+        payload["active_fact_ids"] = active_fact_ids[:8]
+    explanation_path = retrieval_trace.get("explanation_path")
+    if isinstance(explanation_path, dict):
+        payload["explanation_path"] = {
+            "concept_ids": [
+                concept_id
+                for concept_id in explanation_path.get("concept_ids", [])
+                if isinstance(concept_id, str) and concept_id.strip()
+            ][:4],
+            "labels": [
+                label
+                for label in explanation_path.get("labels", [])
+                if isinstance(label, str) and label.strip()
+            ][:6],
+        }
+    payload["graph_first"] = bool(retrieval_trace.get("graph_first"))
+    payload["has_conflict"] = bool(retrieval_trace.get("has_conflict"))
+    conflict_memory_ids = [
+        memory_id
+        for memory_id in retrieval_trace.get("conflict_memory_ids", [])
+        if isinstance(memory_id, str) and memory_id.strip()
+    ]
+    if conflict_memory_ids:
+        payload["conflict_memory_ids"] = conflict_memory_ids[:8]
     if active_subject_ids or active_concept_ids or payload.get("primary_subject_id"):
         payload["focus_strategy"] = str(retrieval_trace.get("strategy") or "subject_graph_v1")
         payload["focus_updated_at"] = (updated_at or datetime.now(timezone.utc)).isoformat()
@@ -1328,18 +1503,283 @@ def build_conversation_focus_metadata(
             "primary_subject_id": payload.get("primary_subject_id"),
             "active_subject_ids": active_subject_ids[:3],
             "active_concept_ids": active_concept_ids[:6],
+            "active_fact_ids": active_fact_ids[:8],
             "memory_ids": [
                 memory_id
-                for memory_id in [
-                    str(memory.get("id") or "").strip()
-                    for memory in retrieval_trace.get("memories", [])
-                    if isinstance(memory, dict)
-                ]
+                for memory_id in (
+                    active_fact_ids
+                    or [
+                        str(memory.get("id") or "").strip()
+                        for memory in retrieval_trace.get("memories", [])
+                        if isinstance(memory, dict)
+                    ]
+                )
                 if memory_id
             ][:10],
+            "explanation_path": payload.get("explanation_path"),
+            "graph_first": payload.get("graph_first", False),
+            "has_conflict": payload.get("has_conflict", False),
             "updated_at": payload["focus_updated_at"],
         }
     return payload
+
+
+async def graph_preflight(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    user_message: str,
+    context_level: ContextLevel,
+    semantic_search_fn: SemanticSearchFn = search_similar,
+    linked_file_loader_fn: LinkedFileLoaderFn = load_linked_file_chunks_for_memories,
+) -> GraphPreflightResult:
+    project, conversation = load_conversation_context(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+
+    if context_level == "none":
+        return GraphPreflightResult(
+            active_subjects=[],
+            primary_subject=None,
+            active_concepts=[],
+            active_facts=[],
+            static_memories=[],
+            graph_memories=[],
+            temporary_memories=[],
+            knowledge_chunks=[],
+            linked_file_chunks=[],
+            explanation_path=None,
+            evidence_query_set=[],
+            primary_fact_ids_by_lineage={},
+            has_conflict=False,
+            conflict_memory_ids=[],
+            preflight_steps=[],
+            selected_edge_types=["parent", "related", "manual", "prerequisite", "evidence"],
+        )
+
+    _subject, changed = ensure_project_user_subject(
+        db,
+        project,
+        owner_user_id=conversation.created_by,
+    )
+    if changed:
+        db.flush()
+
+    permanent_memories, temporary_memories = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation.created_by,
+    )
+    query_tokens = _normalize_query_tokens(user_message)
+    semantic_results: list[dict[str, Any]] = []
+    if user_message.strip() and context_level in {"profile_only", "memory_only", "full_rag"}:
+        try:
+            semantic_results = await semantic_search_fn(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                query=user_message,
+                limit=SEMANTIC_SEARCH_LIMIT,
+            )
+        except Exception:
+            semantic_results = []
+
+    subject_resolution = await resolve_active_subjects(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation.created_by,
+        query=user_message,
+        semantic_search_fn=semantic_search_fn,
+        semantic_results=semantic_results,
+    )
+    active_subjects = subject_resolution.get("subjects", [])
+    primary_subject = subject_resolution.get("primary_subject")
+    subject_ids = [candidate.id for candidate in active_subjects]
+    subjects_by_id = {memory.id: memory for memory in permanent_memories if is_subject_memory(memory)}
+    scope_permanent, scope_temporary = _collect_subject_scope_memories(
+        subject_ids=subject_ids,
+        visible_permanent=permanent_memories,
+        visible_temporary=temporary_memories,
+        subjects_by_id=subjects_by_id,
+    )
+    scope_memories = [*scope_permanent, *scope_temporary]
+    scope_by_id = {memory.id: memory for memory in scope_memories}
+    selected_edge_types = ["parent", "related", "manual", "prerequisite", "evidence"]
+    lateral_edges = (
+        db.query(MemoryEdge)
+        .filter(
+            MemoryEdge.edge_type.in_(selected_edge_types),
+            MemoryEdge.source_memory_id.in_(list(scope_by_id)),
+            MemoryEdge.target_memory_id.in_(list(scope_by_id)),
+        )
+        .all()
+        if scope_by_id
+        else []
+    )
+
+    static_candidates = [
+        MemoryCandidate(
+            memory=memory,
+            source="static",
+            score=_candidate_score(memory, source="static"),
+        )
+        for memory in scope_permanent
+        if not is_subject_memory(memory)
+        and not is_concept_memory(memory)
+        and not is_structural_only_memory(memory)
+        and (is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS)
+    ]
+    static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
+
+    allow_conflicts = _query_requests_conflict_expansion(user_message)
+    active_concepts: list[MemoryCandidate] = []
+    active_facts: list[MemoryCandidate] = []
+    graph_selected: list[MemoryCandidate] = []
+    temporary_selected: list[MemoryCandidate] = []
+    knowledge_chunks: list[dict[str, Any]] = []
+    linked_file_chunks: list[dict[str, Any]] = []
+    explanation_path: dict[str, Any] | None = None
+    preflight_steps = ["resolve_active_subjects"]
+
+    if context_level in {"profile_only", "memory_only", "full_rag"} and scope_memories:
+        active_concepts = _pick_active_concepts(
+            subject_scope_memories=scope_memories,
+            subject_ids=subject_ids,
+            semantic_results=semantic_results,
+            query_tokens=query_tokens,
+            active_concept_ids=[
+                concept_id
+                for concept_id in ((conversation.metadata_json or {}).get("active_concept_ids") or [])
+                if isinstance(concept_id, str)
+            ],
+        )
+        active_facts = _pick_subject_facts(
+            subject_scope_memories=scope_memories,
+            subject_ids=subject_ids,
+            semantic_results=semantic_results,
+            query_tokens=query_tokens,
+            context_level=context_level,
+            allow_conflicts=allow_conflicts,
+        )
+        graph_selected = _build_graph_neighbors(
+            seed_candidates=[*active_concepts, *active_facts],
+            visible_memories_by_id=scope_by_id,
+            query_tokens=query_tokens,
+            lateral_edges=lateral_edges,
+        )
+        temporary_candidates = [
+            candidate
+            for candidate in [*active_facts, *graph_selected]
+            if candidate.memory.type == "temporary"
+        ]
+        temporary_candidates.extend(
+            MemoryCandidate(
+                memory=memory,
+                source="recent_temporary",
+                score=_candidate_score(memory, source="recent_temporary"),
+            )
+            for memory in sorted(
+                scope_temporary,
+                key=lambda item: _candidate_updated_at(item),
+                reverse=True,
+            )[:TEMPORARY_MEMORY_LIMIT]
+            if not is_subject_memory(memory) and not is_concept_memory(memory)
+        )
+        temporary_selected = _select_best_candidates(temporary_candidates, limit=TEMPORARY_MEMORY_LIMIT)
+        preflight_steps.extend(["expand_subject_subgraph", "search_subject_facts"])
+
+        if primary_subject and active_concepts:
+            explanation_path = get_explanation_path(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                conversation_created_by=conversation.created_by,
+                subject_id=primary_subject.id,
+                concept_id=active_concepts[0].id,
+            )
+            if explanation_path:
+                preflight_steps.append("get_explanation_path")
+
+        if context_level == "full_rag" and semantic_results:
+            knowledge_chunks = filter_knowledge_chunks(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                results=[result for result in semantic_results if result.get("memory_id") is None],
+            )[:KNOWLEDGE_CHUNK_LIMIT]
+
+        evidence_query_set = [
+            value
+            for value in [
+                user_message.strip(),
+                explanation_path.get("concept") if isinstance(explanation_path, dict) else None,
+                primary_subject.content.strip() if primary_subject else None,
+            ]
+            if isinstance(value, str) and value.strip()
+        ]
+        selected_memory_ids = {
+            candidate.id
+            for candidate in [
+                *active_subjects,
+                *active_concepts,
+                *static_selected,
+                *active_facts,
+                *graph_selected,
+                *temporary_selected,
+            ]
+        }
+        if context_level == "full_rag" and evidence_query_set and selected_memory_ids:
+            try:
+                linked_file_chunks = await linked_file_loader_fn(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    memory_ids=list(selected_memory_ids),
+                    query=evidence_query_set[0],
+                    limit=LINKED_FILE_CHUNK_LIMIT,
+                )
+            except Exception:
+                linked_file_chunks = []
+            if linked_file_chunks:
+                preflight_steps.append("search_subject_documents")
+    else:
+        evidence_query_set = [user_message.strip()] if user_message.strip() else []
+
+    active_scope_conflicts = _collect_conflict_memory_ids(scope_memories)
+    primary_fact_ids_by_lineage = {
+        _lineage_bucket_id(candidate.memory): candidate.id
+        for candidate in active_facts
+        if is_fact_memory(candidate.memory)
+    }
+
+    return GraphPreflightResult(
+        active_subjects=active_subjects,
+        primary_subject=primary_subject,
+        active_concepts=active_concepts,
+        active_facts=active_facts,
+        static_memories=static_selected,
+        graph_memories=graph_selected,
+        temporary_memories=temporary_selected,
+        knowledge_chunks=knowledge_chunks,
+        linked_file_chunks=linked_file_chunks,
+        explanation_path=explanation_path,
+        evidence_query_set=evidence_query_set,
+        primary_fact_ids_by_lineage=primary_fact_ids_by_lineage,
+        has_conflict=bool(active_scope_conflicts),
+        conflict_memory_ids=active_scope_conflicts,
+        preflight_steps=preflight_steps,
+        selected_edge_types=selected_edge_types,
+    )
 
 
 async def build_memory_context(
@@ -1362,179 +1802,57 @@ async def build_memory_context(
         project_id=project_id,
         conversation_id=conversation_id,
     )
+    preflight = await graph_preflight(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        user_message=user_message,
+        context_level=context_level,
+        semantic_search_fn=semantic_search_fn,
+        linked_file_loader_fn=linked_file_loader_fn,
+    )
+    active_subjects = preflight.active_subjects
+    active_concepts = preflight.active_concepts
+    static_selected = preflight.static_memories
+    relevant_selected = preflight.active_facts
+    graph_selected = preflight.graph_memories
+    temporary_selected = preflight.temporary_memories
+    knowledge_chunks = preflight.knowledge_chunks
+    linked_file_chunks = preflight.linked_file_chunks
+    primary_subject = preflight.primary_subject
 
-    semantic_results: list[dict[str, Any]] = []
-    knowledge_chunks: list[dict[str, Any]] = []
-    linked_file_chunks: list[dict[str, Any]] = []
-    active_subjects: list[MemoryCandidate] = []
-    active_concepts: list[MemoryCandidate] = []
-    static_selected: list[MemoryCandidate] = []
-    relevant_selected: list[MemoryCandidate] = []
-    graph_selected: list[MemoryCandidate] = []
-    temporary_selected: list[MemoryCandidate] = []
-    primary_subject: Memory | None = None
-
-    if context_level != "none":
-        _subject, changed = ensure_project_user_subject(
-            db,
-            project,
-            owner_user_id=conversation.created_by,
-        )
-        if changed:
-            db.flush()
-        permanent_memories, temporary_memories = _load_visible_memories(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            conversation_created_by=conversation.created_by,
-        )
-        query_tokens = _normalize_query_tokens(user_message)
-
-        if user_message.strip() and context_level in {"profile_only", "memory_only", "full_rag"}:
-            try:
-                semantic_results = await semantic_search_fn(
-                    db,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    query=user_message,
-                    limit=SEMANTIC_SEARCH_LIMIT,
-                )
-            except Exception:
-                semantic_results = []
-
-        subject_resolution = await resolve_active_subjects(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            conversation_created_by=conversation.created_by,
-            query=user_message,
-            semantic_search_fn=semantic_search_fn,
-            semantic_results=semantic_results,
-        )
-        active_subjects = subject_resolution.get("subjects", [])
-        primary_subject = subject_resolution.get("primary_subject")
-
-        subject_ids = [candidate.id for candidate in active_subjects]
-        subjects_by_id = {
-            memory.id: memory for memory in permanent_memories if is_subject_memory(memory)
-        }
-        scope_permanent, scope_temporary = _collect_subject_scope_memories(
-            subject_ids=subject_ids,
-            visible_permanent=permanent_memories,
-            visible_temporary=temporary_memories,
-            subjects_by_id=subjects_by_id,
-        )
-        scope_memories = [*scope_permanent, *scope_temporary]
-        scope_by_id = {memory.id: memory for memory in scope_memories}
-        lateral_edges = (
-            db.query(MemoryEdge)
-            .filter(
-                MemoryEdge.edge_type.in_(["manual", RELATED_EDGE_TYPE, "prerequisite", "evidence"]),
-                MemoryEdge.source_memory_id.in_(list(scope_by_id)),
-                MemoryEdge.target_memory_id.in_(list(scope_by_id)),
-            )
-            .all()
-            if scope_by_id
-            else []
-        )
-
-        static_candidates = [
-            MemoryCandidate(
-                memory=memory,
-                source="static",
-                score=_candidate_score(memory, source="static"),
-            )
-            for memory in scope_permanent
-            if not is_subject_memory(memory)
-            and not is_concept_memory(memory)
-            and not is_structural_only_memory(memory)
-            and (is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS)
-        ]
-        static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
-
-        if context_level in {"profile_only", "memory_only", "full_rag"} and scope_memories:
-            active_concepts = _pick_active_concepts(
-                subject_scope_memories=scope_memories,
-                subject_ids=subject_ids,
-                semantic_results=semantic_results,
-                query_tokens=query_tokens,
-                active_concept_ids=[
-                    concept_id
-                    for concept_id in ((conversation.metadata_json or {}).get("active_concept_ids") or [])
-                    if isinstance(concept_id, str)
-                ],
-            )
-            relevant_selected = _pick_subject_facts(
-                subject_scope_memories=scope_memories,
-                subject_ids=subject_ids,
-                semantic_results=semantic_results,
-                query_tokens=query_tokens,
-                context_level=context_level,
-            )
-
-            graph_selected = _build_graph_neighbors(
-                seed_candidates=[*active_concepts, *relevant_selected],
-                visible_memories_by_id=scope_by_id,
-                query_tokens=query_tokens,
-                lateral_edges=lateral_edges,
-            )
-
-            temporary_candidates = [
-                candidate
-                for candidate in [*relevant_selected, *graph_selected]
-                if candidate.memory.type == "temporary"
-            ]
-            temporary_candidates.extend(
-                MemoryCandidate(
-                    memory=memory,
-                    source="recent_temporary",
-                    score=_candidate_score(memory, source="recent_temporary"),
-                )
-                for memory in sorted(
-                    scope_temporary,
-                    key=lambda item: _coerce_utc(item.updated_at) or datetime.min.replace(tzinfo=timezone.utc),
-                    reverse=True,
-                )[:TEMPORARY_MEMORY_LIMIT]
-                if not is_subject_memory(memory) and not is_concept_memory(memory)
-            )
-            temporary_selected = _select_best_candidates(
-                temporary_candidates,
-                limit=TEMPORARY_MEMORY_LIMIT,
-            )
-
-            if context_level == "full_rag" and semantic_results:
-                knowledge_chunks = filter_knowledge_chunks(
-                    db,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    results=[result for result in semantic_results if result.get("memory_id") is None],
-                )[:KNOWLEDGE_CHUNK_LIMIT]
-
-            selected_memory_ids = {
-                candidate.id
-                for candidate in [
-                    *active_subjects,
-                    *active_concepts,
-                    *static_selected,
-                    *relevant_selected,
-                    *graph_selected,
-                    *temporary_selected,
+    explanation_path_summary = None
+    if isinstance(preflight.explanation_path, dict):
+        explanation_path_summary = {
+            "concept_ids": [
+                concept_id
+                for concept_id in [preflight.explanation_path.get("concept_id")]
+                if isinstance(concept_id, str) and concept_id.strip()
+            ],
+            "labels": [
+                label
+                for label in [
+                    *(
+                        preflight.explanation_path.get("parent_chain")
+                        if isinstance(preflight.explanation_path.get("parent_chain"), list)
+                        else []
+                    ),
+                    preflight.explanation_path.get("concept"),
                 ]
-            }
-            if context_level == "full_rag" and user_message.strip() and selected_memory_ids:
-                try:
-                    linked_file_chunks = await linked_file_loader_fn(
-                        db,
-                        workspace_id=workspace_id,
-                        project_id=project_id,
-                        memory_ids=list(selected_memory_ids),
-                        query=user_message,
-                        limit=LINKED_FILE_CHUNK_LIMIT,
-                    )
-                except Exception:
-                    linked_file_chunks = []
+                if isinstance(label, str) and label.strip()
+            ],
+        }
+    allow_conflicts = _query_requests_conflict_expansion(user_message)
+    prompt_relevant_memories = _select_primary_lineage_candidates(
+        [
+            *static_selected,
+            *relevant_selected,
+            *graph_selected,
+        ],
+        limit=STATIC_MEMORY_LIMIT + RELEVANT_MEMORY_LIMIT + GRAPH_MEMORY_LIMIT + 4,
+        allow_conflicts=allow_conflicts,
+    )
 
     prompt = _build_graph_guided_system_prompt(
         personality=personality,
@@ -1542,7 +1860,7 @@ async def build_memory_context(
         active_concepts=active_concepts,
         relevant_memories=[
             candidate
-            for candidate in [*static_selected, *relevant_selected, *graph_selected]
+            for candidate in prompt_relevant_memories
             if candidate.id not in {item.id for item in active_subjects}
             and candidate.id not in {item.id for item in active_concepts}
         ],
@@ -1552,7 +1870,7 @@ async def build_memory_context(
         recent_messages=recent_messages if include_recent_history else None,
     )
 
-    final_selected_memories = _select_best_candidates(
+    final_selected_memories = _select_primary_lineage_candidates(
         [
             *active_subjects,
             *active_concepts,
@@ -1562,9 +1880,13 @@ async def build_memory_context(
             *temporary_selected,
         ],
         limit=STATIC_MEMORY_LIMIT + RELEVANT_MEMORY_LIMIT + GRAPH_MEMORY_LIMIT + TEMPORARY_MEMORY_LIMIT + 8,
+        allow_conflicts=allow_conflicts,
     )
     retrieval_trace = {
         "strategy": "subject_graph_v1",
+        "graph_first": context_level in {"memory_only", "full_rag"},
+        "preflight_steps": preflight.preflight_steps,
+        "selected_edge_types": preflight.selected_edge_types,
         "active_route": context_level,
         "interaction_mode": "subject_graph" if active_subjects or active_concepts else "direct",
         "context_level": context_level,
@@ -1572,6 +1894,11 @@ async def build_memory_context(
         "primary_subject_kind": get_subject_kind(primary_subject) if primary_subject else None,
         "active_subject_ids": [candidate.id for candidate in active_subjects],
         "active_concept_ids": [candidate.id for candidate in active_concepts],
+        "active_fact_ids": [candidate.id for candidate in relevant_selected if is_fact_memory(candidate.memory)],
+        "primary_fact_ids_by_lineage": preflight.primary_fact_ids_by_lineage,
+        "explanation_path": explanation_path_summary,
+        "has_conflict": preflight.has_conflict,
+        "conflict_memory_ids": preflight.conflict_memory_ids,
         "memory_counts": {
             "active_subjects": len(active_subjects),
             "active_concepts": len(active_concepts),

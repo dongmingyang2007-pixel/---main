@@ -15,9 +15,11 @@ from app.services.memory_metadata import (
     MEMORY_KIND_PREFERENCE,
     MEMORY_KIND_PROFILE,
     build_summary_group_key,
+    get_lineage_key,
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
+    is_active_memory,
     is_category_path_memory,
     is_concept_memory,
     is_pinned_memory,
@@ -76,6 +78,8 @@ def _summary_category(memory: Memory, memories_by_id: dict[str, Memory]) -> str:
 def _eligible_for_compaction(memory: Memory) -> bool:
     if memory.type != "permanent":
         return False
+    if not is_active_memory(memory):
+        return False
     if (
         is_assistant_root_memory(memory)
         or is_summary_memory(memory)
@@ -88,6 +92,30 @@ def _eligible_for_compaction(memory: Memory) -> bool:
     if get_memory_kind(memory) == MEMORY_KIND_EPISODIC:
         return False
     return bool(memory.content.strip())
+
+
+def _select_primary_active_facts(memories: list[Memory]) -> list[Memory]:
+    def _sort_key(memory: Memory) -> tuple[float, object, object]:
+        return (
+            get_memory_salience(memory),
+            memory.updated_at or memory.created_at,
+            memory.created_at,
+        )
+
+    selected: dict[str, Memory] = {}
+    for memory in memories:
+        if not _eligible_for_compaction(memory):
+            continue
+        lineage_key = get_lineage_key(memory) or memory.id
+        existing = selected.get(lineage_key)
+        if existing is None:
+            selected[lineage_key] = memory
+            continue
+        existing_key = _sort_key(existing)
+        candidate_key = _sort_key(memory)
+        if candidate_key > existing_key:
+            selected[lineage_key] = memory
+    return list(selected.values())
 
 
 def _group_memories(memories: list[Memory]) -> dict[str, list[Memory]]:
@@ -199,7 +227,7 @@ async def compact_project_memories(
         )
         .all()
     )
-    grouped = _group_memories(memories)
+    grouped = _group_memories(_select_primary_active_facts(memories))
     summary_views = (
         db.query(MemoryView)
         .filter(

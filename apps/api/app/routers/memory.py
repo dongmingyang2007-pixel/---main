@@ -36,10 +36,10 @@ from app.schemas.memory import (
     SubjectResolveResult,
     SubgraphOut,
     SubgraphRequest,
+    MemorySupersedeRequest,
     MemoryUpdate,
 )
 from app.services.embedding import embed_and_store, search_similar
-from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.memory_context import (
     expand_subject_subgraph,
     get_subject_overview,
@@ -51,6 +51,9 @@ from app.services.memory_metadata import (
     ACTIVE_NODE_STATUS,
     FACT_NODE_TYPE,
     add_related_edge_exclusion,
+    get_lineage_key,
+    is_active_memory,
+    is_fact_memory,
     normalize_node_status,
     normalize_node_type,
     has_manual_parent_binding,
@@ -70,6 +73,13 @@ from app.services.memory_related_edges import (
 )
 from app.services.memory_file_context import sync_data_item_links_for_memory
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
+from app.services.memory_versioning import (
+    CONFLICT_EDGE_TYPE,
+    SUPERSEDES_EDGE_TYPE,
+    VERSION_EDGE_TYPES,
+    create_fact_successor,
+    ensure_fact_lineage,
+)
 from app.services.memory_visibility import (
     build_private_memory_metadata,
     is_private_memory,
@@ -442,15 +452,6 @@ def _trigger_memory_compaction(workspace_id: str, project_id: str) -> None:
         pass
 
 
-def _sync_project_category_tree(db: Session, *, workspace_id: str, project_id: str) -> bool:
-    summary = ensure_project_category_tree(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    return any(summary.as_dict().values())
-
-
 def _sync_project_related_edges(db: Session, *, workspace_id: str, project_id: str) -> bool:
     summary = ensure_project_related_edges(
         db,
@@ -467,6 +468,12 @@ def _sync_project_related_edges(db: Session, *, workspace_id: str, project_id: s
 
 def _bump_graph_revision(*, workspace_id: str, project_id: str) -> None:
     bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
+
+
+def _normalize_lineage_metadata(memory: Memory) -> None:
+    lineage_key = ensure_fact_lineage(memory)
+    if lineage_key and memory.canonical_key is None:
+        memory.canonical_key = str((memory.metadata_json or {}).get("canonical_key") or "").strip() or None
 
 
 @router.get("", response_model=MemoryGraphOut)
@@ -508,6 +515,7 @@ def get_memory_graph(
         current_user_id=current_user.id,
         workspace_role=workspace_role,
     )
+    permanent = [memory for memory in permanent if is_active_memory(memory)]
 
     # Temporary nodes for given conversation (if provided)
     temporary: list[Memory] = []
@@ -542,6 +550,7 @@ def get_memory_graph(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
+        temporary = [memory for memory in temporary if is_active_memory(memory)]
 
     all_memories = permanent + temporary
     memories_by_id = {memory.id: memory for memory in all_memories}
@@ -882,12 +891,14 @@ def create_memory(
         subject_memory_id=subject_memory_id,
         node_status=node_status,
         canonical_key=payload.canonical_key or str(normalized_metadata.get("canonical_key") or "").strip() or None,
+        lineage_key=None,
         position_x=payload.position_x,
         position_y=payload.position_y,
         metadata_json=normalized_metadata,
     )
     db.add(memory)
     db.flush()
+    _normalize_lineage_metadata(memory)
     db.commit()
     _bump_graph_revision(workspace_id=workspace_id, project_id=payload.project_id)
     db.refresh(memory)
@@ -969,6 +980,38 @@ def get_memory_detail(
         .all()
     )
 
+    lineage_memories: list[Memory] = []
+    lineage_edges: list[MemoryEdge] = []
+    if is_fact_memory(memory) and get_lineage_key(memory):
+        lineage_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.workspace_id == workspace_id,
+                Memory.project_id == memory.project_id,
+                Memory.lineage_key == get_lineage_key(memory),
+            )
+            .all()
+        )
+        lineage_memories = _filter_accessible_memories(
+            db,
+            lineage_memories,
+            project_id=memory.project_id,
+            workspace_id=workspace_id,
+            current_user_id=current_user.id,
+            workspace_role=workspace_role,
+        )
+        lineage_ids = [item.id for item in lineage_memories]
+        if lineage_ids:
+            lineage_edges = (
+                db.query(MemoryEdge)
+                .filter(
+                    MemoryEdge.edge_type.in_([SUPERSEDES_EDGE_TYPE, CONFLICT_EDGE_TYPE]),
+                    MemoryEdge.source_memory_id.in_(lineage_ids),
+                    MemoryEdge.target_memory_id.in_(lineage_ids),
+                )
+                .all()
+            )
+
     result = MemoryDetailOut.model_validate(memory, from_attributes=True)
     result.edges = [MemoryEdgeOut.model_validate(e, from_attributes=True) for e in edges]
     result.files = [
@@ -983,6 +1026,11 @@ def get_memory_detail(
         for memory_file, data_item in files
         if _is_completed_data_item(data_item)
     ]
+    result.lineage_nodes = [
+        MemoryOut.model_validate(item, from_attributes=True)
+        for item in lineage_memories
+    ]
+    result.lineage_edges = [MemoryEdgeOut.model_validate(edge, from_attributes=True) for edge in lineage_edges]
     return result
 
 
@@ -1167,6 +1215,17 @@ def update_memory(
         raise ApiError("bad_request", "Category path nodes are system managed", status_code=400)
     if is_summary_memory(memory):
         raise ApiError("bad_request", "Summary nodes are derived views and cannot be edited directly", status_code=400)
+    if (
+        is_fact_memory(memory)
+        and memory.type == "permanent"
+        and is_active_memory(memory)
+        and payload.model_fields_set.intersection({"content", "category"})
+    ):
+        raise ApiError(
+            "bad_request",
+            "Active permanent facts are versioned. Use /api/v1/memory/{id}/supersede to revise content or category.",
+            status_code=400,
+        )
 
     parent_field_present = "parent_memory_id" in payload.model_fields_set
     project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
@@ -1248,6 +1307,8 @@ def update_memory(
             "node_status": node_status,
         }
     )
+    if memory.lineage_key:
+        metadata["lineage_key"] = memory.lineage_key
     if payload.canonical_key:
         metadata["canonical_key"] = payload.canonical_key
     memory.metadata_json = normalize_memory_metadata(
@@ -1262,6 +1323,7 @@ def update_memory(
         or str(memory.metadata_json.get("canonical_key") or "").strip()
         or memory.canonical_key
     )
+    _normalize_lineage_metadata(memory)
     memory.updated_at = datetime.now(timezone.utc)
 
     db.commit()
@@ -1275,6 +1337,48 @@ def update_memory(
     if memory.type == "permanent":
         _trigger_memory_compaction(workspace_id, memory.project_id)
     return MemoryOut.model_validate(memory, from_attributes=True)
+
+
+@router.post("/{memory_id}/supersede", response_model=MemoryOut)
+def supersede_memory(
+    memory_id: str,
+    payload: MemorySupersedeRequest,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+    _write_guard: None = Depends(require_workspace_write_access),
+    _: None = Depends(require_csrf_protection),
+) -> MemoryOut:
+    memory = _get_accessible_memory_or_404(
+        db,
+        memory_id=memory_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+    )
+    if not is_fact_memory(memory) or memory.type != "permanent":
+        raise ApiError("bad_request", "Only permanent fact memories can be superseded", status_code=400)
+    if not is_active_memory(memory):
+        raise ApiError("bad_request", "Only active fact memories can be superseded", status_code=400)
+
+    successor = asyncio.run(
+        create_fact_successor(
+            db,
+            predecessor=memory,
+            content=payload.content,
+            category=payload.category,
+            reason=payload.reason or "manual_supersede",
+        )
+    )
+    db.commit()
+    _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
+    db.refresh(successor)
+    if _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id):
+        db.commit()
+        _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
+    _trigger_memory_compaction(workspace_id, memory.project_id)
+    return MemoryOut.model_validate(successor, from_attributes=True)
 
 
 @router.delete("/{memory_id}")
@@ -1332,7 +1436,6 @@ def delete_memory(
     _delete_memory_embeddings(db, memory.id)
     db.delete(memory)
     db.flush()
-    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
     _sync_project_related_edges(db, workspace_id=workspace_id, project_id=memory.project_id)
     db.commit()
     _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
@@ -1388,7 +1491,7 @@ def promote_memory(
         root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
         memory.parent_memory_id = root_memory.id
     memory.updated_at = datetime.now(timezone.utc)
-    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
+    _normalize_lineage_metadata(memory)
     db.commit()
     _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     db.refresh(memory)
@@ -1461,7 +1564,11 @@ async def search_memory(
             current_user_id=current_user.id,
             workspace_role=workspace_role,
         )
-        memories = [memory for memory in memories if not is_structural_only_memory(memory)]
+        memories = [
+            memory
+            for memory in memories
+            if not is_structural_only_memory(memory) and is_active_memory(memory)
+        ]
         return [
             MemorySearchResult(
                 memory=MemoryOut.model_validate(memory, from_attributes=True),
@@ -1500,6 +1607,8 @@ async def search_memory(
             continue
         if is_structural_only_memory(memory):
             continue
+        if not is_active_memory(memory):
+            continue
         if memory.id == root_memory.id:
             continue
         if memory.id not in accessible_memory_ids:
@@ -1528,6 +1637,12 @@ def create_edge(
     _write_guard: None = Depends(require_workspace_write_access),
     _: None = Depends(require_csrf_protection),
 ) -> MemoryEdgeOut:
+    if payload.edge_type in VERSION_EDGE_TYPES:
+        raise ApiError(
+            "bad_request",
+            "supersedes/conflict edges are system managed and cannot be created manually",
+            status_code=400,
+        )
     # Verify both memories belong to the same workspace
     source = _get_accessible_memory_or_404(
         db,
@@ -1556,6 +1671,7 @@ def create_edge(
     existing = (
         db.query(MemoryEdge)
         .filter(
+            MemoryEdge.edge_type.in_(["manual", RELATED_EDGE_TYPE]),
             (
                 (MemoryEdge.source_memory_id == payload.source_memory_id)
                 & (MemoryEdge.target_memory_id == payload.target_memory_id)

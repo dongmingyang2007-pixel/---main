@@ -118,15 +118,41 @@ POSITIVE_X_OPENING_STRIP_X_RANGE_MM = (-0.5, 36.0)
 POSITIVE_X_OPENING_STRIP_Y_RANGE_MM = (-1.1, 9.5)
 POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM = (13.0, 17.05)
 POSITIVE_X_OPENING_STRIP_LOCAL_EDGE_TOLERANCE_MM = 0.5
-POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM = (-0.1, 4.25)
+POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM = (-0.1, 6.35)
 POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM = (-1.1, -0.45)
 POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM = (-17.1, -15.5)
-EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_TRIANGLE_COUNT = 5
-EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_HOLE_VERTEX_COUNT = 7
+EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_TRIANGLE_COUNT = 7
+EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_HOLE_VERTEX_COUNT = 9
 POSITIVE_X_FRONT_CENTER_SEAM_LOCAL_EDGE_TOLERANCE_MM = 0.05
 POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_X_RANGE_MM = (-2.1, -1.9)
 POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Y_RANGE_MM = (-0.47, -0.44)
 POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Z_RANGE_MM = (-17.02, -16.97)
+FRONT_CENTER_SPUR_NODE_X_RANGE_MM = (0.15, 0.35)
+FRONT_CENTER_SPUR_NODE_Y_RANGE_MM = (-0.9, -0.7)
+FRONT_CENTER_SPUR_NODE_Z_RANGE_MM = (-16.4, -16.1)
+EXPECTED_FRONT_CENTER_SPUR_TRIANGLE_COUNT = 4
+EXPECTED_FRONT_CENTER_SPUR_HOLE_VERTEX_COUNT = 4
+FRONT_CENTER_SPUR_LOCAL_X_RANGE_MM = (-2.1, 2.1)
+FRONT_CENTER_SPUR_LOCAL_Y_RANGE_MM = (-1.1, -0.44)
+FRONT_CENTER_SPUR_LOCAL_Z_RANGE_MM = (-17.1, -15.5)
+POSITIVE_X_CAP_APEX_X_RANGE_MM = (1.9, 2.1)
+POSITIVE_X_CAP_APEX_Y_RANGE_MM = (-0.47, -0.44)
+POSITIVE_X_CAP_APEX_Z_RANGE_MM = (-17.02, -16.97)
+EXPECTED_POSITIVE_X_CAP_TRIANGLE_COUNT = 8
+EXPECTED_POSITIVE_X_CAP_HOLE_VERTEX_COUNT = 8
+EXPECTED_POSITIVE_X_CAP_REBUILT_TRIANGLE_COUNT = 6
+POSITIVE_X_CAP_LOCAL_X_RANGE_MM = (-0.1, 6.5)
+POSITIVE_X_CAP_LOCAL_Y_RANGE_MM = (-1.1, -0.44)
+POSITIVE_X_CAP_LOCAL_Z_RANGE_MM = (-17.1, -15.5)
+CENTER_CAP_ALIGNMENT_X_RANGE_MM = (-4.25, 6.35)
+CENTER_CAP_ALIGNMENT_Y_RANGE_MM = (-1.1, -0.43)
+CENTER_CAP_ALIGNMENT_Z_RANGE_MM = (-17.1, -15.45)
+EXPECTED_CENTER_CAP_ALIGNMENT_TRIANGLE_COUNT = 11
+EXPECTED_CENTER_CAP_ALIGNMENT_HOLE_VERTEX_COUNT = 11
+EXPECTED_CENTER_CAP_ALIGNMENT_REBUILT_TRIANGLE_COUNT = 9
+CENTER_CAP_ALIGNMENT_LOCAL_EDGE_X_RANGE_MM = (-4.3, 6.4)
+CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Y_RANGE_MM = (-0.5, -0.43)
+CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Z_RANGE_MM = (-17.1, -16.15)
 POSITIVE_LIP_SYMMETRY_X_MAX_MM = 20.5
 POSITIVE_LIP_SYMMETRY_Y_RANGE_MM = (-1.0, 9.35)
 POSITIVE_LIP_SYMMETRY_Z_RANGE_MM = (15.3, 17.05)
@@ -1388,6 +1414,257 @@ def repair_positive_x_front_center_seam(
     }
 
 
+def repair_front_center_spur_node(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    spur_vertex = find_unique_shell_vertex_in_ranges(
+        shell_triangles,
+        x_range_mm=FRONT_CENTER_SPUR_NODE_X_RANGE_MM,
+        y_range_mm=FRONT_CENTER_SPUR_NODE_Y_RANGE_MM,
+        z_range_mm=FRONT_CENTER_SPUR_NODE_Z_RANGE_MM,
+    )
+    spur_key = tuple(round(float(value), 9) for value in spur_vertex)
+
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        rounded_points = [tuple(round(float(value), 9) for value in point) for point in triangle]
+        if spur_key in rounded_points:
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_FRONT_CENTER_SPUR_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_CENTER_SPUR_TRIANGLE_COUNT} triangles touching the front-center spur node, "
+            f"found {len(triangle_indices)}."
+        )
+
+    target_indices = set(triangle_indices)
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= FRONT_CENTER_SPUR_LOCAL_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= FRONT_CENTER_SPUR_LOCAL_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= FRONT_CENTER_SPUR_LOCAL_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= FRONT_CENTER_SPUR_LOCAL_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= FRONT_CENTER_SPUR_LOCAL_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= FRONT_CENTER_SPUR_LOCAL_Z_RANGE_MM[1]
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_FRONT_CENTER_SPUR_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_CENTER_SPUR_HOLE_VERTEX_COUNT} front-center spur hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    rebuilt_triangles = triangulate_boundary_loop_projected(hole_loop, dims=(0, 2))
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after front-center spur repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "holeLoopVertexCount": len(hole_loop),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "spurVertexProductMm": vector_to_mm_list(spur_vertex),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+    }
+
+
+def repair_positive_x_cap_loft(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    apex_vertex = find_unique_shell_vertex_in_ranges(
+        shell_triangles,
+        x_range_mm=POSITIVE_X_CAP_APEX_X_RANGE_MM,
+        y_range_mm=POSITIVE_X_CAP_APEX_Y_RANGE_MM,
+        z_range_mm=POSITIVE_X_CAP_APEX_Z_RANGE_MM,
+    )
+    apex_key = tuple(round(float(value), 9) for value in apex_vertex)
+
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        rounded_points = [tuple(round(float(value), 9) for value in point) for point in triangle]
+        if apex_key in rounded_points:
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_POSITIVE_X_CAP_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_CAP_TRIANGLE_COUNT} triangles touching the positive-X cap apex, "
+            f"found {len(triangle_indices)}."
+        )
+
+    target_indices = set(triangle_indices)
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= POSITIVE_X_CAP_LOCAL_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= POSITIVE_X_CAP_LOCAL_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= POSITIVE_X_CAP_LOCAL_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= POSITIVE_X_CAP_LOCAL_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= POSITIVE_X_CAP_LOCAL_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= POSITIVE_X_CAP_LOCAL_Z_RANGE_MM[1]
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_POSITIVE_X_CAP_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_CAP_HOLE_VERTEX_COUNT} positive-X cap hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    chain_a = [point.copy() for point in hole_loop[:4]]
+    chain_b = [hole_loop[0].copy()] + [point.copy() for point in reversed(hole_loop[4:])]
+    reference_center = np.mean(np.stack([point for triangle in shell_triangles for point in triangle], axis=0), axis=0)
+    rebuilt_triangles = loft_open_polylines(chain_a, chain_b, reference_center)
+    if len(rebuilt_triangles) != EXPECTED_POSITIVE_X_CAP_REBUILT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_CAP_REBUILT_TRIANGLE_COUNT} rebuilt positive-X cap triangles, "
+            f"found {len(rebuilt_triangles)}."
+        )
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive-X cap loft repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "holeLoopVertexCount": len(hole_loop),
+        "chainAPointCount": len(chain_a),
+        "chainBPointCount": len(chain_b),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "apexVertexProductMm": vector_to_mm_list(apex_vertex),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+    }
+
+
+def repair_center_cap_alignment_strip(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= CENTER_CAP_ALIGNMENT_X_RANGE_MM[0]
+            and max(xs_mm) <= CENTER_CAP_ALIGNMENT_X_RANGE_MM[1]
+            and min(ys_mm) >= CENTER_CAP_ALIGNMENT_Y_RANGE_MM[0]
+            and max(ys_mm) <= CENTER_CAP_ALIGNMENT_Y_RANGE_MM[1]
+            and min(zs_mm) >= CENTER_CAP_ALIGNMENT_Z_RANGE_MM[0]
+            and max(zs_mm) <= CENTER_CAP_ALIGNMENT_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_CENTER_CAP_ALIGNMENT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_CENTER_CAP_ALIGNMENT_TRIANGLE_COUNT} center-cap alignment triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    target_indices = set(triangle_indices)
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= CENTER_CAP_ALIGNMENT_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_CENTER_CAP_ALIGNMENT_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_CENTER_CAP_ALIGNMENT_HOLE_VERTEX_COUNT} center-cap alignment hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    chain_a = [point.copy() for point in hole_loop[:6]]
+    chain_b = [point.copy() for point in reversed(hole_loop[6:])]
+    reference_center = np.mean(np.stack([point for triangle in shell_triangles for point in triangle], axis=0), axis=0)
+    rebuilt_triangles = loft_open_polylines(chain_a, chain_b, reference_center)
+    if len(rebuilt_triangles) != EXPECTED_CENTER_CAP_ALIGNMENT_REBUILT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_CENTER_CAP_ALIGNMENT_REBUILT_TRIANGLE_COUNT} rebuilt center-cap alignment triangles, "
+            f"found {len(rebuilt_triangles)}."
+        )
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after center-cap alignment repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "holeLoopVertexCount": len(hole_loop),
+        "chainAPointCount": len(chain_a),
+        "chainBPointCount": len(chain_b),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "selectionRangesProductMm": {
+            "x": list(CENTER_CAP_ALIGNMENT_X_RANGE_MM),
+            "y": list(CENTER_CAP_ALIGNMENT_Y_RANGE_MM),
+            "z": list(CENTER_CAP_ALIGNMENT_Z_RANGE_MM),
+        },
+    }
+
+
 def select_front_fill_artifact_triangles(
     shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> dict[str, object]:
@@ -2515,6 +2792,18 @@ def rebuild_front_window_shell(
         gltf,
         bin_chunk,
     )
+    front_center_spur_repair = repair_front_center_spur_node(
+        gltf,
+        bin_chunk,
+    )
+    positive_x_cap_loft_repair = repair_positive_x_cap_loft(
+        gltf,
+        bin_chunk,
+    )
+    center_cap_alignment_repair = repair_center_cap_alignment_strip(
+        gltf,
+        bin_chunk,
+    )
     positive_x_back_strip_rebuild = {
         "skipped": True,
         "reason": "Leave the positive-Z / back-side opening strip untouched.",
@@ -2545,7 +2834,7 @@ def rebuild_front_window_shell(
     fill_mins, fill_maxs = compute_bbox(fill_points)
     return {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_and_repair_front_center_seam",
+        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_repair_front_center_seam_remove_center_spur_node_loft_positive_x_cap_and_align_center_cap_strip",
         "blockerRemovedTriangleCount": blocker_removed_count,
         "afterBlockerTriangleCount": after_blocker_triangle_count,
         "frontFaceRemovedTriangleCount": front_face_removed_count,
@@ -2566,6 +2855,9 @@ def rebuild_front_window_shell(
         "fillPatchDebug": fill_patch_debug,
         "positiveXFrontStripRebuild": positive_x_front_strip_rebuild,
         "positiveXFrontCenterSeamRepair": positive_x_front_center_seam_repair,
+        "frontCenterSpurRepair": front_center_spur_repair,
+        "positiveXCapLoftRepair": positive_x_cap_loft_repair,
+        "centerCapAlignmentRepair": center_cap_alignment_repair,
         "positiveXBackStripRebuild": positive_x_back_strip_rebuild,
         "positiveLipSymmetry": positive_lip_symmetry,
         "positiveLipCenterRebuild": positive_lip_center_rebuild,

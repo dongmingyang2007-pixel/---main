@@ -349,6 +349,10 @@ def get_node_status(memory: Memory | dict[str, Any] | None) -> str:
     return normalize_node_status(metadata.get("node_status"), fallback=ACTIVE_NODE_STATUS)
 
 
+def is_active_memory(memory: Memory | dict[str, Any] | None) -> bool:
+    return get_node_status(memory) == ACTIVE_NODE_STATUS
+
+
 def get_subject_kind(memory: Memory | dict[str, Any] | None) -> str | None:
     if isinstance(memory, Memory):
         direct = str(getattr(memory, "subject_kind", "") or "").strip().lower()
@@ -368,6 +372,19 @@ def get_subject_memory_id(memory: Memory | dict[str, Any] | None) -> str | None:
     value = metadata.get("subject_memory_id")
     if isinstance(value, str):
         value = value.strip()
+        return value or None
+    return None
+
+
+def get_lineage_key(memory: Memory | dict[str, Any] | None) -> str | None:
+    if isinstance(memory, Memory):
+        direct = getattr(memory, "lineage_key", None)
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+    metadata = get_memory_metadata(memory)
+    raw = metadata.get("lineage_key")
+    if isinstance(raw, str):
+        value = raw.strip()
         return value or None
     return None
 
@@ -516,6 +533,13 @@ def normalize_memory_metadata(
         fallback=FACT_NODE_TYPE,
     )
     payload["node_status"] = normalize_node_status(payload.get("node_status"), fallback=ACTIVE_NODE_STATUS)
+    lineage_key = str(payload.get("lineage_key") or "").strip() or None
+    if payload["node_type"] != FACT_NODE_TYPE:
+        lineage_key = None
+    if lineage_key:
+        payload["lineage_key"] = lineage_key
+    else:
+        payload.pop("lineage_key", None)
     payload["memory_kind"] = derive_memory_kind(
         content=content,
         category=category,
