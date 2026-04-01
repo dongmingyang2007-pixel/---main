@@ -26,7 +26,11 @@ from app.services.context_loader import (
 )
 from app.services.composed_realtime import ComposedRealtimeSession, decode_pending_media
 from app.services.asr_client import RealtimeTranscriptionBridge
-from app.services.memory_context import build_memory_context, touch_memories_from_trace
+from app.services.memory_context import (
+    build_conversation_focus_metadata,
+    build_memory_context,
+    touch_memories_from_trace,
+)
 from app.services.realtime_bridge import (
     RealtimeSession,
     register_session,
@@ -271,9 +275,14 @@ async def _post_turn_tasks(
         )
         db_save.add(user_message)
         db_save.add(assistant_message)
-        db_save.query(Conversation).filter(
-            Conversation.id == session.conversation_id
-        ).update({"updated_at": now})
+        conversation = db_save.get(Conversation, session.conversation_id)
+        if conversation is not None:
+            conversation.updated_at = now
+            conversation.metadata_json = build_conversation_focus_metadata(
+                existing_metadata=conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {},
+                retrieval_trace=assistant_metadata_json.get("retrieval_trace"),
+                updated_at=now,
+            )
         touch_memories_from_trace(
             db_save,
             retrieval_trace=assistant_metadata_json.get("retrieval_trace"),
@@ -381,9 +390,14 @@ async def _persist_composed_turn(
         )
         db.add(user_message)
         db.add(assistant_message)
-        db.query(Conversation).filter(
-            Conversation.id == session.conversation_id
-        ).update({"updated_at": now})
+        conversation = db.get(Conversation, session.conversation_id)
+        if conversation is not None:
+            conversation.updated_at = now
+            conversation.metadata_json = build_conversation_focus_metadata(
+                existing_metadata=conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {},
+                retrieval_trace=(assistant_metadata_json or {}).get("retrieval_trace"),
+                updated_at=now,
+            )
         touch_memories_from_trace(
             db,
             retrieval_trace=(assistant_metadata_json or {}).get("retrieval_trace"),

@@ -71,6 +71,7 @@ from app.models import (
     Message,
     Membership,
     MemoryFile,
+    MemoryView,
     ModelVersion,
     PipelineConfig,
     Project,
@@ -628,7 +629,7 @@ def test_realtime_post_turn_tasks_persists_metadata_and_notifies_client(monkeypa
     session.turn_count = 1
 
     retrieval_trace = {
-        "strategy": "layered_memory_v2",
+        "strategy": "subject_graph_v1",
         "memories": [{"id": "mem-1", "source": "semantic", "score": 0.93}],
         "knowledge_chunks": [],
         "linked_file_chunks": [],
@@ -648,7 +649,7 @@ def test_realtime_post_turn_tasks_persists_metadata_and_notifies_client(monkeypa
     assert ws.payloads[0]["type"] == "turn.persisted"
     assistant_payload = ws.payloads[0]["assistant_message"]
     assert isinstance(assistant_payload, dict)
-    assert assistant_payload["metadata_json"]["retrieval_trace"]["strategy"] == "layered_memory_v2"
+    assert assistant_payload["metadata_json"]["retrieval_trace"]["strategy"] == "subject_graph_v1"
 
     with SessionLocal() as db:
         messages = (
@@ -658,7 +659,7 @@ def test_realtime_post_turn_tasks_persists_metadata_and_notifies_client(monkeypa
             .all()
         )
         assert [message.role for message in messages] == ["user", "assistant"]
-        assert messages[1].metadata_json["retrieval_trace"]["strategy"] == "layered_memory_v2"
+        assert messages[1].metadata_json["retrieval_trace"]["strategy"] == "subject_graph_v1"
 
 
 def test_realtime_websocket_prefers_project_realtime_model_when_configured(monkeypatch) -> None:
@@ -3197,6 +3198,46 @@ def test_normalize_assistant_markdown_repairs_sentence_prefixed_inline_bullets()
     assert normalized == "好的，我记住了。\n- 乌龙茶\n- 茉莉花茶"
 
 
+def test_normalize_assistant_markdown_merges_dangling_colon_lines() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "居住地逻辑\n: 长期定居北京，求学于伦敦。\n学术兴趣\n： 拓扑学。"
+    )
+
+    assert normalized == "居住地逻辑: 长期定居北京，求学于伦敦。\n学术兴趣： 拓扑学。"
+
+
+def test_normalize_assistant_markdown_repairs_glued_headings() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "薛定谔方程的启发式推导### 1. 出发点：德布罗意关系\n###5. 加入势能项"
+    )
+
+    assert normalized == (
+        "薛定谔方程的启发式推导\n### 1. 出发点：德布罗意关系\n### 5. 加入势能项"
+    )
+
+
+def test_normalize_assistant_markdown_repairs_glued_math_commands() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "$$\\frac{\\partial^2 \\psi}{\\partialx^2}=-k^2\\psi$$"
+    )
+
+    assert normalized == "$$\\frac{\\partial^2 \\psi}{\\partial x^2}=-k^2\\psi$$"
+
+
+def test_normalize_assistant_markdown_repairs_compact_tables() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "##理性总结| 步骤| 核心思想 | 局限性 ||------|----------|--------||德布罗意关系 | 波粒二象性 | 实验假设 ||平面波假设 | 自由粒子模型 | 仅适用于自由态 |"
+    )
+
+    assert normalized == (
+        "## 理性总结\n"
+        "| 步骤| 核心思想 | 局限性|\n"
+        "|------|----------|--------|\n"
+        "|德布罗意关系 | 波粒二象性 | 实验假设|\n"
+        "|平面波假设 | 自由粒子模型 | 仅适用于自由态 |"
+    )
+
+
 def test_build_and_call_llm_normalizes_assistant_markdown(monkeypatch) -> None:
     async def fake_resolve_enable_thinking(*args, **kwargs):
         del args, kwargs
@@ -4269,6 +4310,38 @@ def test_category_tree_sync_drops_legacy_ordinary_memory_parenting() -> None:
         assert summary.reparented_nodes >= 1
 
 
+def test_memory_create_rejects_legacy_category_and_summary_primary_nodes() -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "memory-legacy-create@example.com", "Legacy Create")
+    project = create_project(client, "旧节点创建限制")
+
+    category_path_response = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "旧分类路径节点",
+            "category": "数学.几何学",
+            "metadata_json": {"concept_source": "category_path"},
+        },
+        headers=csrf_headers(client),
+    )
+    assert category_path_response.status_code == 400
+    assert "legacy derived view" in category_path_response.json()["error"]["message"]
+
+    summary_response = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "旧摘要节点",
+            "category": "数学.几何学",
+            "metadata_json": {"memory_kind": "summary"},
+        },
+        headers=csrf_headers(client),
+    )
+    assert summary_response.status_code == 400
+    assert "derived views" in summary_response.json()["error"]["message"]
+
+
 def test_memory_update_rejects_manual_parent_cycles() -> None:
     client = TestClient(main_module.app)
     register_user(client, "memory-parent-cycle@example.com", "Memory Parent Cycle")
@@ -4276,7 +4349,13 @@ def test_memory_update_rejects_manual_parent_cycles() -> None:
 
     parent = client.post(
         "/api/v1/memory",
-        json={"project_id": project["id"], "content": "父节点", "category": "身份.姓名", "type": "permanent"},
+        json={
+            "project_id": project["id"],
+            "content": "父节点概念",
+            "category": "身份.姓名",
+            "type": "permanent",
+            "node_type": "concept",
+        },
         headers=csrf_headers(client),
     )
     assert parent.status_code == 200
@@ -5687,6 +5766,108 @@ def test_extract_memories_resolves_conversation_from_assistant_message_id(monkey
         assert extracted_facts[0]["fact"] == "用户计划今年去东京旅行。"
 
 
+def test_extract_memories_resolves_non_user_subject_from_quoted_title(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-book-subject@example.com", "Memory Book Subject")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Book Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Book Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="已记住。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "《数学物理原理》包含流形章节。",
+                    "category": "书籍.章节",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.17, 0.29, 0.41]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "请记住这本书《数学物理原理》包含流形章节。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        subject = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "数学物理原理",
+            )
+            .first()
+        )
+        fact_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "《数学物理原理》包含流形章节。",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert subject is not None
+        assert subject.subject_kind == "book"
+        assert fact_memory is not None
+        assert fact_memory.subject_memory_id == subject.id
+        assert fact_memory.parent_memory_id == subject.id
+        extracted_facts = (assistant_message.metadata_json or {}).get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["subject_memory_id"] == subject.id
+        assert extracted_facts[0]["subject_kind"] == "book"
+        assert extracted_facts[0]["subject_resolution"] == "created_or_reused_subject"
+
+
 def test_temporary_preference_keeps_preference_memory_kind() -> None:
     metadata = memory_metadata_service.normalize_memory_metadata(
         content="用户喜欢冷萃咖啡。",
@@ -6570,6 +6751,99 @@ def test_repair_project_memory_graph_deletes_aggregate_nodes_and_repairs_auto_ed
         assert stale_leaf_edge is None
 
 
+def test_repair_project_memory_graph_deletes_legacy_primary_nodes() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-legacy-repair@example.com", "Legacy Repair")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Legacy Repair Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        root_memory, _ = ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户",
+            category="user",
+            type="permanent",
+            node_type="subject",
+            subject_kind="user",
+            parent_memory_id=root_memory.id,
+            metadata_json={"node_type": "subject", "node_kind": "subject", "subject_kind": "user"},
+        )
+        category_path = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="旅行限制",
+            category="出行.限制",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={
+                "node_type": "concept",
+                "node_kind": "category-path",
+                "concept_source": "category_path",
+                "structural_only": True,
+            },
+        )
+        summary_node = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户近期旅行偏好摘要",
+            category="出行.限制",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={"memory_kind": "summary", "node_kind": "summary"},
+        )
+        db.add_all([subject, category_path, summary_node])
+        db.flush()
+
+        category_fact = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户不喜欢红眼航班。",
+            category="出行.限制",
+            type="permanent",
+            parent_memory_id=category_path.id,
+            subject_memory_id=subject.id,
+            metadata_json={"node_type": "fact", "subject_memory_id": subject.id, "source": "auto_extraction"},
+        )
+        summary_fact = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户更偏好白天出发。",
+            category="出行.限制",
+            type="permanent",
+            parent_memory_id=summary_node.id,
+            subject_memory_id=subject.id,
+            metadata_json={"node_type": "fact", "subject_memory_id": subject.id, "source": "auto_extraction"},
+        )
+        db.add_all([category_fact, summary_fact])
+        db.flush()
+        category_path_id = category_path.id
+        summary_node_id = summary_node.id
+        category_fact_id = category_fact.id
+        summary_fact_id = summary_fact.id
+        db.commit()
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        assert db.get(Memory, category_path_id) is None
+        assert db.get(Memory, summary_node_id) is None
+        repaired_category_fact = db.get(Memory, category_fact_id)
+        repaired_summary_fact = db.get(Memory, summary_fact_id)
+        assert repaired_category_fact is not None
+        assert repaired_summary_fact is not None
+        assert repaired_category_fact.parent_memory_id == subject.id
+        assert repaired_summary_fact.parent_memory_id == subject.id
+        assert summary.deleted_legacy_nodes == 2
+
+
 def test_cleanup_pending_upload_session_skips_completed_items_when_task_replays(monkeypatch) -> None:
     client = TestClient(main_module.app)
     register_user(client, "upload-replay@example.com", "Upload Replay")
@@ -7078,7 +7352,7 @@ def test_orchestrator_skips_retrieval_for_self_intro_requests(monkeypatch) -> No
     assert result["retrieval_trace"]["knowledge_chunks"] == []
     assert result["retrieval_trace"]["linked_file_chunks"] == []
     assert "相关知识参考" not in captured["system_prompt"]
-    assert "与当前相关记忆直接关联的资料摘录" not in captured["system_prompt"]
+    assert "与当前主体直接关联的资料摘录" not in captured["system_prompt"]
 
 
 def test_orchestrator_memory_only_context_excludes_knowledge_and_linked_files(monkeypatch) -> None:
@@ -7474,7 +7748,7 @@ def test_orchestrator_includes_chunks_from_memory_linked_files(monkeypatch) -> N
     assert result["content"] == "ok"
     assert result["retrieval_trace"]["context_level"] == "full_rag"
     assert result["retrieval_trace"]["decision_source"] == "rules"
-    assert "与当前相关记忆直接关联的资料摘录" in captured["system_prompt"]
+    assert "与当前主体直接关联的资料摘录" in captured["system_prompt"]
     assert "心理学手册.pdf" in captured["system_prompt"]
     assert "认知行为疗法适用于焦虑干预" in captured["system_prompt"]
 
@@ -7575,7 +7849,7 @@ def test_orchestrator_layered_memory_context_prefers_static_and_relevant_memorie
         )
 
     assert result["content"] == "ok"
-    assert result["retrieval_trace"]["strategy"] == "layered_memory_v2"
+    assert result["retrieval_trace"]["strategy"] == "subject_graph_v1"
     assert "长期喜欢数学和结构化推理" in str(captured["system_prompt"])
     assert "正在准备数学竞赛" in str(captured["system_prompt"])
     assert "上周随手看了一部电影" not in str(captured["system_prompt"])
@@ -7664,7 +7938,7 @@ def test_chat_message_persists_retrieval_trace_and_touches_memory_usage(monkeypa
             "reasoning_content": None,
             "sources": [],
             "retrieval_trace": {
-                "strategy": "layered_memory_v2",
+                "strategy": "subject_graph_v1",
                 "memories": [
                     {
                         "id": memory.json()["id"],
@@ -7686,7 +7960,7 @@ def test_chat_message_persists_retrieval_trace_and_touches_memory_usage(monkeypa
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["metadata_json"]["retrieval_trace"]["strategy"] == "layered_memory_v2"
+    assert body["metadata_json"]["retrieval_trace"]["strategy"] == "subject_graph_v1"
 
     with SessionLocal() as db:
         refreshed = db.get(Memory, memory.json()["id"])
@@ -7694,6 +7968,182 @@ def test_chat_message_persists_retrieval_trace_and_touches_memory_usage(monkeypa
         assert refreshed.metadata_json["retrieval_count"] >= 1
         assert refreshed.metadata_json["last_used_source"] == "semantic"
         assert isinstance(refreshed.metadata_json["last_used_at"], str)
+
+
+def test_chat_message_updates_conversation_focus_from_retrieval_trace(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    monkeypatch.setattr(auth_router.settings, "verification_rate_limit_max", 999)
+    monkeypatch.setattr(auth_router.settings, "auth_rate_limit_ip_max", 999)
+    monkeypatch.setattr(auth_router.settings, "auth_rate_limit_email_ip_max", 999)
+    owner_info = register_user(
+        client,
+        f"focus-trace-{os.urandom(4).hex()}@example.com",
+        "Focus Trace User",
+    )
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Focus Trace Project")
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Focus Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    subject = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "线性代数",
+            "category": "course",
+            "node_type": "subject",
+            "subject_kind": "course",
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert subject.status_code == 200
+
+    concept = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "矩阵分解",
+            "category": "course.matrix",
+            "node_type": "concept",
+            "parent_memory_id": subject.json()["id"],
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert concept.status_code == 200
+
+    async def fake_orchestrate_inference(*args, **kwargs):
+        return {
+            "content": "我们继续看矩阵分解。",
+            "reasoning_content": None,
+            "sources": [],
+            "retrieval_trace": {
+                "strategy": "subject_graph_v1",
+                "primary_subject_id": subject.json()["id"],
+                "active_subject_ids": [subject.json()["id"]],
+                "active_concept_ids": [concept.json()["id"]],
+                "memories": [],
+                "knowledge_chunks": [],
+                "linked_file_chunks": [],
+            },
+        }
+
+    monkeypatch.setattr(chat_router, "orchestrate_inference", fake_orchestrate_inference)
+
+    response = client.post(
+        f"/api/v1/chat/conversations/{conversation.json()['id']}/messages",
+        json={"content": "继续讲矩阵分解"},
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        refreshed = db.get(Conversation, conversation.json()["id"])
+        assert refreshed is not None
+        assert refreshed.metadata_json["primary_subject_id"] == subject.json()["id"]
+        assert refreshed.metadata_json["active_subject_ids"] == [subject.json()["id"]]
+        assert refreshed.metadata_json["active_concept_ids"] == [concept.json()["id"]]
+        assert refreshed.metadata_json["focus_strategy"] == "subject_graph_v1"
+        assert refreshed.metadata_json["active_route"] == "subject_graph_v1"
+        assert refreshed.metadata_json["interaction_mode"] == "subject_graph"
+        assert refreshed.metadata_json["last_graph_focus"]["primary_subject_id"] == subject.json()["id"]
+        assert refreshed.metadata_json["last_graph_focus"]["active_concept_ids"] == [concept.json()["id"]]
+        assert isinstance(refreshed.metadata_json["focus_updated_at"], str)
+
+
+def test_subject_routes_resolve_overview_and_subgraph() -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(
+        client,
+        f"subject-routes-{os.urandom(4).hex()}@example.com",
+        "Subject Routes User",
+    )
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Subject Routes Project")
+
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Subject Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    subject = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "线性代数",
+            "category": "course",
+            "node_type": "subject",
+            "subject_kind": "course",
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert subject.status_code == 200
+
+    concept = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "矩阵分解",
+            "category": "course.matrix",
+            "node_type": "concept",
+            "parent_memory_id": subject.json()["id"],
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert concept.status_code == 200
+
+    fact = client.post(
+        "/api/v1/memory",
+        json={
+            "project_id": project["id"],
+            "content": "奇异值分解可以用于降维。",
+            "category": "course.matrix.svd",
+            "parent_memory_id": concept.json()["id"],
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert fact.status_code == 200
+
+    resolve_response = client.post(
+        "/api/v1/memory/subjects/resolve",
+        json={
+            "project_id": project["id"],
+            "conversation_id": conversation.json()["id"],
+            "query": "线性代数里的矩阵分解",
+        },
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["primary_subject_id"] == subject.json()["id"]
+
+    overview_response = client.get(
+        f"/api/v1/memory/subjects/{subject.json()['id']}/overview",
+        params={"conversation_id": conversation.json()["id"]},
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert overview_response.status_code == 200
+    overview_body = overview_response.json()
+    assert overview_body["subject"]["id"] == subject.json()["id"]
+    assert any(node["id"] == concept.json()["id"] for node in overview_body["concepts"])
+    assert any(node["id"] == fact.json()["id"] for node in overview_body["facts"])
+
+    subgraph_response = client.post(
+        f"/api/v1/memory/subjects/{subject.json()['id']}/subgraph?conversation_id={conversation.json()['id']}",
+        json={"query": "奇异值分解", "depth": 2},
+        headers=csrf_headers(client, workspace_id),
+    )
+    assert subgraph_response.status_code == 200
+    subgraph_body = subgraph_response.json()
+    node_ids = {node["id"] for node in subgraph_body["nodes"]}
+    assert {subject.json()["id"], concept.json()["id"], fact.json()["id"]}.issubset(node_ids)
+    assert any(edge["edge_type"] == "parent" for edge in subgraph_body["edges"])
 
 
 def test_memory_compaction_task_creates_summary_memory_and_edges(monkeypatch) -> None:
@@ -7736,29 +8186,20 @@ def test_memory_compaction_task_creates_summary_memory_and_edges(monkeypatch) ->
 
     with SessionLocal() as db:
         summaries = (
-            db.query(Memory)
+            db.query(MemoryView)
             .filter(
-                Memory.project_id == project["id"],
-                Memory.workspace_id == workspace_id,
+                MemoryView.project_id == project["id"],
+                MemoryView.workspace_id == workspace_id,
+                MemoryView.view_type == "summary",
             )
             .all()
         )
         summary = next(
-            memory
-            for memory in summaries
-            if (memory.metadata_json or {}).get("summary_group_key")
+            view for view in summaries if (view.metadata_json or {}).get("summary_group_key")
         )
         assert "稳定关注数学学习" in summary.content
         assert summary.metadata_json["source_count"] >= 3
-        edges = (
-            db.query(MemoryEdge)
-            .filter(
-                MemoryEdge.source_memory_id == summary.id,
-                MemoryEdge.edge_type == "summary",
-            )
-            .all()
-        )
-        assert {edge.target_memory_id for edge in edges} >= set(source_ids)
+        assert set(summary.metadata_json["source_memory_ids"]) >= set(source_ids)
 
 
 def test_memory_compaction_removes_stale_summary_when_group_shrinks(monkeypatch) -> None:
@@ -7802,15 +8243,15 @@ def test_memory_compaction_removes_stale_summary_when_group_shrinks(monkeypatch)
     with SessionLocal() as db:
         summary = next(
             (
-                memory
-                for memory in db.query(Memory)
+                view
+                for view in db.query(MemoryView)
                 .filter(
-                    Memory.project_id == project["id"],
-                    Memory.workspace_id == workspace_id,
-                    Memory.type == "permanent",
+                    MemoryView.project_id == project["id"],
+                    MemoryView.workspace_id == workspace_id,
+                    MemoryView.view_type == "summary",
                 )
                 .all()
-                if (memory.metadata_json or {}).get("summary_group_key")
+                if (view.metadata_json or {}).get("summary_group_key")
             ),
             None,
         )
@@ -7824,16 +8265,7 @@ def test_memory_compaction_removes_stale_summary_when_group_shrinks(monkeypatch)
     assert delete_resp.status_code == 204
 
     with SessionLocal() as db:
-        assert db.get(Memory, summary_id) is None
-        summary_edges = (
-            db.query(MemoryEdge)
-            .filter(
-                (MemoryEdge.source_memory_id == summary_id)
-                | (MemoryEdge.target_memory_id == summary_id)
-            )
-            .all()
-        )
-        assert summary_edges == []
+        assert db.get(MemoryView, summary_id) is None
 
 
 def test_memory_graph_revision_increments_on_structure_mutations() -> None:

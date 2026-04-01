@@ -114,6 +114,19 @@ GUIDED_FRONT_FILL_RAMP_Y_RANGE_MM = (-2.0, 10.0)
 GUIDED_FRONT_FILL_FRONT_BAND_MM = 0.6
 GUIDED_FRONT_FILL_MIN_RISE_MM = 0.6
 GUIDED_FRONT_FILL_FALLBACK_Z_MM = -15.0
+POSITIVE_X_OPENING_STRIP_X_RANGE_MM = (-0.5, 36.0)
+POSITIVE_X_OPENING_STRIP_Y_RANGE_MM = (-1.1, 9.5)
+POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM = (13.0, 17.05)
+POSITIVE_X_OPENING_STRIP_LOCAL_EDGE_TOLERANCE_MM = 0.5
+POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM = (-0.1, 4.25)
+POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM = (-1.1, -0.45)
+POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM = (-17.1, -15.5)
+EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_TRIANGLE_COUNT = 5
+EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_HOLE_VERTEX_COUNT = 7
+POSITIVE_X_FRONT_CENTER_SEAM_LOCAL_EDGE_TOLERANCE_MM = 0.05
+POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_X_RANGE_MM = (-2.1, -1.9)
+POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Y_RANGE_MM = (-0.47, -0.44)
+POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Z_RANGE_MM = (-17.02, -16.97)
 POSITIVE_LIP_SYMMETRY_X_MAX_MM = 20.5
 POSITIVE_LIP_SYMMETRY_Y_RANGE_MM = (-1.0, 9.35)
 POSITIVE_LIP_SYMMETRY_Z_RANGE_MM = (15.3, 17.05)
@@ -127,6 +140,12 @@ POSITIVE_LIP_UPPER_STRIP_REBUILD_X_RANGE_MM = (-0.1, 20.5)
 POSITIVE_LIP_UPPER_STRIP_REBUILD_Y_RANGE_MM = (9.2, 9.33)
 POSITIVE_LIP_UPPER_STRIP_REBUILD_Z_RANGE_MM = (15.35, 16.36)
 EXPECTED_POSITIVE_LIP_UPPER_STRIP_TRIANGLE_COUNT = 20
+NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM = (-0.001, 2.11)
+NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM = (-1.05, -0.25)
+NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM = (-17.05, -15.0)
+EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_TRIANGLE_COUNT = 6
+EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_HOLE_EDGE_COUNT = 8
+NEGATIVE_FRONT_CENTER_TRANSITION_FAN_APEX_PRODUCT_MM = (1.25, -0.456, -16.85)
 FRONT_FILL_ARTIFACT_CENTER_X_RANGE_MM = (-27.1, -22.45)
 FRONT_FILL_ARTIFACT_CENTER_Y_RANGE_MM = (-0.2, 3.0)
 FRONT_FILL_ARTIFACT_CENTER_Z_RANGE_MM = (-16.05, -14.75)
@@ -535,6 +554,15 @@ def ordered_boundary_loop(
     shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
 ) -> list[np.ndarray]:
     boundary_edges = build_boundary_edges(shell_triangles)
+    if not boundary_edges:
+        return []
+
+    return ordered_boundary_loop_from_edges(boundary_edges)
+
+
+def ordered_boundary_loop_from_edges(
+    boundary_edges: list[tuple[tuple[float, float, float], tuple[float, float, float]]],
+) -> list[np.ndarray]:
     if not boundary_edges:
         return []
 
@@ -1073,6 +1101,290 @@ def build_structured_front_window_patch(
         "localPatchBboxMinProductMm": vector_to_mm_list(local_mins),
         "localPatchBboxMaxProductMm": vector_to_mm_list(local_maxs),
         "localPatchBboxSizeProductMm": vector_to_mm_list(local_maxs - local_mins),
+    }
+
+
+def collect_positive_x_opening_strip_component(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    *,
+    z_positive: bool,
+) -> dict[str, object]:
+    adjacency = build_triangle_vertex_adjacency(shell_triangles)
+    candidate_set: set[int] = set()
+
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        abs_zs_mm = np.abs(zs_mm)
+        center_z_mm = float(zs_mm.mean())
+
+        if (
+            min(xs_mm) >= POSITIVE_X_OPENING_STRIP_X_RANGE_MM[0]
+            and max(xs_mm) <= POSITIVE_X_OPENING_STRIP_X_RANGE_MM[1]
+            and min(ys_mm) >= POSITIVE_X_OPENING_STRIP_Y_RANGE_MM[0]
+            and max(ys_mm) <= POSITIVE_X_OPENING_STRIP_Y_RANGE_MM[1]
+            and min(abs_zs_mm) >= POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM[0]
+            and max(abs_zs_mm) <= POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM[1]
+            and ((center_z_mm > 0.0) if z_positive else (center_z_mm < 0.0))
+        ):
+            candidate_set.add(triangle_index)
+
+    components: list[list[int]] = []
+    seen: set[int] = set()
+    for start_index in sorted(candidate_set):
+        if start_index in seen:
+            continue
+        queue = deque([start_index])
+        seen.add(start_index)
+        component_indices: list[int] = []
+        while queue:
+            current_index = queue.popleft()
+            component_indices.append(current_index)
+            for neighbor_index in adjacency[current_index]:
+                if neighbor_index in seen or neighbor_index not in candidate_set:
+                    continue
+                seen.add(neighbor_index)
+                queue.append(neighbor_index)
+        components.append(sorted(component_indices))
+
+    if not components:
+        raise ValueError(
+            f"Failed to find positive-X opening strip component for {'positive' if z_positive else 'negative'} Z."
+        )
+
+    selected_indices = max(components, key=len)
+    selected_triangles = [shell_triangles[index] for index in selected_indices]
+    selected_points = [point for triangle in selected_triangles for point in triangle]
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "zSign": "positive" if z_positive else "negative",
+        "candidateTriangleCount": len(candidate_set),
+        "componentCount": len(components),
+        "triangleIndices": selected_indices,
+        "triangleCount": len(selected_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionRangesProductMm": {
+            "x": list(POSITIVE_X_OPENING_STRIP_X_RANGE_MM),
+            "y": list(POSITIVE_X_OPENING_STRIP_Y_RANGE_MM),
+            "absZ": list(POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM),
+        },
+    }
+
+
+def rebuild_positive_x_opening_strip_component(
+    gltf: dict,
+    bin_chunk: bytearray,
+    *,
+    z_positive: bool,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    component = collect_positive_x_opening_strip_component(shell_triangles, z_positive=z_positive)
+    target_indices = set(int(index) for index in component["triangleIndices"])
+    shell_without_component = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_component)
+    bbox_min = np.array(component["bboxMinProductMm"], dtype=float)
+    bbox_max = np.array(component["bboxMaxProductMm"], dtype=float)
+    tolerance = POSITIVE_X_OPENING_STRIP_LOCAL_EDGE_TOLERANCE_MM
+    local_hole_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= bbox_min[0] - tolerance
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= bbox_max[0] + tolerance
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= bbox_min[1] - tolerance
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= bbox_max[1] + tolerance
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= bbox_min[2] - tolerance
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= bbox_max[2] + tolerance
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(local_hole_edges)
+    split_index = len(hole_loop) // 2
+    chain_a = [point.copy() for point in hole_loop[: split_index + 1]]
+    chain_b = [hole_loop[0].copy()] + [point.copy() for point in reversed(hole_loop[split_index:])]
+    reference_center = np.mean(np.stack(hole_loop, axis=0), axis=0)
+    rebuilt_triangles = loft_open_polylines(chain_a, chain_b, reference_center)
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_component + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive-X {'positive' if z_positive else 'negative'}-Z strip rebuild, "
+            f"found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "zSign": component["zSign"],
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "holeLoopVertexCount": len(hole_loop),
+        "holeSplitIndex": split_index,
+        "chainAPointCount": len(chain_a),
+        "chainBPointCount": len(chain_b),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "region": component,
+    }
+
+
+def select_positive_x_front_center_seam_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM[0]
+            and max(xs_mm) <= POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM[1]
+            and min(ys_mm) >= POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM[0]
+            and max(ys_mm) <= POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM[1]
+            and min(zs_mm) >= POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM[0]
+            and max(zs_mm) <= POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+
+    if len(triangle_indices) != EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_TRIANGLE_COUNT} positive-X front center seam triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    selected_triangles = [shell_triangles[index] for index in triangle_indices]
+    selected_points = [point for triangle in selected_triangles for point in triangle]
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionRangesProductMm": {
+            "x": list(POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM),
+            "y": list(POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM),
+            "z": list(POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM),
+        },
+    }
+
+
+def find_unique_shell_vertex_in_ranges(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    *,
+    x_range_mm: tuple[float, float],
+    y_range_mm: tuple[float, float],
+    z_range_mm: tuple[float, float],
+) -> np.ndarray:
+    matching_points: list[np.ndarray] = []
+    seen_points: set[tuple[float, float, float]] = set()
+
+    for triangle in shell_triangles:
+        for point in triangle:
+            rounded_point = tuple(round(float(value), 9) for value in point)
+            if rounded_point in seen_points:
+                continue
+            seen_points.add(rounded_point)
+
+            point_mm = point * 1000.0
+            if (
+                x_range_mm[0] <= float(point_mm[0]) <= x_range_mm[1]
+                and y_range_mm[0] <= float(point_mm[1]) <= y_range_mm[1]
+                and z_range_mm[0] <= float(point_mm[2]) <= z_range_mm[1]
+            ):
+                matching_points.append(point.copy())
+
+    if len(matching_points) != 1:
+        raise ValueError(
+            f"Expected exactly one shell vertex in ranges x={x_range_mm}, y={y_range_mm}, z={z_range_mm}; "
+            f"found {len(matching_points)}."
+        )
+    return matching_points[0]
+
+
+def repair_positive_x_front_center_seam(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    seam_region = select_positive_x_front_center_seam_triangles(shell_triangles)
+    target_indices = set(int(index) for index in seam_region["triangleIndices"])
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    bbox_min = np.array(seam_region["bboxMinProductMm"], dtype=float)
+    bbox_max = np.array(seam_region["bboxMaxProductMm"], dtype=float)
+    tolerance = POSITIVE_X_FRONT_CENTER_SEAM_LOCAL_EDGE_TOLERANCE_MM
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= bbox_min[0] - tolerance
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= bbox_max[0] + tolerance
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= bbox_min[1] - tolerance
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= bbox_max[1] + tolerance
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= bbox_min[2] - tolerance
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= bbox_max[2] + tolerance
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_FRONT_CENTER_SEAM_HOLE_VERTEX_COUNT} front center seam hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    left_apex = find_unique_shell_vertex_in_ranges(
+        shell_triangles,
+        x_range_mm=POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_X_RANGE_MM,
+        y_range_mm=POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Y_RANGE_MM,
+        z_range_mm=POSITIVE_X_FRONT_CENTER_SEAM_LEFT_APEX_Z_RANGE_MM,
+    )
+    mirrored_apex = left_apex.copy()
+    mirrored_apex[0] *= -1.0
+
+    reference_center = np.mean(np.stack([point for triangle in shell_triangles for point in triangle], axis=0), axis=0)
+    rebuilt_triangles = [
+        orient_triangle_away_from_center((hole_loop[index], hole_loop[(index + 1) % len(hole_loop)], mirrored_apex), reference_center)
+        for index in range(len(hole_loop))
+    ]
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive-X front center seam repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "holeLoopVertexCount": len(hole_loop),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "leftApexProductMm": vector_to_mm_list(left_apex),
+        "mirroredApexProductMm": vector_to_mm_list(mirrored_apex),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "region": seam_region,
     }
 
 
@@ -1624,6 +1936,127 @@ def rebuild_positive_lip_upper_strip(
     }
 
 
+def select_negative_front_center_transition_region(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    collected_points: list[np.ndarray] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM[0]
+            and max(xs_mm) <= NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM[1]
+            and min(ys_mm) >= NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM[0]
+            and max(ys_mm) <= NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM[1]
+            and min(zs_mm) >= NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM[0]
+            and max(zs_mm) <= NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+            collected_points.extend(triangle)
+
+    if len(triangle_indices) != EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_TRIANGLE_COUNT} negative-front center triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    mins, maxs = compute_bbox(collected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+        "selectionRangesProductMm": {
+            "x": list(NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM),
+            "y": list(NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM),
+            "z": list(NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM),
+        },
+    }
+
+
+def rebuild_negative_front_center_transition(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    rebuild_region = select_negative_front_center_transition_region(shell_triangles)
+    target_indices = set(int(index) for index in rebuild_region["triangleIndices"])
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    hole_boundary_edges = [
+        edge
+        for edge in build_boundary_edges(shell_without_region)
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM[0] - 0.5
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_FRONT_CENTER_TRANSITION_X_RANGE_MM[1] + 0.5
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM[0] - 0.1
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_FRONT_CENTER_TRANSITION_Y_RANGE_MM[1] + 0.1
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM[0] - 0.1
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_FRONT_CENTER_TRANSITION_Z_RANGE_MM[1] + 0.1
+        )
+    ]
+    if len(hole_boundary_edges) != EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_HOLE_EDGE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_FRONT_CENTER_TRANSITION_HOLE_EDGE_COUNT} local hole edges for "
+            f"negative-front center rebuild, found {len(hole_boundary_edges)}."
+        )
+
+    loop_points = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    fan_apex = np.array(NEGATIVE_FRONT_CENTER_TRANSITION_FAN_APEX_PRODUCT_MM, dtype=float) / 1000.0
+    reference_center = np.mean(np.stack(loop_points, axis=0), axis=0)
+    rebuilt_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for index in range(len(loop_points)):
+        triangle = orient_triangle_away_from_center(
+            (
+                fan_apex.copy(),
+                loop_points[index].copy(),
+                loop_points[(index + 1) % len(loop_points)].copy(),
+            ),
+            reference_center,
+        )
+        area_vector = np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])
+        if float(np.linalg.norm(area_vector)) <= 1e-12:
+            continue
+        rebuilt_triangles.append(triangle)
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after negative-front center rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "fanApexProductMm": list(NEGATIVE_FRONT_CENTER_TRANSITION_FAN_APEX_PRODUCT_MM),
+        "holeLoopPointCount": len(loop_points),
+        "holeLoopProductMm": [vector_to_mm_list(point) for point in loop_points],
+        "region": {
+            "triangleCount": int(rebuild_region["triangleCount"]),
+            "triangleIndices": list(rebuild_region["triangleIndices"]),
+            "bboxMinProductMm": list(rebuild_region["bboxMinProductMm"]),
+            "bboxMaxProductMm": list(rebuild_region["bboxMaxProductMm"]),
+            "bboxSizeProductMm": list(rebuild_region["bboxSizeProductMm"]),
+            "selectionRangesProductMm": dict(rebuild_region["selectionRangesProductMm"]),
+        },
+    }
+
+
 def draw_depth_weighted_view(
     ax: plt.Axes,
     part_geometries: dict[str, dict[str, object]],
@@ -2073,9 +2506,35 @@ def rebuild_front_window_shell(
     fill_triangles, fill_patch_debug = build_structured_front_window_patch(boundary_loop, rim_reference)
     final_product_triangles = shell_triangles + fill_triangles
     replace_shell_with_product_triangles(gltf, bin_chunk, final_product_triangles)
-    positive_lip_symmetry = enforce_positive_lip_symmetry(gltf, bin_chunk)
-    positive_lip_center_rebuild = rebuild_positive_lip_center_strip(gltf, bin_chunk)
-    positive_lip_upper_strip_rebuild = rebuild_positive_lip_upper_strip(gltf, bin_chunk)
+    positive_x_front_strip_rebuild = rebuild_positive_x_opening_strip_component(
+        gltf,
+        bin_chunk,
+        z_positive=False,
+    )
+    positive_x_front_center_seam_repair = repair_positive_x_front_center_seam(
+        gltf,
+        bin_chunk,
+    )
+    positive_x_back_strip_rebuild = {
+        "skipped": True,
+        "reason": "Leave the positive-Z / back-side opening strip untouched.",
+    }
+    positive_lip_symmetry = {
+        "skipped": True,
+        "reason": "Superseded by full positive-X opening strip rebuild.",
+    }
+    positive_lip_center_rebuild = {
+        "skipped": True,
+        "reason": "Superseded by full positive-X opening strip rebuild.",
+    }
+    positive_lip_upper_strip_rebuild = {
+        "skipped": True,
+        "reason": "Superseded by full positive-X opening strip rebuild.",
+    }
+    negative_front_center_rebuild = {
+        "skipped": True,
+        "reason": "Superseded by full positive-X opening strip rebuild.",
+    }
 
     final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
     final_boundary_edges = build_boundary_edges(final_shell_triangles)
@@ -2086,7 +2545,7 @@ def rebuild_front_window_shell(
     fill_mins, fill_maxs = compute_bbox(fill_points)
     return {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_and_mirror_positive_z_lip",
+        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_and_repair_front_center_seam",
         "blockerRemovedTriangleCount": blocker_removed_count,
         "afterBlockerTriangleCount": after_blocker_triangle_count,
         "frontFaceRemovedTriangleCount": front_face_removed_count,
@@ -2105,9 +2564,13 @@ def rebuild_front_window_shell(
         "slopedResidualComponent": sloped_residual_component,
         "rimReference": serialize_front_window_reference_rim(rim_reference),
         "fillPatchDebug": fill_patch_debug,
+        "positiveXFrontStripRebuild": positive_x_front_strip_rebuild,
+        "positiveXFrontCenterSeamRepair": positive_x_front_center_seam_repair,
+        "positiveXBackStripRebuild": positive_x_back_strip_rebuild,
         "positiveLipSymmetry": positive_lip_symmetry,
         "positiveLipCenterRebuild": positive_lip_center_rebuild,
         "positiveLipUpperStripRebuild": positive_lip_upper_strip_rebuild,
+        "negativeFrontCenterRebuild": negative_front_center_rebuild,
         "fillPatchBboxMinProductMm": vector_to_mm_list(fill_mins),
         "fillPatchBboxMaxProductMm": vector_to_mm_list(fill_maxs),
         "fillPatchBboxSizeProductMm": vector_to_mm_list(fill_maxs - fill_mins),

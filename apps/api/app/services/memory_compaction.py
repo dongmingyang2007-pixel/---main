@@ -8,27 +8,25 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Memory, MemoryEdge, MemoryFile, Project
-from app.services.memory_category_tree import ensure_project_category_tree
+from app.models import Memory, MemoryFile, MemoryView, Project
 from app.services.dashscope_client import chat_completion
-from app.services.embedding import embed_and_store
 from app.services.memory_metadata import (
     MEMORY_KIND_EPISODIC,
     MEMORY_KIND_PREFERENCE,
     MEMORY_KIND_PROFILE,
     build_summary_group_key,
-    build_summary_memory_metadata,
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
     is_category_path_memory,
     is_concept_memory,
     is_pinned_memory,
+    is_subject_memory,
     is_summary_memory,
     normalize_category_path,
     shorten_text,
 )
-from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
+from app.services.memory_roots import is_assistant_root_memory
 from app.services.memory_visibility import build_private_memory_metadata, get_memory_owner_user_id, is_private_memory
 
 SUMMARY_MIN_GROUP_SIZE = 3
@@ -67,7 +65,7 @@ class MemoryCompactionSummary:
 
 def _summary_category(memory: Memory, memories_by_id: dict[str, Memory]) -> str:
     parent = memories_by_id.get(memory.parent_memory_id or "")
-    if parent is not None and (is_concept_memory(parent) or is_category_path_memory(parent)):
+    if parent is not None and is_concept_memory(parent):
         category = normalize_category_path(parent.category)
         if category:
             return category
@@ -81,6 +79,7 @@ def _eligible_for_compaction(memory: Memory) -> bool:
     if (
         is_assistant_root_memory(memory)
         or is_summary_memory(memory)
+        or is_subject_memory(memory)
         or is_concept_memory(memory)
         or is_category_path_memory(memory)
         or is_pinned_memory(memory)
@@ -191,14 +190,6 @@ async def compact_project_memories(
     if project is None:
         return MemoryCompactionSummary(updated_summary_ids=[])
 
-    root_memory, _changed = ensure_project_assistant_root(db, project, reparent_orphans=False)
-    tree_summary = ensure_project_category_tree(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    if any(tree_summary.as_dict().values()):
-        db.flush()
     memories = (
         db.query(Memory)
         .filter(
@@ -209,14 +200,19 @@ async def compact_project_memories(
         .all()
     )
     grouped = _group_memories(memories)
-    summary_memories = [
-        memory for memory in memories
-        if is_summary_memory(memory)
-    ]
+    summary_views = (
+        db.query(MemoryView)
+        .filter(
+            MemoryView.workspace_id == workspace_id,
+            MemoryView.project_id == project_id,
+            MemoryView.view_type == "summary",
+        )
+        .all()
+    )
     summaries_by_group = {
-        str(get_memory_metadata(memory).get("summary_group_key") or ""): memory
-        for memory in summary_memories
-        if str(get_memory_metadata(memory).get("summary_group_key") or "")
+        str((view.metadata_json or {}).get("summary_group_key") or ""): view
+        for view in summary_views
+        if str((view.metadata_json or {}).get("summary_group_key") or "")
     }
     active_group_keys: set[str] = set()
 
@@ -246,80 +242,50 @@ async def compact_project_memories(
         active_group_keys.add(group_key)
         owner_user_id = get_memory_owner_user_id(sample) if is_private_memory(sample) else None
         source_memory_ids = [memory.id for memory in ordered_group]
-        summary_metadata = build_summary_memory_metadata(
-            content=summary_content,
-            category=summary_category,
-            source_memory_ids=source_memory_ids,
-            summary_group_key=group_key,
-            salience=max(0.82, max(get_memory_salience(memory) for memory in ordered_group)),
-        )
+        summary_metadata: dict[str, object] = {
+            "summary_group_key": group_key,
+            "source_memory_ids": list(dict.fromkeys(source_memory_ids)),
+            "source_count": len(list(dict.fromkeys(source_memory_ids))),
+            "category": summary_category,
+            "salience": max(0.82, max(get_memory_salience(memory) for memory in ordered_group)),
+            "auto_generated": True,
+            "view_kind": "summary",
+        }
         if owner_user_id:
             summary_metadata = build_private_memory_metadata(summary_metadata, owner_user_id=owner_user_id)
 
-        summary_memory = summaries_by_group.get(group_key)
-        if summary_memory is None:
-            summary_memory = Memory(
+        summary_view = summaries_by_group.get(group_key)
+        source_subject_id = sample.subject_memory_id
+
+        if summary_view is None:
+            summary_view = MemoryView(
                 workspace_id=workspace_id,
                 project_id=project_id,
+                source_subject_id=source_subject_id,
+                view_type="summary",
                 content=summary_content,
-                category=summary_category,
-                type="permanent",
-                source_conversation_id=None,
-                parent_memory_id=sample.parent_memory_id or root_memory.id,
                 metadata_json=summary_metadata,
             )
-            db.add(summary_memory)
+            db.add(summary_view)
             db.flush()
-            summaries_by_group[group_key] = summary_memory
+            summaries_by_group[group_key] = summary_view
             summary.created_summaries += 1
         else:
-            summary_memory.content = summary_content
-            summary_memory.category = summary_category
-            summary_memory.metadata_json = summary_metadata
-            summary_memory.parent_memory_id = sample.parent_memory_id or root_memory.id
+            summary_view.content = summary_content
+            summary_view.source_subject_id = source_subject_id
+            summary_view.metadata_json = summary_metadata
             summary.updated_summaries += 1
 
-        db.execute(
-            sql_text(
-                "DELETE FROM embeddings WHERE memory_id = :memory_id"
-            ),
-            {"memory_id": summary_memory.id},
-        )
-        db.query(MemoryEdge).filter(
-            MemoryEdge.source_memory_id == summary_memory.id,
-            MemoryEdge.edge_type == "summary",
-        ).delete(synchronize_session=False)
-
-        for source_memory_id in source_memory_ids:
-            db.add(
-                MemoryEdge(
-                    source_memory_id=summary_memory.id,
-                    target_memory_id=source_memory_id,
-                    edge_type="summary",
-                    strength=SUMMARY_EDGE_STRENGTH,
-                )
-            )
-
-        try:
-            await embed_and_store(
-                db,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                memory_id=summary_memory.id,
-                chunk_text=summary_content,
-                auto_commit=False,
-            )
-        except Exception:
-            pass
-        summary.updated_summary_ids.append(summary_memory.id)
+        summary.updated_summary_ids.append(summary_view.id)
 
     stale_group_keys = sorted(set(summaries_by_group) - active_group_keys)
     for group_key in stale_group_keys:
-        summary_memory = summaries_by_group[group_key]
-        db.query(MemoryEdge).filter(
-            (MemoryEdge.source_memory_id == summary_memory.id)
-            | (MemoryEdge.target_memory_id == summary_memory.id)
-        ).delete(synchronize_session=False)
+        summary_view = summaries_by_group[group_key]
+        db.delete(summary_view)
+        summary.deleted_summaries += 1
+
+    legacy_summary_memories = [memory for memory in memories if is_summary_memory(memory)]
+    for summary_memory in legacy_summary_memories:
         db.query(MemoryFile).filter(MemoryFile.memory_id == summary_memory.id).delete(synchronize_session=False)
         db.execute(
             sql_text("DELETE FROM embeddings WHERE memory_id = :memory_id"),

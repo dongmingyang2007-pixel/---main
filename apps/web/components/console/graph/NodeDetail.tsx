@@ -30,7 +30,7 @@ interface MemoryDetailEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center";
+  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center" | "parent" | "prerequisite" | "evidence";
   strength: number;
   created_at: string;
 }
@@ -104,7 +104,8 @@ function formatMemoryRoleLabel(
   const labels: Record<NonNullable<ReturnType<typeof getMemoryNodeRole>>, string> = {
     fact: t("graph.roleFact"),
     structure: t("graph.roleStructure"),
-    theme: t("graph.roleTheme"),
+    subject: t("graph.roleSubject"),
+    concept: t("graph.roleConcept"),
     summary: t("graph.roleSummary"),
   };
   if (!role) {
@@ -121,6 +122,9 @@ function formatEdgeTypeLabel(edgeType: MemoryDetailEdge["edge_type"], t: (key: s
     summary: t("graph.summaryEdge"),
     file: t("graph.fileEdge"),
     center: t("graph.centerEdge"),
+    parent: t("graph.parentEdge"),
+    prerequisite: t("graph.prerequisiteEdge"),
+    evidence: t("graph.evidenceEdge"),
   };
   return labels[edgeType] || edgeType;
 }
@@ -208,7 +212,8 @@ export default function NodeDetail({
   const summarySourceCount = getSummarySourceCount(node);
   const summaryNode = memoryRole === "summary";
   const structureNode = memoryRole === "structure";
-  const themeNode = memoryRole === "theme";
+  const subjectNode = memoryRole === "subject";
+  const conceptNode = memoryRole === "concept";
   const syntheticGraphNode = isSyntheticGraphNode(node);
   const pinned = isPinnedMemoryNode(node);
   const categorySegments = getMemoryCategorySegments(node);
@@ -254,6 +259,22 @@ export default function NodeDetail({
     () => (fileNode && node.parent_memory_id ? resolveNodeById(node.parent_memory_id) : null),
     [fileNode, node.parent_memory_id, resolveNodeById],
   );
+  const subjectNodeRef = useMemo(() => {
+    if (memoryRole === "subject") {
+      return node;
+    }
+    if (typeof node.subject_memory_id === "string" && node.subject_memory_id) {
+      return resolveNodeById(node.subject_memory_id);
+    }
+    if (fileNode && linkedMemory) {
+      return (
+        (typeof linkedMemory.subject_memory_id === "string" && linkedMemory.subject_memory_id
+          ? resolveNodeById(linkedMemory.subject_memory_id)
+          : null) ?? linkedMemory
+      );
+    }
+    return null;
+  }, [fileNode, linkedMemory, memoryRole, node, resolveNodeById]);
   const childNodes = useMemo(
     () => {
       const candidates = allNodes.filter(
@@ -281,13 +302,21 @@ export default function NodeDetail({
     () => connectedEdges.filter((edge) => edge.edge_type === "related"),
     [connectedEdges],
   );
+  const prerequisiteEdges = useMemo(
+    () => connectedEdges.filter((edge) => edge.edge_type === "prerequisite"),
+    [connectedEdges],
+  );
+  const evidenceEdges = useMemo(
+    () => connectedEdges.filter((edge) => edge.edge_type === "evidence"),
+    [connectedEdges],
+  );
 
   const nodeHeading = fileNode
     ? String(fileMetadata.filename || node.content || t("graph.untitledFile"))
     : formatNodeLabel(node);
   const nodeTone = fileNode
-    ? t("graph.fileNode")
-    : t("graph.memoryNode");
+    ? t("graph.evidenceNode")
+    : formatMemoryRoleLabel(memoryRole, t);
   const nodeDescriptor = currentParentIsTopLevel
     ? t("graph.parentTopLevel")
     : displayedParentNode
@@ -603,8 +632,10 @@ export default function NodeDetail({
                       ? "is-file"
                       : structureNode
                         ? "is-structural"
-                        : themeNode
-                          ? "is-memory"
+                        : subjectNode
+                          ? "is-subject"
+                          : conceptNode
+                            ? "is-concept"
                         : summaryNode
                           ? "is-summary"
                           : node.type === "temporary"
@@ -632,6 +663,9 @@ export default function NodeDetail({
                   <span className="graph-detail-badge is-neutral">
                     {formatMemoryRoleLabel(memoryRole, t)}
                   </span>
+                ) : null}
+                {!fileNode && node.subject_kind ? (
+                  <span className="graph-detail-badge is-neutral">{node.subject_kind}</span>
                 ) : null}
                 {!fileNode && !summaryNode ? (
                   <span className="graph-detail-badge is-neutral">
@@ -683,6 +717,22 @@ export default function NodeDetail({
                   <span className="graph-detail-label">{t("graph.createdAt")}</span>
                   <span className="graph-detail-value">{formatDate(node.created_at)}</span>
                 </div>
+                <div className="graph-detail-meta">
+                  <span className="graph-detail-label">{t("graph.nodeType")}</span>
+                  <span className="graph-detail-value">{nodeTone}</span>
+                </div>
+                {subjectNodeRef ? (
+                  <div className="graph-detail-meta">
+                    <span className="graph-detail-label">{t("graph.subject")}</span>
+                    <button
+                      type="button"
+                      className="graph-detail-link-button"
+                      onClick={() => onFocusNode(subjectNodeRef)}
+                    >
+                      {formatNodeLabel(subjectNodeRef)}
+                    </button>
+                  </div>
+                ) : null}
               </section>
             ) : (
               <>
@@ -721,6 +771,10 @@ export default function NodeDetail({
                   </div>
                   <div className="graph-detail-meta-grid">
                     <div className="graph-detail-meta">
+                      <span className="graph-detail-label">{t("graph.nodeType")}</span>
+                      <span className="graph-detail-value">{nodeTone}</span>
+                    </div>
+                    <div className="graph-detail-meta">
                       <span className="graph-detail-label">{t("graph.createdAt")}</span>
                       <span className="graph-detail-value">{formatDate(node.created_at)}</span>
                     </div>
@@ -740,6 +794,24 @@ export default function NodeDetail({
                       <div className="graph-detail-meta">
                         <span className="graph-detail-label">{t("graph.lastUsedSource")}</span>
                         <span className="graph-detail-value">{lastUsedSource}</span>
+                      </div>
+                    ) : null}
+                    {subjectNodeRef ? (
+                      <div className="graph-detail-meta">
+                        <span className="graph-detail-label">{t("graph.subject")}</span>
+                        <button
+                          type="button"
+                          className="graph-detail-link-button"
+                          onClick={() => onFocusNode(subjectNodeRef)}
+                        >
+                          {formatNodeLabel(subjectNodeRef)}
+                        </button>
+                      </div>
+                    ) : null}
+                    {node.subject_kind ? (
+                      <div className="graph-detail-meta">
+                        <span className="graph-detail-label">{t("graph.subjectKind")}</span>
+                        <span className="graph-detail-value">{node.subject_kind}</span>
                       </div>
                     ) : null}
                     {summaryNode ? (
@@ -920,6 +992,11 @@ export default function NodeDetail({
                   </div>
 
                   <div className="graph-detail-subsection">
+                    <span className="graph-detail-subsection-title">{t("graph.prerequisites")}</span>
+                    {renderRelationList(prerequisiteEdges, t("graph.noPrerequisites"), "system")}
+                  </div>
+
+                  <div className="graph-detail-subsection">
                     <span className="graph-detail-subsection-title">{t("graph.systemConnections")}</span>
                     {renderRelationList(systemRelatedEdges, t("graph.noSystemConnections"), "system")}
                   </div>
@@ -928,12 +1005,17 @@ export default function NodeDetail({
                     <span className="graph-detail-subsection-title">{t("graph.manualConnections")}</span>
                     {renderRelationList(manualEdges, t("graph.noManualConnections"), "manual")}
                   </div>
+
+                  <div className="graph-detail-subsection">
+                    <span className="graph-detail-subsection-title">{t("graph.evidenceLinks")}</span>
+                    {renderRelationList(evidenceEdges, t("graph.noEvidenceLinks"), "system")}
+                  </div>
                 </section>
 
                 {canManageFiles ? (
                   <section className="graph-detail-section">
                     <div className="graph-detail-section-header">
-                      <span className="graph-detail-section-title">{t("graph.relatedFiles")}</span>
+                      <span className="graph-detail-section-title">{t("graph.evidenceFiles")}</span>
                     </div>
                     {loadingAvailableFiles ? (
                       <div className="graph-detail-empty">{t("graph.loadingFiles")}</div>

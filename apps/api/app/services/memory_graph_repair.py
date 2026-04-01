@@ -7,16 +7,19 @@ from sqlalchemy import or_, text as sql_text
 from sqlalchemy.orm import Session
 
 from app.models import Memory, MemoryEdge, MemoryFile, Project
-from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.memory_metadata import (
     MEMORY_KIND_GOAL,
     MEMORY_KIND_PREFERENCE,
+    clear_manual_parent_binding,
     get_memory_kind,
     get_memory_metadata,
+    has_manual_parent_binding,
     is_category_path_memory,
     is_concept_memory,
     is_pinned_memory,
+    is_subject_memory,
     is_summary_memory,
+    normalize_memory_metadata,
 )
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 
@@ -24,6 +27,7 @@ from app.services.memory_roots import ensure_project_assistant_root, is_assistan
 @dataclass(slots=True)
 class MemoryGraphRepairSummary:
     deleted_aggregate_nodes: int = 0
+    deleted_legacy_nodes: int = 0
     reparented_nodes: int = 0
     deleted_auto_edges: int = 0
     created_auto_edges: int = 0
@@ -62,9 +66,8 @@ def _shared_category_prefix_length(left: str, right: str) -> int:
 def _is_structural_parent_memory(memory: Memory | None) -> bool:
     return memory is not None and (
         is_assistant_root_memory(memory)
+        or is_subject_memory(memory)
         or is_concept_memory(memory)
-        or is_category_path_memory(memory)
-        or is_summary_memory(memory)
     )
 
 
@@ -78,7 +81,7 @@ def _is_auto_managed_memory(memory: Memory) -> bool:
 
 
 def _is_aggregate_leaf_memory(memory: Memory) -> bool:
-    if is_assistant_root_memory(memory) or is_concept_memory(memory) or is_summary_memory(memory):
+    if is_assistant_root_memory(memory) or is_subject_memory(memory) or is_concept_memory(memory) or is_summary_memory(memory):
         return False
     normalized = re.sub(r"\s+", "", memory.content.strip())
     if not normalized:
@@ -97,6 +100,8 @@ def _is_aggregate_leaf_memory(memory: Memory) -> bool:
 
 
 def _score_concept_parent(candidate: Memory, memory: Memory) -> float:
+    if memory.subject_memory_id and candidate.subject_memory_id != memory.subject_memory_id:
+        return 0.0
     score = 0.0
     shared_prefix = _shared_category_prefix_length(candidate.category, memory.category)
     score += shared_prefix * 0.35
@@ -112,6 +117,22 @@ def _score_concept_parent(candidate: Memory, memory: Memory) -> float:
     return score
 
 
+def _default_parent_for_memory(
+    memory: Memory,
+    *,
+    root_memory: Memory,
+    memories_by_id: dict[str, Memory],
+) -> Memory:
+    if is_subject_memory(memory):
+        return root_memory
+    subject_memory_id = memory.subject_memory_id
+    if subject_memory_id:
+        subject_memory = memories_by_id.get(subject_memory_id)
+        if subject_memory is not None and is_subject_memory(subject_memory):
+            return subject_memory
+    return root_memory
+
+
 def _find_repair_parent(
     memory: Memory,
     *,
@@ -119,7 +140,12 @@ def _find_repair_parent(
     root_memory: Memory,
     memories_by_id: dict[str, Memory],
 ) -> Memory:
-    if current_parent and current_parent.parent_memory_id:
+    if (
+        current_parent
+        and current_parent.parent_memory_id
+        and not is_category_path_memory(current_parent)
+        and not is_summary_memory(current_parent)
+    ):
         grandparent = memories_by_id.get(current_parent.parent_memory_id)
         if _is_structural_parent_memory(grandparent):
             return grandparent
@@ -129,7 +155,7 @@ def _find_repair_parent(
     for candidate in memories_by_id.values():
         if candidate.project_id != memory.project_id or candidate.id == memory.id:
             continue
-        if not (is_concept_memory(candidate) or is_category_path_memory(candidate)):
+        if not is_concept_memory(candidate):
             continue
         score = _score_concept_parent(candidate, memory)
         if score > best_score:
@@ -137,7 +163,11 @@ def _find_repair_parent(
             best_score = score
     if best_candidate and best_score >= 0.55:
         return best_candidate
-    return root_memory
+    return _default_parent_for_memory(
+        memory,
+        root_memory=root_memory,
+        memories_by_id=memories_by_id,
+    )
 
 
 def _delete_memory(db: Session, memory_id: str) -> None:
@@ -185,8 +215,47 @@ def repair_project_memory_graph(
 
     deleted_memory_ids: set[str] = set()
 
+    legacy_nodes = [
+        memory
+        for memory in memories
+        if memory.id != root_memory.id and (is_category_path_memory(memory) or is_summary_memory(memory))
+    ]
+    for memory in legacy_nodes:
+        if memory.id in deleted_memory_ids:
+            continue
+
+        children = [
+            child
+            for child in memories
+            if child.parent_memory_id == memory.id and child.id not in deleted_memory_ids
+        ]
+        for child in children:
+            replacement_parent = _find_repair_parent(
+                child,
+                current_parent=memory,
+                root_memory=root_memory,
+                memories_by_id=memories_by_id,
+            )
+            if child.parent_memory_id != replacement_parent.id:
+                child.parent_memory_id = replacement_parent.id
+                summary.reparented_nodes += 1
+            if has_manual_parent_binding(child):
+                child.metadata_json = normalize_memory_metadata(
+                    content=child.content,
+                    category=child.category,
+                    memory_type=child.type,
+                    metadata=clear_manual_parent_binding(dict(child.metadata_json or {})),
+                )
+
+        deleted_memory_ids.add(memory.id)
+        memories_by_id.pop(memory.id, None)
+        _delete_memory(db, memory.id)
+        summary.deleted_legacy_nodes += 1
+
     for memory in memories:
         if memory.id == root_memory.id:
+            continue
+        if memory.id in deleted_memory_ids:
             continue
         if is_pinned_memory(memory) or not _is_auto_managed_memory(memory):
             continue
@@ -291,14 +360,5 @@ def repair_project_memory_graph(
             )
         )
         summary.created_auto_edges += 1
-
-    tree_summary = ensure_project_category_tree(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    summary.reparented_nodes += tree_summary.reparented_nodes
-    summary.created_auto_edges += tree_summary.created_auto_edges
-    summary.deleted_auto_edges += tree_summary.deleted_auto_edges
     db.flush()
     return summary

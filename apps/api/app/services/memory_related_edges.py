@@ -10,6 +10,8 @@ from app.models import Memory, MemoryEdge
 from app.services.memory_metadata import (
     get_memory_category_segments,
     get_related_edge_exclusions,
+    is_concept_memory,
+    is_subject_memory,
     is_structural_only_memory,
     is_summary_memory,
 )
@@ -22,6 +24,7 @@ RELATED_EDGE_MAX_SCORE = 0.97
 RELATED_EDGE_QUERY_LIMIT = 6
 RELATED_EDGE_LIMIT_PER_MEMORY = 2
 _TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]{2,}")
+PREREQUISITE_EDGE_TYPE = "prerequisite"
 
 
 @dataclass(slots=True)
@@ -34,8 +37,22 @@ class RelatedEdgeSyncSummary:
         return asdict(self)
 
 
+@dataclass(slots=True)
+class PrerequisiteEdgeSyncSummary:
+    created_prerequisite_edges: int = 0
+    updated_prerequisite_edges: int = 0
+    deleted_prerequisite_edges: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return asdict(self)
+
+
 def _pair_key(left_id: str, right_id: str) -> tuple[str, str]:
     return (left_id, right_id) if left_id <= right_id else (right_id, left_id)
+
+
+def _directed_pair_key(source_id: str, target_id: str) -> tuple[str, str]:
+    return (source_id, target_id)
 
 
 def _visibility_key(memory: Memory) -> str:
@@ -189,6 +206,7 @@ def ensure_project_related_edges(
             .all()
         )
         if not is_assistant_root_memory(memory)
+        and not is_subject_memory(memory)
         and not is_structural_only_memory(memory)
         and not is_summary_memory(memory)
         and memory.content.strip()
@@ -301,5 +319,80 @@ def ensure_project_related_edges(
             continue
         db.delete(edge)
         summary.deleted_related_edges += 1
+
+    return summary
+
+
+def ensure_project_prerequisite_edges(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+) -> PrerequisiteEdgeSyncSummary:
+    summary = PrerequisiteEdgeSyncSummary()
+    concept_memories = [
+        memory
+        for memory in (
+            db.query(Memory)
+            .filter(
+                Memory.workspace_id == workspace_id,
+                Memory.project_id == project_id,
+                Memory.type == "permanent",
+            )
+            .all()
+        )
+        if not is_assistant_root_memory(memory)
+        and is_concept_memory(memory)
+        and memory.content.strip()
+    ]
+    concept_ids = [memory.id for memory in concept_memories]
+    concepts_by_id = {memory.id: memory for memory in concept_memories}
+    existing_edges = (
+        db.query(MemoryEdge)
+        .filter(
+            MemoryEdge.edge_type == PREREQUISITE_EDGE_TYPE,
+            MemoryEdge.source_memory_id.in_(concept_ids or [""]),
+            MemoryEdge.target_memory_id.in_(concept_ids or [""]),
+        )
+        .all()
+    )
+    existing_by_pair = {
+        _directed_pair_key(edge.source_memory_id, edge.target_memory_id): edge
+        for edge in existing_edges
+    }
+
+    desired_pairs: dict[tuple[str, str], float] = {}
+    for concept in concept_memories:
+        parent_id = concept.parent_memory_id or ""
+        parent = concepts_by_id.get(parent_id)
+        if parent is None:
+            continue
+        if parent.subject_memory_id and concept.subject_memory_id and parent.subject_memory_id != concept.subject_memory_id:
+            continue
+        desired_pairs[_directed_pair_key(parent.id, concept.id)] = 0.82
+
+    for pair, strength in desired_pairs.items():
+        source_id, target_id = pair
+        existing = existing_by_pair.get(pair)
+        if existing is None:
+            db.add(
+                MemoryEdge(
+                    source_memory_id=source_id,
+                    target_memory_id=target_id,
+                    edge_type=PREREQUISITE_EDGE_TYPE,
+                    strength=strength,
+                )
+            )
+            summary.created_prerequisite_edges += 1
+            continue
+        if abs(float(existing.strength or 0.0) - strength) >= 0.02:
+            existing.strength = strength
+            summary.updated_prerequisite_edges += 1
+
+    for pair, edge in existing_by_pair.items():
+        if pair in desired_pairs:
+            continue
+        db.delete(edge)
+        summary.deleted_prerequisite_edges += 1
 
     return summary

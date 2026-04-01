@@ -9,9 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Conversation, Memory, MemoryEdge, Project
 from app.services.context_loader import filter_knowledge_chunks, load_conversation_context
-from app.services.memory_category_tree import ensure_project_category_tree
 from app.services.memory_file_context import load_linked_file_chunks_for_memories
-from app.services.memory_graph_events import bump_project_memory_graph_revision
 from app.services.memory_metadata import (
     MEMORY_KIND_GOAL,
     MEMORY_KIND_PREFERENCE,
@@ -20,16 +18,19 @@ from app.services.memory_metadata import (
     get_memory_kind,
     get_memory_metadata,
     get_memory_salience,
+    get_subject_kind,
+    get_subject_memory_id,
     is_category_path_memory,
     is_concept_memory,
     is_pinned_memory,
+    is_subject_memory,
     is_structural_only_memory,
     is_summary_memory,
     shorten_text,
     stamp_memory_usage_metadata,
 )
-from app.services.memory_related_edges import RELATED_EDGE_TYPE, ensure_project_related_edges
-from app.services.memory_roots import is_assistant_root_memory
+from app.services.memory_related_edges import RELATED_EDGE_TYPE
+from app.services.memory_roots import ensure_project_user_subject, is_assistant_root_memory
 from app.services.memory_visibility import get_memory_owner_user_id, is_private_memory
 from app.services.embedding import search_similar
 
@@ -123,9 +124,19 @@ def _normalize_query_tokens(query: str) -> list[str]:
 
 
 def _memory_matches_query(memory: Memory, query_tokens: list[str]) -> bool:
+    query_text = " ".join(query_tokens).casefold().strip()
+    haystack_parts = [
+        memory.content.casefold(),
+        memory.category.casefold(),
+    ]
+    if query_text:
+        if any(query_text in part for part in haystack_parts):
+            return True
+        if any(part and part in query_text for part in haystack_parts):
+            return True
     if not query_tokens:
         return False
-    haystack = f"{memory.content}\n{memory.category}".casefold()
+    haystack = "\n".join(haystack_parts)
     return any(token in haystack for token in query_tokens)
 
 
@@ -158,8 +169,6 @@ def _candidate_score(memory: Memory, *, source: str, semantic_score: float | Non
         score += 0.3
     if get_memory_kind(memory) in {MEMORY_KIND_PROFILE, MEMORY_KIND_PREFERENCE, MEMORY_KIND_GOAL}:
         score += 0.08
-    if is_summary_memory(memory):
-        score += 0.12
     score += _recency_bonus(memory)
     source_bonus = {
         "static": 0.15,
@@ -175,7 +184,10 @@ def _candidate_score(memory: Memory, *, source: str, semantic_score: float | Non
 
 
 def _is_structural_graph_memory(memory: Memory) -> bool:
-    return is_concept_memory(memory) or is_category_path_memory(memory) or is_summary_memory(memory)
+    return (
+        is_subject_memory(memory)
+        or is_concept_memory(memory)
+    )
 
 
 def _select_best_candidates(candidates: list[MemoryCandidate], *, limit: int) -> list[MemoryCandidate]:
@@ -333,6 +345,855 @@ def _build_graph_neighbors(
     return _select_best_candidates(candidates, limit=GRAPH_MEMORY_LIMIT)
 
 
+def _subject_label(subject: Memory) -> str:
+    return subject.content.strip() or subject.category.strip() or subject.id
+
+
+def _query_mentions_user(query: str) -> bool:
+    lowered = query.casefold()
+    return any(token in lowered for token in ("我", "我的", "我自己", "about me", "my ", "remember me"))
+
+
+def _query_mentions_subject_kind(query: str, subject_kind: str | None) -> bool:
+    if not subject_kind:
+        return False
+    lowered = query.casefold()
+    hints = {
+        "book": ("这本书", "书里", "book", "chapter"),
+        "project": ("这个项目", "项目里", "project"),
+        "theory": ("这个理论", "理论", "theory"),
+        "domain": ("这个学科", "学科", "领域", "domain"),
+        "person": ("这个人", "人物", "person"),
+        "paper": ("这篇论文", "论文", "paper"),
+        "course": ("这门课", "课程", "course"),
+        "device": ("这个设备", "设备", "device"),
+        "model": ("这个模型", "模型", "model"),
+        "user": ("我", "我的", "我自己", "about me", "my "),
+    }.get(subject_kind, ())
+    return any(hint in lowered for hint in hints)
+
+
+def _subject_matches_query(subject: Memory, query: str, query_tokens: list[str]) -> bool:
+    if not query_tokens and not query.strip():
+        return False
+    fields = [
+        subject.content,
+        subject.category,
+        str(subject.canonical_key or ""),
+        str(get_subject_kind(subject) or ""),
+    ]
+    haystack = "\n".join(filter(None, fields)).casefold()
+    normalized_query = query.casefold().strip()
+    if normalized_query:
+        if normalized_query in haystack:
+            return True
+        if any(field and str(field).casefold() in normalized_query for field in fields):
+            return True
+    return any(token in haystack for token in query_tokens)
+
+
+def _sort_memories_by_activity(memories: list[Memory]) -> list[Memory]:
+    return sorted(
+        memories,
+        key=lambda memory: (
+            get_memory_salience(memory),
+            _coerce_utc(memory.updated_at) or datetime.min.replace(tzinfo=timezone.utc),
+            _coerce_utc(memory.created_at) or datetime.min.replace(tzinfo=timezone.utc),
+        ),
+        reverse=True,
+    )
+
+
+def _load_scope_edges(
+    db: Session,
+    *,
+    memory_ids: list[str],
+) -> list[MemoryEdge]:
+    if not memory_ids:
+        return []
+    return (
+        db.query(MemoryEdge)
+        .filter(
+            MemoryEdge.source_memory_id.in_(memory_ids),
+            MemoryEdge.target_memory_id.in_(memory_ids),
+        )
+        .all()
+    )
+
+
+def _collect_subject_scope_memories(
+    *,
+    subject_ids: list[str],
+    visible_permanent: list[Memory],
+    visible_temporary: list[Memory],
+    subjects_by_id: dict[str, Memory],
+) -> tuple[list[Memory], list[Memory]]:
+    selected_ids = {subject_id for subject_id in subject_ids if subject_id}
+    if not selected_ids:
+        return [], []
+
+    include_legacy_user_scope = any(
+        get_subject_kind(subjects_by_id.get(subject_id)) == "user"
+        for subject_id in selected_ids
+        if subjects_by_id.get(subject_id) is not None
+    )
+
+    def _belongs_to_scope(memory: Memory) -> bool:
+        if memory.id in selected_ids:
+            return True
+        subject_memory_id = get_subject_memory_id(memory)
+        if subject_memory_id and subject_memory_id in selected_ids:
+            return True
+        if include_legacy_user_scope and subject_memory_id is None:
+            if is_subject_memory(memory) or is_category_path_memory(memory) or is_summary_memory(memory):
+                return False
+            return True
+        return False
+
+    permanent_scope = [memory for memory in visible_permanent if _belongs_to_scope(memory)]
+    temporary_scope = [memory for memory in visible_temporary if _belongs_to_scope(memory)]
+    return permanent_scope, temporary_scope
+
+
+def _pick_active_concepts(
+    *,
+    subject_scope_memories: list[Memory],
+    subject_ids: list[str],
+    semantic_results: list[dict[str, Any]],
+    query_tokens: list[str],
+    active_concept_ids: list[str],
+) -> list[MemoryCandidate]:
+    scope_by_id = {memory.id: memory for memory in subject_scope_memories}
+    candidates: list[MemoryCandidate] = []
+
+    for rank, concept_id in enumerate(active_concept_ids):
+        concept = scope_by_id.get(concept_id)
+        if concept is None or not is_concept_memory(concept):
+            continue
+        score = _candidate_score(concept, source="graph_parent", semantic_score=0.82) - (rank * 0.02)
+        candidates.append(
+            MemoryCandidate(memory=concept, source="active_concept", semantic_score=0.82, score=round(score, 4))
+        )
+
+    for memory in subject_scope_memories:
+        if not is_concept_memory(memory):
+            continue
+        if _memory_matches_query(memory, query_tokens):
+            candidates.append(
+                MemoryCandidate(
+                    memory=memory,
+                    source="lexical",
+                    semantic_score=0.76,
+                    score=_candidate_score(memory, source="lexical", semantic_score=0.76),
+                )
+            )
+
+    for result in semantic_results:
+        memory_id = result.get("memory_id")
+        if not memory_id:
+            continue
+        memory = scope_by_id.get(memory_id)
+        if memory is None or not is_concept_memory(memory):
+            continue
+        semantic_score = float(result.get("score") or 0.0)
+        candidates.append(
+            MemoryCandidate(
+                memory=memory,
+                source="semantic",
+                semantic_score=semantic_score,
+                score=_candidate_score(memory, source="semantic", semantic_score=semantic_score),
+            )
+        )
+
+    selected = _select_best_candidates(candidates, limit=4)
+    if selected:
+        return selected
+
+    fallback_concepts = [
+        memory
+        for memory in _sort_memories_by_activity(subject_scope_memories)
+        if is_concept_memory(memory) and (memory.parent_memory_id in subject_ids or not memory.parent_memory_id)
+    ][:3]
+    return [
+        MemoryCandidate(memory=memory, source="subject_overview", score=_candidate_score(memory, source="graph_parent"))
+        for memory in fallback_concepts
+    ]
+
+
+def _pick_subject_facts(
+    *,
+    subject_scope_memories: list[Memory],
+    subject_ids: list[str],
+    semantic_results: list[dict[str, Any]],
+    query_tokens: list[str],
+    context_level: ContextLevel,
+) -> list[MemoryCandidate]:
+    scope_by_id = {memory.id: memory for memory in subject_scope_memories}
+    candidates: list[MemoryCandidate] = []
+
+    for result in semantic_results:
+        memory_id = result.get("memory_id")
+        if not memory_id:
+            continue
+        memory = scope_by_id.get(memory_id)
+        if memory is None or is_subject_memory(memory) or is_concept_memory(memory) or is_structural_only_memory(memory):
+            continue
+        semantic_score = float(result.get("score") or 0.0)
+        if semantic_score < SEMANTIC_MEMORY_MIN_SCORE and not _memory_matches_query(memory, query_tokens):
+            continue
+        candidates.append(
+            MemoryCandidate(
+                memory=memory,
+                source="semantic",
+                semantic_score=semantic_score,
+                score=_candidate_score(memory, source="semantic", semantic_score=semantic_score),
+            )
+        )
+
+    for memory in subject_scope_memories:
+        if is_subject_memory(memory) or is_concept_memory(memory) or is_structural_only_memory(memory):
+            continue
+        if _memory_matches_query(memory, query_tokens):
+            candidates.append(
+                MemoryCandidate(
+                    memory=memory,
+                    source="lexical",
+                    semantic_score=0.7,
+                    score=_candidate_score(memory, source="lexical", semantic_score=0.7),
+                )
+            )
+
+    if context_level == "profile_only":
+        for memory in subject_scope_memories:
+            if is_subject_memory(memory) or is_concept_memory(memory) or is_structural_only_memory(memory):
+                continue
+            if is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS | {MEMORY_KIND_PREFERENCE, MEMORY_KIND_GOAL}:
+                candidates.append(
+                    MemoryCandidate(
+                        memory=memory,
+                        source="static",
+                        score=_candidate_score(memory, source="static"),
+                    )
+                )
+
+    selected = _select_best_candidates(candidates, limit=RELEVANT_MEMORY_LIMIT)
+    if selected:
+        return selected
+
+    fallback_facts = [
+        memory
+        for memory in _sort_memories_by_activity(subject_scope_memories)
+        if not is_subject_memory(memory) and not is_concept_memory(memory) and not is_structural_only_memory(memory)
+    ][: max(2, min(4, RELEVANT_MEMORY_LIMIT))]
+    return [
+        MemoryCandidate(memory=memory, source="fallback", score=_candidate_score(memory, source="lexical", semantic_score=0.58))
+        for memory in fallback_facts
+    ]
+
+
+def _build_graph_guided_system_prompt(
+    *,
+    personality: str,
+    active_subjects: list[MemoryCandidate],
+    active_concepts: list[MemoryCandidate],
+    relevant_memories: list[MemoryCandidate],
+    temporary_memories: list[MemoryCandidate],
+    knowledge_chunks: list[dict[str, Any]],
+    linked_file_chunks: list[dict[str, Any]],
+    recent_messages: list[dict[str, str]] | None = None,
+) -> str:
+    parts: list[str] = []
+    if personality:
+        parts.append(f"你的人格设定：\n{personality}")
+
+    if active_subjects:
+        lines = [
+            f"- [{get_subject_kind(candidate.memory) or 'subject'}] {candidate.memory.content}"
+            for candidate in active_subjects
+        ]
+        parts.append("当前激活主体：\n" + "\n".join(lines))
+
+    if active_concepts:
+        lines = [f"- {candidate.memory.content}" for candidate in active_concepts]
+        parts.append("当前概念骨架：\n" + "\n".join(lines))
+
+    if relevant_memories:
+        lines = [
+            f"- [{candidate.source}] {candidate.memory.content}"
+            for candidate in relevant_memories
+            if not is_subject_memory(candidate.memory)
+        ]
+        if lines:
+            parts.append("当前主体下的相关事实：\n" + "\n".join(lines))
+
+    if temporary_memories:
+        lines = [f"- {candidate.memory.content}" for candidate in temporary_memories]
+        parts.append("当前对话里的临时记忆：\n" + "\n".join(lines))
+
+    if knowledge_chunks:
+        parts.append(
+            "相关知识参考：\n"
+            + "\n---\n".join(chunk["chunk_text"] for chunk in knowledge_chunks if chunk.get("chunk_text"))
+        )
+
+    if linked_file_chunks:
+        linked_text = "\n---\n".join(
+            f"[{chunk.get('filename') or '未命名资料'}]\n{chunk['chunk_text']}"
+            for chunk in linked_file_chunks
+            if chunk.get("chunk_text")
+        )
+        if linked_text:
+            parts.append(f"与当前主体直接关联的资料摘录：\n{linked_text}")
+
+    if recent_messages:
+        history_lines: list[str] = []
+        for message in recent_messages:
+            role = "用户" if message.get("role") == "user" else "助手"
+            content = str(message.get("content") or "").strip()
+            if content:
+                history_lines.append(f"{role}: {content}")
+        if history_lines:
+            parts.append("最近对话历史：\n" + "\n".join(history_lines))
+
+    return "\n\n".join(parts) if parts else "你是一个有帮助的 AI 助手。"
+
+
+async def resolve_active_subjects(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    query: str,
+    semantic_search_fn: SemanticSearchFn = search_similar,
+    semantic_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.workspace_id == workspace_id,
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if project is not None:
+        _subject, changed = ensure_project_user_subject(
+            db,
+            project,
+            owner_user_id=conversation_created_by,
+        )
+        if changed:
+            db.flush()
+
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    del visible_temporary
+    subject_memories = [memory for memory in visible_permanent if is_subject_memory(memory)]
+    subjects_by_id = {memory.id: memory for memory in subject_memories}
+    query_tokens = _normalize_query_tokens(query)
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.project_id == project_id,
+            Conversation.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    conversation_meta = conversation.metadata_json if conversation and isinstance(conversation.metadata_json, dict) else {}
+    active_subject_ids = [
+        subject_id
+        for subject_id in conversation_meta.get("active_subject_ids", [])
+        if isinstance(subject_id, str) and subject_id in subjects_by_id
+    ]
+
+    candidates: list[MemoryCandidate] = []
+    for rank, subject_id in enumerate(active_subject_ids):
+        subject = subjects_by_id.get(subject_id)
+        if subject is None:
+            continue
+        score = 0.78 - (rank * 0.05)
+        if _query_mentions_subject_kind(query, get_subject_kind(subject)):
+            score += 0.08
+        candidates.append(
+            MemoryCandidate(memory=subject, source="conversation_focus", semantic_score=0.82, score=round(score, 4))
+        )
+
+    for subject in subject_memories:
+        if _subject_matches_query(subject, query, query_tokens):
+            score = 0.84
+            if _query_mentions_subject_kind(query, get_subject_kind(subject)):
+                score += 0.08
+            candidates.append(
+                MemoryCandidate(memory=subject, source="lexical", semantic_score=0.84, score=round(score, 4))
+            )
+        elif get_subject_kind(subject) == "user" and _query_mentions_user(query):
+            candidates.append(
+                MemoryCandidate(memory=subject, source="user_default", semantic_score=0.72, score=0.72)
+            )
+
+    local_semantic_results = semantic_results
+    if local_semantic_results is None and query.strip():
+        try:
+            local_semantic_results = await semantic_search_fn(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                query=query,
+                limit=SEMANTIC_SEARCH_LIMIT,
+            )
+        except Exception:
+            local_semantic_results = []
+    local_semantic_results = local_semantic_results or []
+
+    for result in local_semantic_results:
+        memory_id = result.get("memory_id")
+        if not memory_id:
+            continue
+        subject = subjects_by_id.get(memory_id)
+        if subject is None:
+            continue
+        semantic_score = float(result.get("score") or 0.0)
+        candidates.append(
+            MemoryCandidate(
+                memory=subject,
+                source="semantic",
+                semantic_score=semantic_score,
+                score=_candidate_score(subject, source="semantic", semantic_score=max(semantic_score, 0.7)),
+            )
+        )
+
+    selected = _select_best_candidates(candidates, limit=3)
+    if not selected:
+        user_subject = next((subject for subject in subject_memories if get_subject_kind(subject) == "user"), None)
+        fallback_subject = user_subject or (subject_memories[0] if subject_memories else None)
+        if fallback_subject is not None:
+            selected = [
+                MemoryCandidate(
+                    memory=fallback_subject,
+                    source="fallback",
+                    semantic_score=0.6,
+                    score=0.6,
+                )
+            ]
+
+    return {
+        "subjects": selected,
+        "primary_subject": selected[0].memory if selected else None,
+        "semantic_results": local_semantic_results,
+    }
+
+
+def get_subject_overview(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    subject_id: str,
+) -> dict[str, Any] | None:
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    del visible_temporary
+    subjects_by_id = {memory.id: memory for memory in visible_permanent if is_subject_memory(memory)}
+    subject = subjects_by_id.get(subject_id)
+    if subject is None:
+        return None
+    scope_memories, _temporary_scope = _collect_subject_scope_memories(
+        subject_ids=[subject_id],
+        visible_permanent=visible_permanent,
+        visible_temporary=[],
+        subjects_by_id=subjects_by_id,
+    )
+    concepts = [
+        memory for memory in _sort_memories_by_activity(scope_memories)
+        if is_concept_memory(memory)
+    ][:6]
+    facts = [
+        memory for memory in _sort_memories_by_activity(scope_memories)
+        if not is_subject_memory(memory) and not is_concept_memory(memory) and not is_structural_only_memory(memory)
+    ][:8]
+    suggested_paths = [memory.content for memory in concepts[:4]]
+    return {
+        "subject": subject,
+        "concepts": concepts,
+        "facts": facts,
+        "suggested_paths": suggested_paths,
+    }
+
+
+def _build_parent_edge(source_id: str, target_id: str, created_at: datetime) -> dict[str, Any]:
+    return {
+        "id": f"parent:{source_id}:{target_id}",
+        "source_memory_id": source_id,
+        "target_memory_id": target_id,
+        "edge_type": "parent",
+        "strength": 1.0,
+        "created_at": created_at,
+    }
+
+
+async def expand_subject_subgraph(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    subject_id: str,
+    query: str,
+    depth: int = 2,
+    edge_types: list[str] | None = None,
+    semantic_search_fn: SemanticSearchFn = search_similar,
+) -> dict[str, Any] | None:
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    subjects_by_id = {memory.id: memory for memory in visible_permanent if is_subject_memory(memory)}
+    subject = subjects_by_id.get(subject_id)
+    if subject is None:
+        return None
+
+    scope_permanent, scope_temporary = _collect_subject_scope_memories(
+        subject_ids=[subject_id],
+        visible_permanent=visible_permanent,
+        visible_temporary=visible_temporary,
+        subjects_by_id=subjects_by_id,
+    )
+    scope_memories = [*scope_permanent, *scope_temporary]
+    scope_by_id = {memory.id: memory for memory in scope_memories}
+    query_tokens = _normalize_query_tokens(query)
+    semantic_results: list[dict[str, Any]] = []
+    if query.strip():
+        try:
+            semantic_results = await semantic_search_fn(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                query=query,
+                limit=SEMANTIC_SEARCH_LIMIT,
+            )
+        except Exception:
+            semantic_results = []
+
+    seed_ids: set[str] = {subject_id}
+    for memory in scope_memories:
+        if _memory_matches_query(memory, query_tokens):
+            seed_ids.add(memory.id)
+    for result in semantic_results:
+        memory_id = result.get("memory_id")
+        if isinstance(memory_id, str) and memory_id in scope_by_id:
+            seed_ids.add(memory_id)
+
+    if len(seed_ids) == 1:
+        seed_ids.update(memory.id for memory in _sort_memories_by_activity(scope_memories)[:4])
+
+    allowed_edge_types = set(edge_types or ["parent", "related", "manual", "prerequisite", "evidence"])
+    scope_edges = _load_scope_edges(db, memory_ids=list(scope_by_id))
+    edge_results: list[dict[str, Any]] = []
+    node_ids: set[str] = set(seed_ids)
+
+    frontier = list(seed_ids)
+    visited = set(seed_ids)
+    for _level in range(max(1, depth)):
+        next_frontier: list[str] = []
+        for current_id in frontier:
+            current = scope_by_id.get(current_id)
+            if current is None:
+                continue
+            parent_id = current.parent_memory_id
+            if parent_id and parent_id in scope_by_id and "parent" in allowed_edge_types:
+                node_ids.add(parent_id)
+                edge_results.append(_build_parent_edge(parent_id, current_id, current.updated_at or current.created_at))
+                if parent_id not in visited:
+                    visited.add(parent_id)
+                    next_frontier.append(parent_id)
+            for child in scope_memories:
+                if child.parent_memory_id != current_id:
+                    continue
+                if "parent" in allowed_edge_types:
+                    node_ids.add(child.id)
+                    edge_results.append(_build_parent_edge(current_id, child.id, child.updated_at or child.created_at))
+                if child.id not in visited:
+                    visited.add(child.id)
+                    next_frontier.append(child.id)
+            for edge in scope_edges:
+                if edge.edge_type not in allowed_edge_types:
+                    continue
+                if edge.source_memory_id == current_id:
+                    other_id = edge.target_memory_id
+                elif edge.target_memory_id == current_id:
+                    other_id = edge.source_memory_id
+                else:
+                    continue
+                if other_id not in scope_by_id:
+                    continue
+                node_ids.add(other_id)
+                edge_results.append(
+                    {
+                        "id": edge.id,
+                        "source_memory_id": edge.source_memory_id,
+                        "target_memory_id": edge.target_memory_id,
+                        "edge_type": edge.edge_type,
+                        "strength": edge.strength,
+                        "created_at": edge.created_at,
+                    }
+                )
+                if other_id not in visited:
+                    visited.add(other_id)
+                    next_frontier.append(other_id)
+        frontier = next_frontier
+        if not frontier:
+            break
+
+    ordered_nodes = [scope_by_id[node_id] for node_id in node_ids if node_id in scope_by_id]
+    return {
+        "subject": subject,
+        "nodes": ordered_nodes,
+        "edges": edge_results,
+    }
+
+
+async def search_subject_facts(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    subject_id: str,
+    query: str,
+    top_k: int,
+    semantic_search_fn: SemanticSearchFn = search_similar,
+) -> list[dict[str, Any]]:
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    subjects_by_id = {memory.id: memory for memory in visible_permanent if is_subject_memory(memory)}
+    scope_permanent, scope_temporary = _collect_subject_scope_memories(
+        subject_ids=[subject_id],
+        visible_permanent=visible_permanent,
+        visible_temporary=visible_temporary,
+        subjects_by_id=subjects_by_id,
+    )
+    scope_memories = [*scope_permanent, *scope_temporary]
+    semantic_results: list[dict[str, Any]] = []
+    if query.strip():
+        try:
+            semantic_results = await semantic_search_fn(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                query=query,
+                limit=max(12, top_k * 3),
+            )
+        except Exception:
+            semantic_results = []
+    selected = _pick_subject_facts(
+        subject_scope_memories=scope_memories,
+        subject_ids=[subject_id],
+        semantic_results=semantic_results,
+        query_tokens=_normalize_query_tokens(query),
+        context_level="memory_only",
+    )[:top_k]
+    return [
+        {
+            "id": candidate.memory.id,
+            "content": candidate.memory.content,
+            "category": candidate.memory.category,
+            "type": candidate.memory.type,
+            "score": candidate.semantic_score if candidate.semantic_score is not None else candidate.score,
+            "source": candidate.source,
+        }
+        for candidate in selected
+    ]
+
+
+async def search_subject_documents(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    subject_id: str,
+    query: str,
+    top_k: int,
+    linked_file_loader_fn: LinkedFileLoaderFn = load_linked_file_chunks_for_memories,
+) -> list[dict[str, Any]]:
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    subjects_by_id = {memory.id: memory for memory in visible_permanent if is_subject_memory(memory)}
+    scope_permanent, scope_temporary = _collect_subject_scope_memories(
+        subject_ids=[subject_id],
+        visible_permanent=visible_permanent,
+        visible_temporary=visible_temporary,
+        subjects_by_id=subjects_by_id,
+    )
+    memory_ids = [memory.id for memory in [*scope_permanent, *scope_temporary]]
+    if not memory_ids or not query.strip():
+        return []
+    try:
+        chunks = await linked_file_loader_fn(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            memory_ids=memory_ids,
+            query=query,
+            limit=top_k,
+        )
+    except Exception:
+        chunks = []
+    return [
+        {
+            "filename": chunk.get("filename") or "未命名资料",
+            "score": chunk.get("score"),
+            "excerpt": _shorten_text(str(chunk.get("chunk_text") or ""), limit=600),
+            "memory_ids": chunk.get("memory_ids") or [],
+        }
+        for chunk in chunks[:top_k]
+    ]
+
+
+def get_concept_neighbors(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    concept_id: str,
+) -> dict[str, Any] | None:
+    visible_permanent, visible_temporary = _load_visible_memories(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+    )
+    del visible_temporary
+    memories_by_id = {memory.id: memory for memory in visible_permanent}
+    concept = memories_by_id.get(concept_id)
+    if concept is None or not is_concept_memory(concept):
+        return None
+    subject_id = get_subject_memory_id(concept)
+    related_edges = _load_scope_edges(db, memory_ids=list(memories_by_id))
+    children = [
+        memory for memory in visible_permanent
+        if memory.parent_memory_id == concept.id and get_subject_memory_id(memory) == subject_id
+    ]
+    neighbors: list[dict[str, Any]] = []
+    for edge in related_edges:
+        if edge.source_memory_id == concept.id:
+            other_id = edge.target_memory_id
+        elif edge.target_memory_id == concept.id:
+            other_id = edge.source_memory_id
+        else:
+            continue
+        other = memories_by_id.get(other_id)
+        if other is None:
+            continue
+        neighbors.append(
+            {
+                "id": other.id,
+                "content": other.content,
+                "edge_type": edge.edge_type,
+            }
+        )
+    return {
+        "concept": concept,
+        "parent": memories_by_id.get(concept.parent_memory_id or ""),
+        "children": children,
+        "neighbors": neighbors,
+        "recent_facts": [
+            memory for memory in _sort_memories_by_activity(children)
+            if not is_concept_memory(memory)
+        ][:6],
+    }
+
+
+def get_explanation_path(
+    db: Session,
+    *,
+    workspace_id: str,
+    project_id: str,
+    conversation_id: str,
+    conversation_created_by: str | None,
+    subject_id: str,
+    concept_id: str,
+    target_style: str | None = None,
+) -> dict[str, Any] | None:
+    del target_style
+    overview = get_concept_neighbors(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+        concept_id=concept_id,
+    )
+    if overview is None:
+        return None
+    concept = overview["concept"]
+    parent_chain: list[str] = []
+    current = overview.get("parent")
+    while isinstance(current, Memory):
+        parent_chain.append(current.content)
+        if current.parent_memory_id == subject_id:
+            break
+        current = (
+            db.query(Memory)
+            .filter(
+                Memory.id == current.parent_memory_id,
+                Memory.workspace_id == workspace_id,
+                Memory.project_id == project_id,
+            )
+            .first()
+        )
+    return {
+        "concept_id": concept.id,
+        "concept": concept.content,
+        "parent_chain": list(reversed(parent_chain)),
+        "recommended_order": [
+            *list(reversed(parent_chain)),
+            concept.content,
+            *[child.content for child in overview.get("children", [])[:3]],
+        ],
+        "related_concepts": [
+            neighbor["content"]
+            for neighbor in overview.get("neighbors", [])
+            if neighbor.get("edge_type") in {"related", "prerequisite"}
+        ][:4],
+        "recent_facts": [memory.content for memory in overview.get("recent_facts", [])[:4]],
+    }
+
+
 def _build_system_prompt(
     *,
     personality: str,
@@ -381,7 +1242,7 @@ def _build_system_prompt(
             if chunk.get("chunk_text")
         )
         if linked_text:
-            parts.append(f"与当前相关记忆直接关联的资料摘录：\n{linked_text}")
+            parts.append(f"与当前主体直接关联的资料摘录：\n{linked_text}")
 
     if recent_messages:
         history_lines: list[str] = []
@@ -422,6 +1283,65 @@ def _serialize_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_conversation_focus_metadata(
+    *,
+    existing_metadata: dict[str, Any] | None,
+    retrieval_trace: dict[str, Any] | None,
+    updated_at: datetime | None = None,
+) -> dict[str, Any]:
+    payload = dict(existing_metadata or {})
+    if not isinstance(retrieval_trace, dict):
+        return payload
+
+    active_subject_ids = [
+        subject_id
+        for subject_id in retrieval_trace.get("active_subject_ids", [])
+        if isinstance(subject_id, str) and subject_id.strip()
+    ]
+    active_concept_ids = [
+        concept_id
+        for concept_id in retrieval_trace.get("active_concept_ids", [])
+        if isinstance(concept_id, str) and concept_id.strip()
+    ]
+    primary_subject_id = retrieval_trace.get("primary_subject_id")
+    if isinstance(primary_subject_id, str) and primary_subject_id.strip():
+        payload["primary_subject_id"] = primary_subject_id.strip()
+    if active_subject_ids:
+        payload["active_subject_ids"] = active_subject_ids[:3]
+    if active_concept_ids:
+        payload["active_concept_ids"] = active_concept_ids[:6]
+    if active_subject_ids or active_concept_ids or payload.get("primary_subject_id"):
+        payload["focus_strategy"] = str(retrieval_trace.get("strategy") or "subject_graph_v1")
+        payload["focus_updated_at"] = (updated_at or datetime.now(timezone.utc)).isoformat()
+        payload["active_route"] = str(
+            retrieval_trace.get("active_route")
+            or retrieval_trace.get("context_level")
+            or payload.get("focus_strategy")
+            or "subject_graph_v1"
+        )
+        payload["interaction_mode"] = str(
+            retrieval_trace.get("interaction_mode")
+            or ("subject_graph" if active_subject_ids or active_concept_ids else "direct")
+        )
+        payload["last_graph_focus"] = {
+            "strategy": str(retrieval_trace.get("strategy") or "subject_graph_v1"),
+            "primary_subject_id": payload.get("primary_subject_id"),
+            "active_subject_ids": active_subject_ids[:3],
+            "active_concept_ids": active_concept_ids[:6],
+            "memory_ids": [
+                memory_id
+                for memory_id in [
+                    str(memory.get("id") or "").strip()
+                    for memory in retrieval_trace.get("memories", [])
+                    if isinstance(memory, dict)
+                ]
+                if memory_id
+            ][:10],
+            "updated_at": payload["focus_updated_at"],
+        }
+    return payload
+
+
 async def build_memory_context(
     db: Session,
     *,
@@ -442,29 +1362,26 @@ async def build_memory_context(
         project_id=project_id,
         conversation_id=conversation_id,
     )
-    tree_summary = ensure_project_category_tree(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    related_summary = ensure_project_related_edges(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    if any(tree_summary.as_dict().values()) or any(related_summary.as_dict().values()):
-        db.commit()
-        bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
 
     semantic_results: list[dict[str, Any]] = []
     knowledge_chunks: list[dict[str, Any]] = []
     linked_file_chunks: list[dict[str, Any]] = []
+    active_subjects: list[MemoryCandidate] = []
+    active_concepts: list[MemoryCandidate] = []
     static_selected: list[MemoryCandidate] = []
     relevant_selected: list[MemoryCandidate] = []
     graph_selected: list[MemoryCandidate] = []
     temporary_selected: list[MemoryCandidate] = []
+    primary_subject: Memory | None = None
 
     if context_level != "none":
+        _subject, changed = ensure_project_user_subject(
+            db,
+            project,
+            owner_user_id=conversation.created_by,
+        )
+        if changed:
+            db.flush()
         permanent_memories, temporary_memories = _load_visible_memories(
             db,
             workspace_id=workspace_id,
@@ -472,115 +1389,118 @@ async def build_memory_context(
             conversation_id=conversation_id,
             conversation_created_by=conversation.created_by,
         )
-        visible_memories_by_id = {
-            memory.id: memory for memory in [*permanent_memories, *temporary_memories]
+        query_tokens = _normalize_query_tokens(user_message)
+
+        if user_message.strip() and context_level in {"profile_only", "memory_only", "full_rag"}:
+            try:
+                semantic_results = await semantic_search_fn(
+                    db,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    query=user_message,
+                    limit=SEMANTIC_SEARCH_LIMIT,
+                )
+            except Exception:
+                semantic_results = []
+
+        subject_resolution = await resolve_active_subjects(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            conversation_created_by=conversation.created_by,
+            query=user_message,
+            semantic_search_fn=semantic_search_fn,
+            semantic_results=semantic_results,
+        )
+        active_subjects = subject_resolution.get("subjects", [])
+        primary_subject = subject_resolution.get("primary_subject")
+
+        subject_ids = [candidate.id for candidate in active_subjects]
+        subjects_by_id = {
+            memory.id: memory for memory in permanent_memories if is_subject_memory(memory)
         }
+        scope_permanent, scope_temporary = _collect_subject_scope_memories(
+            subject_ids=subject_ids,
+            visible_permanent=permanent_memories,
+            visible_temporary=temporary_memories,
+            subjects_by_id=subjects_by_id,
+        )
+        scope_memories = [*scope_permanent, *scope_temporary]
+        scope_by_id = {memory.id: memory for memory in scope_memories}
         lateral_edges = (
             db.query(MemoryEdge)
             .filter(
-                MemoryEdge.edge_type.in_(["manual", RELATED_EDGE_TYPE]),
-                MemoryEdge.source_memory_id.in_(list(visible_memories_by_id)),
-                MemoryEdge.target_memory_id.in_(list(visible_memories_by_id)),
+                MemoryEdge.edge_type.in_(["manual", RELATED_EDGE_TYPE, "prerequisite", "evidence"]),
+                MemoryEdge.source_memory_id.in_(list(scope_by_id)),
+                MemoryEdge.target_memory_id.in_(list(scope_by_id)),
             )
             .all()
-            if visible_memories_by_id
+            if scope_by_id
             else []
         )
-        query_tokens = _normalize_query_tokens(user_message)
+
         static_candidates = [
             MemoryCandidate(
                 memory=memory,
                 source="static",
                 score=_candidate_score(memory, source="static"),
             )
-            for memory in permanent_memories
-            if not is_structural_only_memory(memory)
+            for memory in scope_permanent
+            if not is_subject_memory(memory)
+            and not is_concept_memory(memory)
+            and not is_structural_only_memory(memory)
             and (is_pinned_memory(memory) or get_memory_kind(memory) in _STATIC_KINDS)
         ]
         static_selected = _select_best_candidates(static_candidates, limit=STATIC_MEMORY_LIMIT)
 
-        if context_level in {"memory_only", "full_rag"}:
-            semantic_memory_candidates: list[MemoryCandidate] = []
-            if user_message.strip():
-                try:
-                    semantic_results = await semantic_search_fn(
-                        db,
-                        workspace_id=workspace_id,
-                        project_id=project_id,
-                        query=user_message,
-                        limit=SEMANTIC_SEARCH_LIMIT,
-                    )
-                except Exception:
-                    semantic_results = []
-
-            for result in semantic_results:
-                memory_id = result.get("memory_id")
-                if not memory_id:
-                    continue
-                memory = visible_memories_by_id.get(memory_id)
-                if not memory:
-                    continue
-                if is_structural_only_memory(memory):
-                    continue
-                semantic_score = float(result.get("score") or 0.0)
-                if semantic_score < SEMANTIC_MEMORY_MIN_SCORE and not _memory_matches_query(memory, query_tokens):
-                    continue
-                semantic_memory_candidates.append(
-                    MemoryCandidate(
-                        memory=memory,
-                        source="semantic",
-                        semantic_score=semantic_score,
-                        score=_candidate_score(memory, source="semantic", semantic_score=semantic_score),
-                    )
-                )
-
-            lexical_candidates = [
-                MemoryCandidate(
-                    memory=memory,
-                    source="lexical",
-                    score=_candidate_score(memory, source="lexical", semantic_score=0.55),
-                    semantic_score=0.55,
-                )
-                for memory in [*permanent_memories, *temporary_memories]
-                if not is_structural_only_memory(memory) and _memory_matches_query(memory, query_tokens)
-            ]
-
-            permanent_relevant_candidates = [
-                candidate
-                for candidate in [*semantic_memory_candidates, *lexical_candidates]
-                if candidate.memory.type == "permanent"
-            ]
-            relevant_selected = _select_best_candidates(
-                permanent_relevant_candidates,
-                limit=RELEVANT_MEMORY_LIMIT,
+        if context_level in {"profile_only", "memory_only", "full_rag"} and scope_memories:
+            active_concepts = _pick_active_concepts(
+                subject_scope_memories=scope_memories,
+                subject_ids=subject_ids,
+                semantic_results=semantic_results,
+                query_tokens=query_tokens,
+                active_concept_ids=[
+                    concept_id
+                    for concept_id in ((conversation.metadata_json or {}).get("active_concept_ids") or [])
+                    if isinstance(concept_id, str)
+                ],
+            )
+            relevant_selected = _pick_subject_facts(
+                subject_scope_memories=scope_memories,
+                subject_ids=subject_ids,
+                semantic_results=semantic_results,
+                query_tokens=query_tokens,
+                context_level=context_level,
             )
 
             graph_selected = _build_graph_neighbors(
-                seed_candidates=relevant_selected,
-                visible_memories_by_id=visible_memories_by_id,
+                seed_candidates=[*active_concepts, *relevant_selected],
+                visible_memories_by_id=scope_by_id,
                 query_tokens=query_tokens,
                 lateral_edges=lateral_edges,
             )
 
-            temporary_relevant_candidates = [
+            temporary_candidates = [
                 candidate
-                for candidate in [*semantic_memory_candidates, *lexical_candidates]
+                for candidate in [*relevant_selected, *graph_selected]
                 if candidate.memory.type == "temporary"
             ]
-            temporary_relevant_candidates.extend(
+            temporary_candidates.extend(
                 MemoryCandidate(
                     memory=memory,
                     source="recent_temporary",
                     score=_candidate_score(memory, source="recent_temporary"),
                 )
                 for memory in sorted(
-                    temporary_memories,
+                    scope_temporary,
                     key=lambda item: _coerce_utc(item.updated_at) or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=True,
                 )[:TEMPORARY_MEMORY_LIMIT]
+                if not is_subject_memory(memory) and not is_concept_memory(memory)
             )
             temporary_selected = _select_best_candidates(
-                temporary_relevant_candidates,
+                temporary_candidates,
                 limit=TEMPORARY_MEMORY_LIMIT,
             )
 
@@ -594,7 +1514,14 @@ async def build_memory_context(
 
             selected_memory_ids = {
                 candidate.id
-                for candidate in [*static_selected, *relevant_selected, *graph_selected, *temporary_selected]
+                for candidate in [
+                    *active_subjects,
+                    *active_concepts,
+                    *static_selected,
+                    *relevant_selected,
+                    *graph_selected,
+                    *temporary_selected,
+                ]
             }
             if context_level == "full_rag" and user_message.strip() and selected_memory_ids:
                 try:
@@ -609,41 +1536,69 @@ async def build_memory_context(
                 except Exception:
                     linked_file_chunks = []
 
-    prompt = _build_system_prompt(
+    prompt = _build_graph_guided_system_prompt(
         personality=personality,
-        static_memories=static_selected,
-        relevant_memories=[candidate for candidate in [*relevant_selected, *graph_selected] if candidate.id not in {item.id for item in static_selected}],
+        active_subjects=active_subjects,
+        active_concepts=active_concepts,
+        relevant_memories=[
+            candidate
+            for candidate in [*static_selected, *relevant_selected, *graph_selected]
+            if candidate.id not in {item.id for item in active_subjects}
+            and candidate.id not in {item.id for item in active_concepts}
+        ],
         temporary_memories=temporary_selected,
         knowledge_chunks=knowledge_chunks,
         linked_file_chunks=linked_file_chunks,
         recent_messages=recent_messages if include_recent_history else None,
     )
 
+    final_selected_memories = _select_best_candidates(
+        [
+            *active_subjects,
+            *active_concepts,
+            *static_selected,
+            *relevant_selected,
+            *graph_selected,
+            *temporary_selected,
+        ],
+        limit=STATIC_MEMORY_LIMIT + RELEVANT_MEMORY_LIMIT + GRAPH_MEMORY_LIMIT + TEMPORARY_MEMORY_LIMIT + 8,
+    )
     retrieval_trace = {
-        "strategy": "layered_memory_v2",
+        "strategy": "subject_graph_v1",
+        "active_route": context_level,
+        "interaction_mode": "subject_graph" if active_subjects or active_concepts else "direct",
         "context_level": context_level,
+        "primary_subject_id": primary_subject.id if primary_subject else None,
+        "primary_subject_kind": get_subject_kind(primary_subject) if primary_subject else None,
+        "active_subject_ids": [candidate.id for candidate in active_subjects],
+        "active_concept_ids": [candidate.id for candidate in active_concepts],
         "memory_counts": {
+            "active_subjects": len(active_subjects),
+            "active_concepts": len(active_concepts),
             "static": len(static_selected),
             "relevant": len(relevant_selected),
             "graph": len(graph_selected),
             "temporary": len(temporary_selected),
         },
+        "active_subjects": [
+            {
+                **_serialize_memory_candidate(candidate),
+                "subject_kind": get_subject_kind(candidate.memory),
+                "label": _subject_label(candidate.memory),
+            }
+            for candidate in active_subjects
+        ],
+        "active_concepts": [
+            _serialize_memory_candidate(candidate)
+            for candidate in active_concepts
+        ],
         "memories": [
             _serialize_memory_candidate(candidate)
-            for candidate in [*static_selected, *relevant_selected, *graph_selected, *temporary_selected]
+            for candidate in final_selected_memories
         ],
         "knowledge_chunks": [_serialize_chunk(chunk) for chunk in knowledge_chunks],
         "linked_file_chunks": [_serialize_chunk(chunk) for chunk in linked_file_chunks],
     }
-
-    final_selected_memories = _select_best_candidates(
-        [*static_selected, *relevant_selected, *graph_selected, *temporary_selected],
-        limit=STATIC_MEMORY_LIMIT + RELEVANT_MEMORY_LIMIT + GRAPH_MEMORY_LIMIT + TEMPORARY_MEMORY_LIMIT,
-    )
-    retrieval_trace["memories"] = [
-        _serialize_memory_candidate(candidate)
-        for candidate in final_selected_memories
-    ]
 
     return MemoryContextResult(
         project=project,
@@ -738,21 +1693,6 @@ async def search_project_memories_for_tool(
         conversation_id=conversation_id,
         conversation_created_by=conversation_created_by,
     )
-    tree_summary = ensure_project_category_tree(
-        db,
-        workspace_id=workspace_id,
-        project_id=project_id,
-    )
-    if any(tree_summary.as_dict().values()):
-        db.commit()
-        bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
-        permanent_memories, temporary_memories = _load_visible_memories(
-            db,
-            workspace_id=workspace_id,
-            project_id=project_id,
-            conversation_id=conversation_id,
-            conversation_created_by=conversation_created_by,
-        )
     visible_memories_by_id = {
         memory.id: memory for memory in [*permanent_memories, *temporary_memories]
     }

@@ -30,24 +30,44 @@ from app.schemas.memory import (
     MemoryOut,
     MemorySearchRequest,
     MemorySearchResult,
+    SubjectOverviewOut,
+    SubjectResolveCandidate,
+    SubjectResolveRequest,
+    SubjectResolveResult,
+    SubgraphOut,
+    SubgraphRequest,
     MemoryUpdate,
 )
 from app.services.embedding import embed_and_store, search_similar
 from app.services.memory_category_tree import ensure_project_category_tree
-from app.services.memory_context import search_project_memories_for_tool
+from app.services.memory_context import (
+    expand_subject_subgraph,
+    get_subject_overview,
+    resolve_active_subjects,
+    search_project_memories_for_tool,
+)
 from app.services.memory_graph_events import bump_project_memory_graph_revision
 from app.services.memory_metadata import (
+    ACTIVE_NODE_STATUS,
+    FACT_NODE_TYPE,
     add_related_edge_exclusion,
+    normalize_node_status,
+    normalize_node_type,
     has_manual_parent_binding,
     is_concept_memory,
     is_category_path_memory,
+    is_subject_memory,
     is_structural_only_memory,
     is_summary_memory,
     normalize_memory_metadata,
     remove_related_edge_exclusion,
     set_manual_parent_binding,
 )
-from app.services.memory_related_edges import RELATED_EDGE_TYPE, ensure_project_related_edges
+from app.services.memory_related_edges import (
+    RELATED_EDGE_TYPE,
+    ensure_project_prerequisite_edges,
+    ensure_project_related_edges,
+)
 from app.services.memory_file_context import sync_data_item_links_for_memory
 from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
 from app.services.memory_visibility import (
@@ -58,7 +78,7 @@ from app.services.memory_visibility import (
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
 ORDINARY_PARENT_FORBIDDEN_MESSAGE = (
-    "Ordinary memories must stay as leaf nodes. Use a structure, concept, or summary node as the primary parent instead."
+    "Ordinary memories must stay as leaf nodes. Use the project root, a subject, or a concept as the primary parent instead."
 )
 
 
@@ -131,12 +151,33 @@ def _verify_parent_memory(
     return parent
 
 
+def _resolve_optional_conversation_context(
+    db: Session,
+    *,
+    project_id: str,
+    workspace_id: str,
+    current_user_id: str,
+    workspace_role: str,
+    conversation_id: str | None,
+) -> tuple[str, str | None]:
+    if conversation_id:
+        conversation = _verify_conversation_ownership(
+            db,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            workspace_id=workspace_id,
+            current_user_id=current_user_id,
+            workspace_role=workspace_role,
+        )
+        return conversation.id, conversation.created_by
+    return "", current_user_id
+
+
 def _can_hold_primary_children(parent: Memory) -> bool:
     return (
         is_assistant_root_memory(parent)
-        or is_category_path_memory(parent)
+        or is_subject_memory(parent)
         or is_concept_memory(parent)
-        or is_summary_memory(parent)
     )
 
 
@@ -154,6 +195,73 @@ def _strip_parent_binding_fields(metadata: dict[str, object] | None) -> dict[str
     payload = dict(metadata or {})
     payload.pop("parent_binding", None)
     payload.pop("manual_parent_id", None)
+    return payload
+
+
+def _assert_primary_graph_metadata_allowed(metadata: dict[str, object]) -> None:
+    if is_category_path_memory(metadata):
+        raise ApiError(
+            "bad_request",
+            "Category-path nodes are a legacy derived view and cannot be created in the primary graph",
+            status_code=400,
+        )
+    if is_summary_memory(metadata):
+        raise ApiError(
+            "bad_request",
+            "Summary nodes are derived views and cannot be created in the primary graph",
+            status_code=400,
+        )
+
+
+def _resolve_subject_memory_id(
+    *,
+    requested_subject_memory_id: str | None,
+    parent: Memory | None,
+    existing_subject_memory_id: str | None = None,
+    node_type: str,
+) -> str | None:
+    if node_type == "subject":
+        return None
+    if isinstance(requested_subject_memory_id, str) and requested_subject_memory_id.strip():
+        return requested_subject_memory_id.strip()
+    if parent is not None:
+        if is_subject_memory(parent):
+            return parent.id
+        if parent.subject_memory_id:
+            return parent.subject_memory_id
+    if isinstance(existing_subject_memory_id, str) and existing_subject_memory_id.strip():
+        return existing_subject_memory_id.strip()
+    return None
+
+
+def _graph_parent_memory_id(memory: Memory, memories_by_id: dict[str, Memory], visible_ids: set[str]) -> str | None:
+    current_id = memory.parent_memory_id
+    visited: set[str] = set()
+    while current_id:
+        if current_id in visible_ids:
+            return current_id
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        parent = memories_by_id.get(current_id)
+        if parent is None:
+            return None
+        current_id = parent.parent_memory_id
+    return None
+
+
+def _memory_to_graph_out(
+    memory: Memory,
+    *,
+    graph_parent_memory_id: str | None = None,
+) -> MemoryOut:
+    payload = MemoryOut.model_validate(memory, from_attributes=True)
+    metadata = dict(payload.metadata_json or {})
+    if graph_parent_memory_id and graph_parent_memory_id != payload.parent_memory_id:
+        metadata["graph_parent_memory_id"] = graph_parent_memory_id
+    else:
+        metadata.pop("graph_parent_memory_id", None)
+    payload.metadata_json = metadata
     return payload
 
 
@@ -349,7 +457,12 @@ def _sync_project_related_edges(db: Session, *, workspace_id: str, project_id: s
         workspace_id=workspace_id,
         project_id=project_id,
     )
-    return any(summary.as_dict().values())
+    prerequisite_summary = ensure_project_prerequisite_edges(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+    )
+    return any(summary.as_dict().values()) or any(prerequisite_summary.as_dict().values())
 
 
 def _bump_graph_revision(*, workspace_id: str, project_id: str) -> None:
@@ -377,9 +490,7 @@ def get_memory_graph(
             workspace_role=workspace_role,
         )
     _, changed = ensure_project_assistant_root(db, project)
-    tree_changed = _sync_project_category_tree(db, workspace_id=workspace_id, project_id=project_id)
-    related_changed = _sync_project_related_edges(db, workspace_id=workspace_id, project_id=project_id)
-    if changed or tree_changed or related_changed:
+    if changed:
         db.commit()
         _bump_graph_revision(workspace_id=workspace_id, project_id=project_id)
 
@@ -434,7 +545,13 @@ def get_memory_graph(
 
     all_memories = permanent + temporary
     memories_by_id = {memory.id: memory for memory in all_memories}
-    memory_ids = [m.id for m in all_memories]
+    visible_memories = [
+        memory
+        for memory in all_memories
+        if not is_category_path_memory(memory) and not is_summary_memory(memory)
+    ]
+    visible_ids = {memory.id for memory in visible_memories}
+    memory_ids = [m.id for m in visible_memories]
 
     # All edges between the collected memory nodes
     edges: list[MemoryEdge] = []
@@ -506,8 +623,164 @@ def get_memory_graph(
             )
 
     return MemoryGraphOut(
-        nodes=[MemoryOut.model_validate(m, from_attributes=True) for m in all_memories] + file_nodes,
+        nodes=[
+            _memory_to_graph_out(
+                memory,
+                graph_parent_memory_id=_graph_parent_memory_id(
+                    memory,
+                    memories_by_id=memories_by_id,
+                    visible_ids=visible_ids,
+                ),
+            )
+            for memory in visible_memories
+        ] + file_nodes,
         edges=[MemoryEdgeOut.model_validate(e, from_attributes=True) for e in edges] + file_edges,
+    )
+
+
+@router.post("/subjects/resolve", response_model=SubjectResolveResult)
+async def resolve_subjects(
+    payload: SubjectResolveRequest,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+) -> SubjectResolveResult:
+    get_project_in_workspace_or_404(db, payload.project_id, workspace_id)
+    conversation_id, conversation_created_by = _resolve_optional_conversation_context(
+        db,
+        project_id=payload.project_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+        conversation_id=payload.conversation_id,
+    )
+    result = await resolve_active_subjects(
+        db,
+        workspace_id=workspace_id,
+        project_id=payload.project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+        query=payload.query,
+        semantic_search_fn=search_similar,
+    )
+    subjects = result.get("subjects", [])
+    primary_subject = result.get("primary_subject")
+    return SubjectResolveResult(
+        primary_subject_id=primary_subject.id if primary_subject is not None else None,
+        subjects=[
+            SubjectResolveCandidate(
+                subject_id=candidate.memory.id,
+                confidence=candidate.semantic_score if candidate.semantic_score is not None else candidate.score,
+                label=candidate.memory.content,
+                subject_kind=candidate.memory.subject_kind,
+                canonical_key=candidate.memory.canonical_key,
+            )
+            for candidate in subjects
+        ],
+    )
+
+
+@router.get("/subjects/{subject_id}/overview", response_model=SubjectOverviewOut)
+def get_subject_overview_route(
+    subject_id: str,
+    conversation_id: str | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+) -> SubjectOverviewOut:
+    subject = _get_accessible_memory_or_404(
+        db,
+        memory_id=subject_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+    )
+    conversation_id, conversation_created_by = _resolve_optional_conversation_context(
+        db,
+        project_id=subject.project_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+        conversation_id=conversation_id,
+    )
+    overview = get_subject_overview(
+        db,
+        workspace_id=workspace_id,
+        project_id=subject.project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+        subject_id=subject_id,
+    )
+    if overview is None:
+        raise ApiError("not_found", "Subject not found", status_code=404)
+    return SubjectOverviewOut(
+        subject=MemoryOut.model_validate(overview["subject"], from_attributes=True),
+        concepts=[
+            MemoryOut.model_validate(memory, from_attributes=True)
+            for memory in overview.get("concepts", [])
+        ],
+        facts=[
+            MemoryOut.model_validate(memory, from_attributes=True)
+            for memory in overview.get("facts", [])
+        ],
+        suggested_paths=[
+            path
+            for path in overview.get("suggested_paths", [])
+            if isinstance(path, str) and path.strip()
+        ],
+    )
+
+
+@router.post("/subjects/{subject_id}/subgraph", response_model=SubgraphOut)
+async def get_subject_subgraph_route(
+    subject_id: str,
+    payload: SubgraphRequest,
+    conversation_id: str | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+    workspace_role: str = Depends(get_current_workspace_role),
+    workspace_id: str = Depends(get_current_workspace_id),
+) -> SubgraphOut:
+    subject = _get_accessible_memory_or_404(
+        db,
+        memory_id=subject_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+    )
+    conversation_id, conversation_created_by = _resolve_optional_conversation_context(
+        db,
+        project_id=subject.project_id,
+        workspace_id=workspace_id,
+        current_user_id=current_user.id,
+        workspace_role=workspace_role,
+        conversation_id=conversation_id,
+    )
+    subgraph = await expand_subject_subgraph(
+        db,
+        workspace_id=workspace_id,
+        project_id=subject.project_id,
+        conversation_id=conversation_id,
+        conversation_created_by=conversation_created_by,
+        subject_id=subject_id,
+        query=payload.query,
+        depth=payload.depth,
+        edge_types=payload.edge_types,
+        semantic_search_fn=search_similar,
+    )
+    if subgraph is None:
+        raise ApiError("not_found", "Subject not found", status_code=404)
+    return SubgraphOut(
+        nodes=[
+            MemoryOut.model_validate(memory, from_attributes=True)
+            for memory in subgraph.get("nodes", [])
+        ],
+        edges=[
+            MemoryEdgeOut.model_validate(edge)
+            for edge in subgraph.get("edges", [])
+        ],
     )
 
 
@@ -542,6 +815,7 @@ def create_memory(
         )
     root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=True)
     requested_parent_id = payload.parent_memory_id
+    requested_parent: Memory | None = None
     if requested_parent_id:
         requested_parent = _verify_parent_memory(
             db,
@@ -552,8 +826,34 @@ def create_memory(
             workspace_role=workspace_role,
         )
         _assert_supported_primary_parent(requested_parent)
-    resolved_parent_id = requested_parent_id or root_memory.id
     metadata_input = _strip_parent_binding_fields(payload.metadata_json)
+    node_type = normalize_node_type(payload.node_type or metadata_input.get("node_type"), fallback=FACT_NODE_TYPE)
+    if node_type == "root":
+        raise ApiError("bad_request", "Root memory is system managed", status_code=400)
+    if node_type == "subject" and requested_parent and not is_assistant_root_memory(requested_parent):
+        raise ApiError("bad_request", "Subject nodes must be attached to the project root", status_code=400)
+    resolved_parent_id = requested_parent_id or root_memory.id
+    subject_kind = (
+        str(payload.subject_kind or metadata_input.get("subject_kind") or "").strip().lower() or None
+    )
+    if node_type != "subject":
+        subject_kind = None
+    subject_memory_id = _resolve_subject_memory_id(
+        requested_subject_memory_id=payload.subject_memory_id,
+        parent=requested_parent,
+        node_type=node_type,
+    )
+    node_status = normalize_node_status(payload.node_status or metadata_input.get("node_status"), fallback=ACTIVE_NODE_STATUS)
+    metadata_input.update(
+        {
+            "node_type": node_type,
+            "subject_kind": subject_kind,
+            "subject_memory_id": subject_memory_id,
+            "node_status": node_status,
+        }
+    )
+    if payload.canonical_key:
+        metadata_input["canonical_key"] = payload.canonical_key
     if parent_field_present:
         metadata_input = set_manual_parent_binding(
             metadata_input,
@@ -561,10 +861,13 @@ def create_memory(
                 None if resolved_parent_id == root_memory.id else resolved_parent_id
             ),
         )
-
-    # Materialize the current tree before inserting the new memory so the
-    # category-tree sync cannot immediately rewrite the fresh row's parent.
-    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=payload.project_id)
+    normalized_metadata = normalize_memory_metadata(
+        content=payload.content,
+        category=payload.category,
+        memory_type=payload.type,
+        metadata=metadata_input,
+    )
+    _assert_primary_graph_metadata_allowed(normalized_metadata)
 
     memory = Memory(
         workspace_id=workspace_id,
@@ -572,16 +875,16 @@ def create_memory(
         content=payload.content,
         category=payload.category,
         type=payload.type,
+        node_type=node_type,
+        subject_kind=subject_kind,
         source_conversation_id=payload.source_conversation_id,
         parent_memory_id=resolved_parent_id,
+        subject_memory_id=subject_memory_id,
+        node_status=node_status,
+        canonical_key=payload.canonical_key or str(normalized_metadata.get("canonical_key") or "").strip() or None,
         position_x=payload.position_x,
         position_y=payload.position_y,
-        metadata_json=normalize_memory_metadata(
-            content=payload.content,
-            category=payload.category,
-            memory_type=payload.type,
-            metadata=metadata_input,
-        ),
+        metadata_json=normalized_metadata,
     )
     db.add(memory)
     db.flush()
@@ -862,10 +1165,13 @@ def update_memory(
         raise ApiError("bad_request", "Assistant root memory is system managed", status_code=400)
     if is_category_path_memory(memory):
         raise ApiError("bad_request", "Category path nodes are system managed", status_code=400)
+    if is_summary_memory(memory):
+        raise ApiError("bad_request", "Summary nodes are derived views and cannot be edited directly", status_code=400)
 
     parent_field_present = "parent_memory_id" in payload.model_fields_set
     project = get_project_in_workspace_or_404(db, memory.project_id, workspace_id)
     root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
+    current_parent = db.get(Memory, memory.parent_memory_id) if memory.parent_memory_id else None
 
     if payload.content is not None:
         memory.content = payload.content
@@ -874,6 +1180,15 @@ def update_memory(
     metadata = dict(memory.metadata_json or {})
     if payload.metadata_json is not None:
         metadata.update(_strip_parent_binding_fields(payload.metadata_json))
+    node_type = normalize_node_type(payload.node_type or metadata.get("node_type") or memory.node_type, fallback=FACT_NODE_TYPE)
+    if node_type == "root":
+        raise ApiError("bad_request", "Root memory is system managed", status_code=400)
+    subject_kind = (
+        str(payload.subject_kind or metadata.get("subject_kind") or memory.subject_kind or "").strip().lower() or None
+    )
+    if node_type != "subject":
+        subject_kind = None
+    parent_memory = current_parent
     if parent_field_present:
         requested_parent_id = payload.parent_memory_id
         if requested_parent_id:
@@ -888,6 +1203,8 @@ def update_memory(
                 workspace_role=workspace_role,
             )
             _assert_supported_primary_parent(parent_memory)
+            if node_type == "subject" and not is_assistant_root_memory(parent_memory):
+                raise ApiError("bad_request", "Subject nodes must be attached to the project root", status_code=400)
             _assert_valid_parent_assignment(
                 db,
                 memory_id=memory.id,
@@ -898,25 +1215,55 @@ def update_memory(
             metadata = set_manual_parent_binding(metadata, parent_memory_id=parent_memory.id)
         else:
             memory.parent_memory_id = root_memory.id
+            parent_memory = root_memory
             metadata = set_manual_parent_binding(metadata, parent_memory_id=None)
+    elif node_type == "subject" and memory.parent_memory_id != root_memory.id:
+        memory.parent_memory_id = root_memory.id
+        parent_memory = root_memory
+    subject_memory_id = _resolve_subject_memory_id(
+        requested_subject_memory_id=payload.subject_memory_id,
+        parent=parent_memory,
+        existing_subject_memory_id=memory.subject_memory_id,
+        node_type=node_type,
+    )
+    node_status = normalize_node_status(payload.node_status or metadata.get("node_status") or memory.node_status, fallback=ACTIVE_NODE_STATUS)
     if payload.position_x is not None:
         memory.position_x = payload.position_x
     if payload.position_y is not None:
         memory.position_y = payload.position_y
+    memory.node_type = node_type
+    memory.subject_kind = subject_kind
+    memory.subject_memory_id = subject_memory_id
+    memory.node_status = node_status
     if is_private_memory(memory):
         metadata = build_private_memory_metadata(
             metadata,
             owner_user_id=(memory.metadata_json or {}).get("owner_user_id"),
         )
+    metadata.update(
+        {
+            "node_type": node_type,
+            "subject_kind": subject_kind,
+            "subject_memory_id": subject_memory_id,
+            "node_status": node_status,
+        }
+    )
+    if payload.canonical_key:
+        metadata["canonical_key"] = payload.canonical_key
     memory.metadata_json = normalize_memory_metadata(
         content=memory.content,
         category=memory.category,
         memory_type=memory.type,
         metadata=metadata,
     )
+    _assert_primary_graph_metadata_allowed(memory.metadata_json)
+    memory.canonical_key = (
+        payload.canonical_key
+        or str(memory.metadata_json.get("canonical_key") or "").strip()
+        or memory.canonical_key
+    )
     memory.updated_at = datetime.now(timezone.utc)
 
-    _sync_project_category_tree(db, workspace_id=workspace_id, project_id=memory.project_id)
     db.commit()
     _bump_graph_revision(workspace_id=workspace_id, project_id=memory.project_id)
     db.refresh(memory)

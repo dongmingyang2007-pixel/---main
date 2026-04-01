@@ -32,7 +32,7 @@ from app.services.orchestrator import (
     synthesize_speech_for_project,
     transcribe_audio_input_for_project,
 )
-from app.services.memory_context import touch_memories_from_trace
+from app.services.memory_context import build_conversation_focus_metadata, touch_memories_from_trace
 from app.routers.utils import get_project_in_workspace_or_404
 from app.services.upload_validation import (
     UPLOAD_SIGNATURE_READ_BYTES,
@@ -93,6 +93,19 @@ def _apply_pending_memory_extraction_metadata(
     next_metadata.pop("memory_extraction_error", None)
     next_metadata["memory_extraction_updated_at"] = datetime.now(timezone.utc).isoformat()
     return next_metadata
+
+
+def _apply_conversation_focus(
+    conversation: Conversation,
+    *,
+    retrieval_trace: dict[str, object] | None,
+    updated_at: datetime | None = None,
+) -> None:
+    conversation.metadata_json = build_conversation_focus_metadata(
+        existing_metadata=conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {},
+        retrieval_trace=retrieval_trace,
+        updated_at=updated_at,
+    )
 
 
 def _normalize_media_type(content_type: str | None) -> str:
@@ -458,6 +471,10 @@ async def send_message(
         db,
         retrieval_trace=ai_metadata_json.get("retrieval_trace") if isinstance(ai_metadata_json, dict) else None,
     )
+    _apply_conversation_focus(
+        conversation,
+        retrieval_trace=ai_metadata_json.get("retrieval_trace") if isinstance(ai_metadata_json, dict) else None,
+    )
 
     db.commit()
     db.refresh(ai_message)
@@ -593,6 +610,10 @@ async def stream_message(
             conversation.updated_at = datetime.now(timezone.utc)
             touch_memories_from_trace(
                 db,
+                retrieval_trace=full_metadata_json.get("retrieval_trace") if isinstance(full_metadata_json, dict) else None,
+            )
+            _apply_conversation_focus(
+                conversation,
                 retrieval_trace=full_metadata_json.get("retrieval_trace") if isinstance(full_metadata_json, dict) else None,
             )
             db.commit()
@@ -774,6 +795,10 @@ def _save_pipeline_messages(
     conversation.updated_at = datetime.now(timezone.utc)
     touch_memories_from_trace(
         db,
+        retrieval_trace=ai_msg.metadata_json.get("retrieval_trace") if isinstance(ai_msg.metadata_json, dict) else None,
+    )
+    _apply_conversation_focus(
+        conversation,
         retrieval_trace=ai_msg.metadata_json.get("retrieval_trace") if isinstance(ai_msg.metadata_json, dict) else None,
     )
     db.commit()

@@ -11,6 +11,7 @@ import {
   getMemoryLastUsedSource,
   getMemoryNodeRole,
   getMemoryParentBinding,
+  getMemoryPrimaryParentId,
   getMemoryRetrievalCount,
   getMemorySalience,
   getSummarySourceCount,
@@ -18,6 +19,7 @@ import {
   isFileMemoryNode,
   isPinnedMemoryNode,
   isStructureMemoryNode,
+  isSubjectMemoryNode,
   isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { formatRelativeTime } from "@/lib/format-time";
@@ -73,6 +75,8 @@ function getTypeClass(node: MemoryNode): string {
   const role = getMemoryNodeRole(node);
   if (role === "summary") return "summary";
   if (role === "structure") return "pinned";
+  if (role === "subject") return "subject";
+  if (role === "concept") return "concept";
   if (isPinnedMemoryNode(node)) return "pinned";
   if (node.type === "permanent") return "permanent";
   return "temporary";
@@ -85,7 +89,8 @@ function getMemoryRoleLabel(
   const labels: Record<NonNullable<ReturnType<typeof getMemoryNodeRole>>, string> = {
     fact: t("memory.roleFact"),
     structure: t("memory.roleStructure"),
-    theme: t("memory.roleTheme"),
+    subject: t("memory.roleSubject"),
+    concept: t("memory.roleConcept"),
     summary: t("memory.roleSummary"),
   };
   if (!role) {
@@ -197,12 +202,13 @@ function finalizeBranch(draft: TreeBranchDraft): TreeBranch {
 
 function buildTree(
   nodes: MemoryNode[],
+  nodeMap: Map<string, MemoryNode>,
   uncategorizedLabel: string,
 ): TreeBranch[] {
   const root = createBranchDraft("root", [], -1);
 
   nodes.forEach((node) => {
-    const segments = getMemoryCategorySegments(node);
+    const segments = getHierarchySegments(node, nodeMap, uncategorizedLabel);
     const normalizedSegments =
       segments.length > 0 ? segments : [uncategorizedLabel];
     let current = root;
@@ -263,21 +269,55 @@ function getBranchPathLabel(branch: TreeBranch): string {
 
 function getBranchIdFromNode(
   node: MemoryNode,
+  nodeMap: Map<string, MemoryNode>,
   uncategorizedLabel: string,
 ): string {
-  const segments = getMemoryCategorySegments(node);
+  const segments = getHierarchySegments(node, nodeMap, uncategorizedLabel);
   return (segments.length > 0 ? segments : [uncategorizedLabel]).join("::");
 }
 
 function compactPathLabel(
   node: MemoryNode,
+  nodeMap: Map<string, MemoryNode>,
   uncategorizedLabel: string,
 ): string {
-  const segments = getMemoryCategorySegments(node);
+  const segments = getHierarchySegments(node, nodeMap, uncategorizedLabel);
   if (segments.length === 0) {
     return uncategorizedLabel;
   }
   return segments.join(" / ");
+}
+
+function getHierarchySegments(
+  node: MemoryNode,
+  nodeMap: Map<string, MemoryNode>,
+  uncategorizedLabel: string,
+): string[] {
+  const segments: string[] = [];
+  let parentId = getMemoryPrimaryParentId(node);
+  const seen = new Set<string>();
+
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = nodeMap.get(parentId);
+    if (!parent || isAssistantRootMemoryNode(parent) || isFileMemoryNode(parent)) {
+      break;
+    }
+    if (isStructureMemoryNode(parent)) {
+      const label = parent.content.trim() || getMemoryCategoryLabel(parent) || parent.id.slice(0, 8);
+      if (label) {
+        segments.unshift(label);
+      }
+    }
+    parentId = getMemoryPrimaryParentId(parent);
+  }
+
+  if (segments.length > 0) {
+    return segments;
+  }
+
+  const categorySegments = getMemoryCategorySegments(node);
+  return categorySegments.length > 0 ? categorySegments : [uncategorizedLabel];
 }
 
 export default function MemoryListView({
@@ -342,8 +382,8 @@ export default function MemoryListView({
   }, [memoryNodes, activeFilter, deferredSearch]);
 
   const tree = useMemo(
-    () => buildTree(filteredNodes, uncategorizedLabel),
-    [filteredNodes, uncategorizedLabel],
+    () => buildTree(filteredNodes, nodeMap, uncategorizedLabel),
+    [filteredNodes, nodeMap, uncategorizedLabel],
   );
 
   const branchMap = useMemo(() => {
@@ -393,15 +433,24 @@ export default function MemoryListView({
     : explicitlySelectedBranch || fallbackBranch;
 
   const selectedNodeBranch = selectedNode
-    ? branchMap.get(getBranchIdFromNode(selectedNode, uncategorizedLabel)) ||
+    ? branchMap.get(getBranchIdFromNode(selectedNode, nodeMap, uncategorizedLabel)) ||
       null
     : null;
-  const selectedNodeParent = selectedNode?.parent_memory_id
-    ? nodeMap.get(selectedNode.parent_memory_id) || null
+  const selectedNodeParent = selectedNode
+    ? (getMemoryPrimaryParentId(selectedNode)
+        ? nodeMap.get(getMemoryPrimaryParentId(selectedNode) as string) || null
+        : null)
+    : null;
+  const selectedSubjectNode = selectedNode
+    ? isSubjectMemoryNode(selectedNode)
+      ? selectedNode
+      : (selectedNode.subject_memory_id
+          ? nodeMap.get(selectedNode.subject_memory_id) || null
+          : null)
     : null;
   const selectedNodeChildren = selectedNode
     ? memoryNodes
-        .filter((node) => node.parent_memory_id === selectedNode.id)
+        .filter((node) => getMemoryPrimaryParentId(node) === selectedNode.id)
         .sort(sortMemoryNodes)
     : [];
   const branchContextNodes = selectedNodeBranch
@@ -477,7 +526,7 @@ export default function MemoryListView({
       return;
     }
     if (isStructureMemoryNode(node)) {
-      const branchId = getBranchIdFromNode(node, uncategorizedLabel);
+      const branchId = getBranchIdFromNode(node, nodeMap, uncategorizedLabel);
       const branch = branchMap.get(branchId);
       if (branch) {
         handleSelectBranch(branch);
@@ -793,6 +842,11 @@ export default function MemoryListView({
                 <span className="memory-detail-type-badge">
                   {getMemoryRoleLabel(selectedRole, t)}
                 </span>
+                {selectedNode.subject_kind ? (
+                  <span className="memory-detail-type-badge">
+                    {selectedNode.subject_kind}
+                  </span>
+                ) : null}
                 {selectedRole !== "summary" ? (
                   <span className="memory-detail-type-badge">
                     {getMemoryKindLabel(selectedKind, t)}
@@ -811,8 +865,13 @@ export default function MemoryListView({
               </div>
               <div className="memory-focus-meta">
                 <span>
-                  {compactPathLabel(selectedNode, uncategorizedLabel)}
+                  {compactPathLabel(selectedNode, nodeMap, uncategorizedLabel)}
                 </span>
+                {selectedSubjectNode && !isSubjectMemoryNode(selectedNode) ? (
+                  <span>
+                    {t("memory.listSubject")} {selectedSubjectNode.content}
+                  </span>
+                ) : null}
                 <span>
                   {t("memory.created")}{" "}
                   {formatRelativeTime(selectedNode.created_at, t)}
@@ -907,7 +966,7 @@ export default function MemoryListView({
                       <div className="memory-focus-list-copy">
                         <strong>{node.content}</strong>
                         <span>
-                          {compactPathLabel(node, uncategorizedLabel)}
+                          {compactPathLabel(node, nodeMap, uncategorizedLabel)}
                         </span>
                       </div>
                       <div className="memory-focus-list-meta">
@@ -976,10 +1035,31 @@ export default function MemoryListView({
 
             <div className="memory-inspector-group">
               <div className="memory-inspector-row">
+                <span>{t("memory.listNodeType")}</span>
+                <strong>{getMemoryRoleLabel(selectedRole, t)}</strong>
+              </div>
+              <div className="memory-inspector-row">
                 <span>{t("memory.listBranchPath")}</span>
                 <strong>
-                  {compactPathLabel(selectedNode, uncategorizedLabel)}
+                  {compactPathLabel(selectedNode, nodeMap, uncategorizedLabel)}
                 </strong>
+              </div>
+              <div className="memory-inspector-row">
+                <span>{t("memory.listSubject")}</span>
+                <button
+                  type="button"
+                  className="memory-inspector-link"
+                  onClick={() =>
+                    handleSelectStructuralTarget(selectedSubjectNode)
+                  }
+                  disabled={!selectedSubjectNode}
+                >
+                  {selectedSubjectNode
+                    ? selectedSubjectNode.content
+                    : isSubjectMemoryNode(selectedNode)
+                      ? selectedNode.content
+                      : t("memory.listNoSubject")}
+                </button>
               </div>
               <div className="memory-inspector-row">
                 <span>{t("memory.listParentNode")}</span>
@@ -1005,6 +1085,12 @@ export default function MemoryListView({
                     : t("memory.listBindingAuto")}
                 </strong>
               </div>
+              {selectedNode.subject_kind ? (
+                <div className="memory-inspector-row">
+                  <span>{t("memory.listSubjectKind")}</span>
+                  <strong>{selectedNode.subject_kind}</strong>
+                </div>
+              ) : null}
               <div className="memory-inspector-row">
                 <span>{t("memory.salience")}</span>
                 <strong>

@@ -15,6 +15,7 @@ class ConversationOut(BaseModel):
     project_id: str
     title: str
     created_by: str | None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 

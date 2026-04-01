@@ -633,9 +633,7 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".model-detail-status")).toContainText(
       "可在助手页使用",
     );
-    await expect(
-      page.locator('[aria-label="Breadcrumb"]').first(),
-    ).toContainText("模型");
+    await expect(page.getByRole("link", { name: "返回发现" })).toBeVisible();
     await expect(page.getByRole("link", { name: "models" })).toHaveCount(0);
 
     await page.goto("/app/discover/models/qwen3-vl-plus");
@@ -1330,10 +1328,221 @@ test.describe("Console Shell", () => {
     ).toBeVisible();
   });
 
+  test("assistant messages normalize malformed adjacent math blocks", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-math-fix-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "- 对时间求导:$$\\frac{\\partial \\psi}{\\partial t}=-i\\omega\\psi$$$\\Rightarrow i\\hbar\\frac{\\partial \\psi}{\\partial t}=E\\psi$$",
+            reasoning_content: null,
+            metadata_json: {},
+            created_at: "2026-03-31T09:30:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("解释一下");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "对时间求导",
+    );
+    await expect.poll(
+      () => assistantMessage.locator(".chat-bubble .katex").count(),
+    ).toBe(2);
+    await expect(
+      assistantMessage.locator(".chat-bubble .katex-error"),
+    ).toHaveCount(0);
+  });
+
+  test("assistant messages merge dangling colon lines before rendering", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-colon-fix-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "居住地逻辑\n: 长期定居北京，求学于伦敦。\n学术兴趣\n： 拓扑学。",
+            reasoning_content: null,
+            metadata_json: {},
+            created_at: "2026-03-31T13:35:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect.poll(async () =>
+      assistantMessage
+        .locator(".chat-bubble")
+        .evaluate((node) => node.textContent || ""),
+    ).toContain("学术兴趣： 拓扑学。");
+    const bubbleText = await assistantMessage
+      .locator(".chat-bubble")
+      .evaluate((node) => node.textContent || "");
+
+    expect(bubbleText).toContain("居住地逻辑: 长期定居北京，求学于伦敦。");
+    expect(bubbleText).toContain("学术兴趣： 拓扑学。");
+    expect(bubbleText).not.toContain("\n:");
+    expect(bubbleText).not.toContain("\n：");
+  });
+
+  test("assistant messages normalize glued headings and math commands", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-heading-math-fix-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "薛定谔方程的启发式推导### 1. 出发点：德布罗意关系\n$$\\frac{\\partial^2 \\psi}{\\partialx^2}=-k^2\\psi$$\n###5. 加入势能项",
+            reasoning_content: null,
+            metadata_json: {},
+            created_at: "2026-03-31T15:52:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(
+      assistantMessage.getByRole("heading", { name: "1. 出发点：德布罗意关系" }),
+    ).toBeVisible();
+    await expect(
+      assistantMessage.getByRole("heading", { name: "5. 加入势能项" }),
+    ).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble .katex")).toBeVisible();
+    await expect(
+      assistantMessage.locator(".chat-bubble .katex-error"),
+    ).toHaveCount(0);
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText(
+      "###5.",
+    );
+  });
+
+  test("assistant messages expand compact markdown tables before rendering", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-table-fix-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "##理性总结| 步骤| 核心思想 | 局限性 ||------|----------|--------||德布罗意关系 | 波粒二象性 | 实验假设 ||平面波假设 | 自由粒子模型 | 仅适用于自由态 |",
+            reasoning_content: null,
+            metadata_json: {},
+            created_at: "2026-03-31T15:53:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(
+      assistantMessage.getByRole("heading", { name: "理性总结" }),
+    ).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble table")).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble table")).toContainText(
+      "核心思想",
+    );
+    await expect(assistantMessage.locator(".chat-bubble table")).toContainText(
+      "德布罗意关系",
+    );
+    await expect(assistantMessage.locator(".chat-bubble table")).toContainText(
+      "平面波假设",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText(
+      "||------",
+    );
+  });
+
   test("context trace stays hidden for none routes", async ({ page }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
-      strategy: "layered_memory_v2",
+      strategy: "subject_graph_v1",
       context_level: "none",
       decision_source: "rules",
       decision_confidence: 1,
@@ -1362,7 +1571,7 @@ test.describe("Console Shell", () => {
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
-      strategy: "layered_memory_v2",
+      strategy: "subject_graph_v1",
       context_level: "profile_only",
       decision_source: "classifier",
       decision_confidence: 0.91,
@@ -1401,7 +1610,7 @@ test.describe("Console Shell", () => {
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
-      strategy: "layered_memory_v2",
+      strategy: "subject_graph_v1",
       context_level: "memory_only",
       decision_source: "rules",
       decision_confidence: 0.93,
@@ -1443,7 +1652,7 @@ test.describe("Console Shell", () => {
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
-      strategy: "layered_memory_v2",
+      strategy: "subject_graph_v1",
       context_level: "full_rag",
       decision_source: "rules",
       decision_confidence: 0.95,
@@ -2346,6 +2555,118 @@ test.describe("Console Shell", () => {
     );
   });
 
+  test("double clicking the global chat nav does not leave an overlay over the conversation pane", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    const conversationItem = page.locator(".chat-sidebar-item").first();
+    await expect(conversationItem).toBeVisible();
+
+    const before = await page.evaluate(() => {
+      const sidebar = document.querySelector(".chat-sidebar");
+      const main = document.querySelector(".chat-main");
+      const readRect = (element: Element | null) => {
+        if (!element) {
+          return null;
+        }
+        const box = element.getBoundingClientRect();
+        return {
+          x: Math.round(box.x),
+          y: Math.round(box.y),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+      };
+      return {
+        sidebar: readRect(sidebar),
+        main: readRect(main),
+      };
+    });
+
+    await page
+      .locator(".glass-sidebar--collapsed .glass-sidebar-nav-item")
+      .nth(1)
+      .dblclick();
+    await page.waitForTimeout(250);
+
+    await expect(page.locator(".glass-sidebar--expanded")).toHaveCount(0);
+
+    const afterNavDblClick = await page.evaluate(() => {
+      const sidebar = document.querySelector(".chat-sidebar");
+      const main = document.querySelector(".chat-main");
+      const readRect = (element: Element | null) => {
+        if (!element) {
+          return null;
+        }
+        const box = element.getBoundingClientRect();
+        return {
+          x: Math.round(box.x),
+          y: Math.round(box.y),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+      };
+      return {
+        sidebar: readRect(sidebar),
+        main: readRect(main),
+      };
+    });
+
+    expect(afterNavDblClick.sidebar).toEqual(before.sidebar);
+    expect(afterNavDblClick.main).toEqual(before.main);
+
+    await conversationItem.click({ button: "right" });
+    await expect(
+      page.locator(".chat-sidebar-context-item.is-danger"),
+    ).toBeVisible();
+
+    const contextMenuState = await page.evaluate(() => {
+      const menu = document.querySelector(".chat-sidebar-context-menu");
+      const button = document.querySelector(".chat-sidebar-context-item.is-danger");
+      const composer = document.querySelector(".chat-input-bar");
+      const rect = (element: Element | null) => {
+        if (!element) {
+          return null;
+        }
+        const box = element.getBoundingClientRect();
+        return {
+          x: Math.round(box.x),
+          y: Math.round(box.y),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+      };
+
+      let menuHitTarget = null;
+      if (button) {
+        const box = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2,
+        );
+        menuHitTarget =
+          hit?.closest(".chat-sidebar-context-menu")?.className ||
+          hit?.className ||
+          null;
+      }
+
+      return {
+        menu: rect(menu),
+        composer: rect(composer),
+        menuHitTarget,
+      };
+    });
+
+    expect(contextMenuState.menuHitTarget).toBe("chat-sidebar-context-menu");
+    expect(contextMenuState.menu?.y).not.toBeNull();
+    expect(contextMenuState.composer?.y).not.toBeNull();
+    expect(contextMenuState.menu!.y + contextMenuState.menu!.height).toBeLessThan(
+      contextMenuState.composer!.y,
+    );
+  });
+
   test("chat auto-creates a ready conversation when the assistant has no history", async ({
     page,
   }) => {
@@ -2422,11 +2743,13 @@ test.describe("Console Shell", () => {
       `/app/discover?picker=1&category=vision&current_model_id=qwen3-vl-plus&from=/app/assistants/${handle.seedProjectId}`,
     );
 
-    await expect(page.getByTestId("discover-picker-context")).toBeVisible();
-    await expect(page.locator(".discover-picker-context")).toContainText(
+    const pickerContext = page.locator("[data-testid='discover-picker-context']:visible").first();
+
+    await expect(pickerContext).toBeVisible();
+    await expect(pickerContext).toContainText(
       "当前槽位",
     );
-    await expect(page.locator(".discover-picker-context")).toContainText(
+    await expect(pickerContext).toContainText(
       "qwen3-vl-plus",
     );
   });

@@ -12,6 +12,13 @@ MEMORY_KIND_GOAL = "goal"
 MEMORY_KIND_EPISODIC = "episodic"
 MEMORY_KIND_FACT = "fact"
 MEMORY_KIND_SUMMARY = "summary"
+ROOT_NODE_TYPE = "root"
+SUBJECT_NODE_TYPE = "subject"
+FACT_NODE_TYPE = "fact"
+ACTIVE_NODE_STATUS = "active"
+SUPERSEDED_NODE_STATUS = "superseded"
+ARCHIVED_NODE_STATUS = "archived"
+SUBJECT_NODE_KIND = "subject"
 CONCEPT_NODE_KIND = "concept"
 CATEGORY_PATH_NODE_KIND = "category-path"
 SUMMARY_NODE_KIND = "summary"
@@ -19,6 +26,18 @@ CATEGORY_PATH_CONCEPT_SOURCE = "category_path"
 PARENT_BINDING_AUTO = "auto"
 PARENT_BINDING_MANUAL = "manual"
 RELATED_EDGE_EXCLUSIONS_KEY = "related_edge_exclusions"
+
+VALID_NODE_TYPES = {
+    ROOT_NODE_TYPE,
+    SUBJECT_NODE_TYPE,
+    CONCEPT_NODE_KIND,
+    FACT_NODE_TYPE,
+}
+VALID_NODE_STATUSES = {
+    ACTIVE_NODE_STATUS,
+    SUPERSEDED_NODE_STATUS,
+    ARCHIVED_NODE_STATUS,
+}
 
 _VALID_MEMORY_KINDS = {
     MEMORY_KIND_PROFILE,
@@ -116,7 +135,18 @@ def is_summary_memory(memory: Memory | dict[str, Any] | None) -> bool:
 
 def is_concept_memory(memory: Memory | dict[str, Any] | None) -> bool:
     metadata = get_memory_metadata(memory)
-    return metadata.get("node_kind") == CONCEPT_NODE_KIND
+    node_type = getattr(memory, "node_type", None) if memory is not None and not isinstance(memory, dict) else None
+    return node_type == CONCEPT_NODE_KIND or metadata.get("node_kind") == CONCEPT_NODE_KIND
+
+
+def is_subject_memory(memory: Memory | dict[str, Any] | None) -> bool:
+    metadata = get_memory_metadata(memory)
+    node_type = getattr(memory, "node_type", None) if memory is not None and not isinstance(memory, dict) else None
+    return node_type == SUBJECT_NODE_TYPE or metadata.get("node_kind") == SUBJECT_NODE_KIND
+
+
+def is_fact_memory(memory: Memory | dict[str, Any] | None) -> bool:
+    return get_node_type(memory) == FACT_NODE_TYPE
 
 
 def is_category_path_memory(memory: Memory | dict[str, Any] | None) -> bool:
@@ -278,6 +308,108 @@ def get_memory_category_path(memory: Memory | dict[str, Any] | None) -> str:
     return ""
 
 
+def normalize_node_type(value: Any, *, fallback: str = FACT_NODE_TYPE) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in VALID_NODE_TYPES:
+        return raw
+    if raw == CATEGORY_PATH_NODE_KIND:
+        return CONCEPT_NODE_KIND
+    if raw == SUMMARY_NODE_KIND:
+        return FACT_NODE_TYPE
+    if raw == "assistant-root":
+        return ROOT_NODE_TYPE
+    return fallback
+
+
+def normalize_node_status(value: Any, *, fallback: str = ACTIVE_NODE_STATUS) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in VALID_NODE_STATUSES:
+        return raw
+    return fallback
+
+
+def get_node_type(memory: Memory | dict[str, Any] | None) -> str:
+    if isinstance(memory, Memory):
+        direct = str(getattr(memory, "node_type", "") or "").strip().lower()
+        if direct in VALID_NODE_TYPES:
+            return direct
+    metadata = get_memory_metadata(memory)
+    node_kind = str(metadata.get("node_kind") or "").strip().lower()
+    if node_kind == "assistant-root":
+        return ROOT_NODE_TYPE
+    return normalize_node_type(metadata.get("node_type") or node_kind, fallback=FACT_NODE_TYPE)
+
+
+def get_node_status(memory: Memory | dict[str, Any] | None) -> str:
+    if isinstance(memory, Memory):
+        direct = str(getattr(memory, "node_status", "") or "").strip().lower()
+        if direct in VALID_NODE_STATUSES:
+            return direct
+    metadata = get_memory_metadata(memory)
+    return normalize_node_status(metadata.get("node_status"), fallback=ACTIVE_NODE_STATUS)
+
+
+def get_subject_kind(memory: Memory | dict[str, Any] | None) -> str | None:
+    if isinstance(memory, Memory):
+        direct = str(getattr(memory, "subject_kind", "") or "").strip().lower()
+        if direct:
+            return direct
+    metadata = get_memory_metadata(memory)
+    raw = str(metadata.get("subject_kind") or "").strip().lower()
+    return raw or None
+
+
+def get_subject_memory_id(memory: Memory | dict[str, Any] | None) -> str | None:
+    if isinstance(memory, Memory):
+        direct = getattr(memory, "subject_memory_id", None)
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+    metadata = get_memory_metadata(memory)
+    value = metadata.get("subject_memory_id")
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return None
+
+
+def build_canonical_key(
+    *,
+    content: str,
+    category: str = "",
+    node_type: str,
+    subject_kind: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str | None:
+    payload = dict(metadata or {})
+    explicit = str(payload.get("canonical_key") or "").strip().lower()
+    if explicit:
+        return explicit
+
+    normalized_type = normalize_node_type(node_type)
+    normalized_content = shorten_text(content, limit=240).strip().lower()
+    normalized_content = re.sub(r"\s+", " ", normalized_content)
+    normalized_content = re.sub(r"[，。、“”‘’\"'`()（）,.!?！？:：;；\-_/\\]+", " ", normalized_content)
+    normalized_content = re.sub(r"\s+", "-", normalized_content).strip("-")
+    normalized_category = normalize_category_path(category).strip().lower().replace(".", "/")
+    if normalized_type == ROOT_NODE_TYPE:
+        return "root"
+    if normalized_type == SUBJECT_NODE_TYPE:
+        kind = str(subject_kind or payload.get("subject_kind") or "custom").strip().lower() or "custom"
+        owner_key = str(payload.get("owner_user_id") or "").strip().lower()
+        label = normalized_content or normalized_category or "subject"
+        scope = f":{owner_key}" if owner_key else ":public"
+        return f"subject:{kind}{scope}:{label}"
+    if normalized_type == CONCEPT_NODE_KIND:
+        topic = str(payload.get("concept_topic") or "").strip().lower()
+        topic = re.sub(r"\s+", "-", topic)
+        label = topic or normalized_content or normalized_category or "concept"
+        return f"concept:{label}"
+    if normalized_type == FACT_NODE_TYPE:
+        label = normalized_content or normalized_category
+        return f"fact:{label}" if label else None
+    return None
+
+
 def derive_memory_kind(
     *,
     content: str,
@@ -379,6 +511,11 @@ def normalize_memory_metadata(
     payload["category_segments"] = category_segments
     payload["category_label"] = category_segments[-1] if category_segments else ""
     payload["category_prefixes"] = get_category_path_prefixes(normalized_category)
+    payload["node_type"] = normalize_node_type(
+        payload.get("node_type") or payload.get("node_kind"),
+        fallback=FACT_NODE_TYPE,
+    )
+    payload["node_status"] = normalize_node_status(payload.get("node_status"), fallback=ACTIVE_NODE_STATUS)
     payload["memory_kind"] = derive_memory_kind(
         content=content,
         category=category,
@@ -391,9 +528,21 @@ def normalize_memory_metadata(
         payload["node_kind"] = CATEGORY_PATH_NODE_KIND
         payload["concept_source"] = CATEGORY_PATH_CONCEPT_SOURCE
         payload["structural_only"] = True
+        payload["node_type"] = CONCEPT_NODE_KIND
         payload = clear_manual_parent_binding(payload)
     if payload["memory_kind"] == MEMORY_KIND_SUMMARY:
         payload["node_kind"] = SUMMARY_NODE_KIND
+    elif payload["node_type"] == CONCEPT_NODE_KIND:
+        payload["node_kind"] = CONCEPT_NODE_KIND
+    elif payload["node_type"] == SUBJECT_NODE_TYPE and payload.get("node_kind") not in {"assistant-root", "file"}:
+        payload["node_kind"] = SUBJECT_NODE_KIND
+    payload["canonical_key"] = build_canonical_key(
+        content=content,
+        category=category,
+        node_type=payload["node_type"],
+        subject_kind=str(payload.get("subject_kind") or "").strip() or None,
+        metadata=payload,
+    )
     if "last_used_at" in payload and not isinstance(payload.get("last_used_at"), str):
         payload.pop("last_used_at", None)
     return payload

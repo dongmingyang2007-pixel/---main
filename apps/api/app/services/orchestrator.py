@@ -240,6 +240,12 @@ _CONTEXT_ROUTE_HINTS_PERSONAL = (
 )
 _CONTEXT_ROUTE_VALUES = {"none", "profile_only", "memory_only", "full_rag"}
 _MARKDOWN_LIST_INSTRUCTION = "输出格式要求：如使用 Markdown 列表，每个列表项必须单独占一行，并以 `- ` 开头。"
+_GRAPH_TOOL_INSTRUCTION = (
+    "如果需要调用项目图谱工具，默认顺序是：先 resolve_active_subjects，"
+    "再 get_subject_overview 或 expand_subject_subgraph，随后按需调用 "
+    "search_subject_documents、search_subject_facts、get_concept_neighbors、get_explanation_path。"
+    "只有在主体图谱不足时，才回退到 search_project_memories 或 search_project_knowledge。"
+)
 
 ContextRoute = Literal["none", "profile_only", "memory_only", "full_rag"]
 
@@ -1217,7 +1223,7 @@ async def _assemble_prompt_context(
             "decision_confidence": context_route.confidence,
         }
     )
-    system_prompt = f"{context.system_prompt}\n\n{_MARKDOWN_LIST_INSTRUCTION}".strip()
+    system_prompt = f"{context.system_prompt}\n\n{_GRAPH_TOOL_INSTRUCTION}\n\n{_MARKDOWN_LIST_INSTRUCTION}".strip()
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(recent_messages[-20:])  # Last 20 messages for context
     messages.append({"role": "user", "content": user_message})

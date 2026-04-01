@@ -9,6 +9,11 @@ class MemoryCreate(BaseModel):
     content: str
     category: str = ""
     type: str = "permanent"
+    node_type: str | None = None
+    subject_kind: str | None = None
+    subject_memory_id: str | None = None
+    node_status: str | None = None
+    canonical_key: str | None = None
     source_conversation_id: str | None = None
     parent_memory_id: str | None = None
     position_x: float | None = None
@@ -19,6 +24,11 @@ class MemoryCreate(BaseModel):
 class MemoryUpdate(BaseModel):
     content: str | None = None
     category: str | None = None
+    node_type: str | None = None
+    subject_kind: str | None = None
+    subject_memory_id: str | None = None
+    node_status: str | None = None
+    canonical_key: str | None = None
     parent_memory_id: str | None = None
     position_x: float | None = None
     position_y: float | None = None
@@ -32,6 +42,11 @@ class MemoryOut(BaseModel):
     content: str
     category: str
     type: str
+    node_type: str | None = None
+    subject_kind: str | None = None
+    subject_memory_id: str | None = None
+    node_status: str | None = None
+    canonical_key: str | None = None
     source_conversation_id: str | None
     parent_memory_id: str | None
     position_x: float | None
@@ -105,3 +120,40 @@ class MemorySearchResult(BaseModel):
     memory: MemoryOut
     score: float
     chunk_text: str
+
+
+class SubjectResolveRequest(BaseModel):
+    project_id: str
+    query: str
+    conversation_id: str | None = None
+
+
+class SubjectResolveCandidate(BaseModel):
+    subject_id: str
+    confidence: float
+    label: str
+    subject_kind: str | None = None
+    canonical_key: str | None = None
+
+
+class SubjectResolveResult(BaseModel):
+    primary_subject_id: str | None = None
+    subjects: list[SubjectResolveCandidate] = Field(default_factory=list)
+
+
+class SubjectOverviewOut(BaseModel):
+    subject: MemoryOut
+    concepts: list[MemoryOut] = Field(default_factory=list)
+    facts: list[MemoryOut] = Field(default_factory=list)
+    suggested_paths: list[str] = Field(default_factory=list)
+
+
+class SubgraphRequest(BaseModel):
+    query: str = ""
+    depth: int = Field(default=2, ge=1, le=4)
+    edge_types: list[str] = Field(default_factory=list)
+
+
+class SubgraphOut(BaseModel):
+    nodes: list[MemoryOut] = Field(default_factory=list)
+    edges: list[MemoryEdgeOut] = Field(default_factory=list)

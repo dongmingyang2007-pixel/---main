@@ -13,11 +13,16 @@ export type MemoryKind =
   | "summary";
 
 export type GraphNodeDisplayType = "center" | "memory" | "file";
-export type MemoryNodeRole = "fact" | "structure" | "theme" | "summary";
+export type MemoryNodeRole = "fact" | "structure" | "subject" | "concept" | "summary";
 
 export interface MemoryMetadataJson extends Record<string, unknown> {
   memory_kind?: MemoryKind;
   node_kind?: string;
+  node_type?: string;
+  subject_kind?: string;
+  subject_memory_id?: string | null;
+  node_status?: string;
+  canonical_key?: string;
   concept_source?: string;
   parent_binding?: "auto" | "manual" | string;
   manual_parent_id?: string | null;
@@ -52,6 +57,11 @@ export interface MemoryNode {
   content: string;
   category: string;
   type: "permanent" | "temporary";
+  node_type?: string | null;
+  subject_kind?: string | null;
+  subject_memory_id?: string | null;
+  node_status?: string | null;
+  canonical_key?: string | null;
   source_conversation_id: string | null;
   parent_memory_id: string | null;
   position_x: number | null;
@@ -75,7 +85,7 @@ export function isFileMemoryNode(node: MemoryNode): boolean {
 }
 
 export function isAssistantRootMemoryNode(node: MemoryNode): boolean {
-  return node.metadata_json?.node_kind === "assistant-root";
+  return node.node_type === "root" || node.metadata_json?.node_kind === "assistant-root";
 }
 
 export function getGraphNodeDisplayType(
@@ -83,7 +93,11 @@ export function getGraphNodeDisplayType(
 ): GraphNodeDisplayType {
   const metadata = getMemoryMetadata(node);
   const nodeKind = metadata.node_kind;
-  if (nodeKind === "assistant-root" || nodeKind === "assistant-center") {
+  if (
+    metadata.node_type === "root" ||
+    nodeKind === "assistant-root" ||
+    nodeKind === "assistant-center"
+  ) {
     return "center";
   }
   if (
@@ -98,7 +112,13 @@ export function getGraphNodeDisplayType(
 }
 
 export function isConceptMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
-  return getMemoryMetadata(node).node_kind === "concept";
+  const metadata = getMemoryMetadata(node);
+  return metadata.node_type === "concept" || metadata.node_kind === "concept";
+}
+
+export function isSubjectMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
+  const metadata = getMemoryMetadata(node);
+  return metadata.node_type === "subject" || metadata.node_kind === "subject";
 }
 
 export function isCategoryPathMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
@@ -125,8 +145,11 @@ export function getMemoryNodeRole(
   if (isCategoryPathMemoryNode(metadata) || metadata.structural_only === true) {
     return "structure";
   }
+  if (isSubjectMemoryNode(metadata)) {
+    return "subject";
+  }
   if (isConceptMemoryNode(metadata)) {
-    return "theme";
+    return "concept";
   }
   if (isSummaryMemoryNode(metadata)) {
     return "summary";
@@ -149,7 +172,8 @@ export function isStructureMemoryNode(
 export function isThemeMemoryNode(
   node: MemoryNode | MemoryMetadataJson | null | undefined,
 ): boolean {
-  return getMemoryNodeRole(node) === "theme";
+  const role = getMemoryNodeRole(node);
+  return role === "subject" || role === "concept";
 }
 
 export function isFactMemoryNode(
@@ -185,6 +209,20 @@ export function getMemoryParentBinding(node: MemoryNode | MemoryMetadataJson): "
   return value === "manual" ? "manual" : "auto";
 }
 
+export function getMemoryPrimaryParentId(
+  node: MemoryNode | MemoryMetadataJson | null | undefined,
+): string | null {
+  const metadata = getMemoryMetadata(node);
+  if (typeof metadata.graph_parent_memory_id === "string" && metadata.graph_parent_memory_id) {
+    return metadata.graph_parent_memory_id;
+  }
+  if (node && typeof node === "object" && "parent_memory_id" in node) {
+    const parentId = node.parent_memory_id;
+    return typeof parentId === "string" && parentId ? parentId : null;
+  }
+  return null;
+}
+
 export function hasManualParentBinding(node: MemoryNode | MemoryMetadataJson): boolean {
   return getMemoryParentBinding(node) === "manual";
 }
@@ -203,7 +241,7 @@ export function canPrimaryParentChildren(node: MemoryNode | MemoryMetadataJson):
     return false;
   }
   const role = getMemoryNodeRole(node);
-  return role === "structure" || role === "theme" || role === "summary";
+  return role === "structure" || role === "subject" || role === "concept" || role === "summary";
 }
 
 export function isPinnedMemoryNode(node: MemoryNode | MemoryMetadataJson): boolean {
@@ -285,7 +323,7 @@ export interface MemoryEdge {
   id: string;
   source_memory_id: string;
   target_memory_id: string;
-  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center";
+  edge_type: "auto" | "manual" | "related" | "summary" | "file" | "center" | "parent" | "prerequisite" | "evidence";
   strength: number;
   created_at: string;
   // D3 fields
@@ -307,163 +345,11 @@ interface GraphData {
   edges: MemoryEdge[];
 }
 
-function clearGraphOnlyMetadata(node: MemoryNode): MemoryNode {
-  if (!("graph_parent_memory_id" in node.metadata_json)) {
-    return node;
-  }
-  const metadata = { ...node.metadata_json };
-  delete metadata.graph_parent_memory_id;
-  return {
-    ...node,
-    metadata_json: metadata,
-  };
-}
-
-function buildSyntheticCategoryNodeId(projectId: string, categoryPath: string): string {
-  return `__graph_category__:${projectId}:${categoryPath}`;
-}
-
 function augmentGraphDataWithCategoryBranches(raw: GraphData): GraphData {
-  const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : [];
-  const rawEdges = Array.isArray(raw.edges) ? raw.edges : [];
-  const baseNodes = rawNodes
-    .filter((node) => !isSyntheticGraphNode(node))
-    .map(clearGraphOnlyMetadata);
-  const baseEdges = rawEdges.filter((edge) => !edge.id.startsWith("graph-category:"));
-  if (baseNodes.length === 0) {
-    return { nodes: baseNodes, edges: baseEdges };
-  }
-
-  const assistantRootNode = baseNodes.find((node) => isAssistantRootMemoryNode(node)) ?? null;
-  const seedNode = assistantRootNode ?? baseNodes[0];
-  const baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
-  const fallbackTimestamp =
-    baseNodes
-      .map((node) => node.updated_at || node.created_at)
-      .find((value) => typeof value === "string" && value.length > 0) || new Date().toISOString();
-
-  const categoryNodeByPath = new Map<string, MemoryNode>();
-  baseNodes.forEach((node) => {
-    if (!isCategoryPathMemoryNode(node)) {
-      return;
-    }
-    const categoryPath = getMemoryCategoryPath(node);
-    if (!categoryPath) {
-      return;
-    }
-    categoryNodeByPath.set(categoryPath, node);
-  });
-
-  const requiredCategoryPaths = new Set<string>();
-  baseNodes.forEach((node) => {
-    if (!isOrdinaryMemoryNode(node)) {
-      return;
-    }
-    getMemoryCategoryPrefixes(node).forEach((prefix) => requiredCategoryPaths.add(prefix));
-  });
-
-  const syntheticNodes: MemoryNode[] = [];
-
-  const ensureCategoryNode = (categoryPath: string): MemoryNode | null => {
-    if (!categoryPath) {
-      return null;
-    }
-    const existing = categoryNodeByPath.get(categoryPath);
-    if (existing) {
-      return existing;
-    }
-
-    const segments = categoryPath
-      .split(".")
-      .map((segment) => segment.trim())
-      .filter(Boolean);
-    if (segments.length === 0) {
-      return null;
-    }
-
-    const parentPath = segments.slice(0, -1).join(".");
-    const parentNode = parentPath ? ensureCategoryNode(parentPath) : assistantRootNode;
-    const syntheticNode: MemoryNode = {
-      id: buildSyntheticCategoryNodeId(seedNode.project_id, categoryPath),
-      workspace_id: seedNode.workspace_id,
-      project_id: seedNode.project_id,
-      content: segments[segments.length - 1],
-      category: categoryPath,
-      type: "permanent",
-      source_conversation_id: null,
-      parent_memory_id: parentNode?.id ?? null,
-      position_x: null,
-      position_y: null,
-      metadata_json: {
-        node_kind: "category-path",
-        concept_source: "category_path",
-        structural_only: true,
-        auto_generated: true,
-        synthetic_graph_node: true,
-        parent_binding: "auto",
-        category_path: categoryPath,
-        category_label: segments[segments.length - 1],
-        category_segments: segments,
-        category_prefixes: segments.map((_, index) => segments.slice(0, index + 1).join(".")),
-        category_depth: Math.max(0, segments.length - 1),
-      },
-      created_at: fallbackTimestamp,
-      updated_at: fallbackTimestamp,
-    };
-    categoryNodeByPath.set(categoryPath, syntheticNode);
-    syntheticNodes.push(syntheticNode);
-    return syntheticNode;
-  };
-
-  [...requiredCategoryPaths]
-    .sort(
-      (left, right) =>
-        left.split(".").length - right.split(".").length || left.localeCompare(right),
-    )
-    .forEach((categoryPath) => {
-      ensureCategoryNode(categoryPath);
-    });
-
-  const augmentedNodes = baseNodes.map((node) => {
-    const metadata = { ...node.metadata_json };
-    let graphParentId: string | null = null;
-
-    if (isCategoryPathMemoryNode(node)) {
-      const categoryPath = getMemoryCategoryPath(node);
-      const segments = categoryPath
-        .split(".")
-        .map((segment) => segment.trim())
-        .filter(Boolean);
-      const parentPath = segments.slice(0, -1).join(".");
-      graphParentId = parentPath
-        ? categoryNodeByPath.get(parentPath)?.id ?? null
-        : assistantRootNode?.id ?? null;
-    } else if (isOrdinaryMemoryNode(node)) {
-      const actualParent = node.parent_memory_id
-        ? baseNodeById.get(node.parent_memory_id) ?? null
-        : null;
-      const categoryPath = getMemoryCategoryPath(node);
-      const categoryNode = categoryPath ? categoryNodeByPath.get(categoryPath) ?? null : null;
-      if (!actualParent || isAssistantRootMemoryNode(actualParent)) {
-        graphParentId = categoryNode?.id ?? null;
-      } else if (isCategoryPathMemoryNode(actualParent)) {
-        graphParentId = actualParent.id;
-      }
-    }
-
-    if (graphParentId) {
-      metadata.graph_parent_memory_id = graphParentId;
-      return {
-        ...node,
-        metadata_json: metadata,
-      };
-    }
-    return node;
-  });
-
   return {
-    nodes: [...augmentedNodes, ...syntheticNodes],
-    edges: baseEdges,
+    nodes: (Array.isArray(raw.nodes) ? raw.nodes : [])
+      .filter((node) => !isSyntheticGraphNode(node)),
+    edges: (Array.isArray(raw.edges) ? raw.edges : []).filter((edge) => !edge.id.startsWith("graph-category:")),
   };
 }
 
@@ -485,6 +371,26 @@ function normalizeStreamNode(
     content: node.content || previous?.content || "",
     category: node.category || previous?.category || "",
     type: node.type || previous?.type || "temporary",
+    node_type:
+      node.node_type !== undefined
+        ? node.node_type
+        : (previous?.node_type ?? null),
+    subject_kind:
+      node.subject_kind !== undefined
+        ? node.subject_kind
+        : (previous?.subject_kind ?? null),
+    subject_memory_id:
+      node.subject_memory_id !== undefined
+        ? node.subject_memory_id
+        : (previous?.subject_memory_id ?? null),
+    node_status:
+      node.node_status !== undefined
+        ? node.node_status
+        : (previous?.node_status ?? null),
+    canonical_key:
+      node.canonical_key !== undefined
+        ? node.canonical_key
+        : (previous?.canonical_key ?? null),
     source_conversation_id:
       node.source_conversation_id !== undefined
         ? node.source_conversation_id

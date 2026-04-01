@@ -26,6 +26,200 @@ import {
   createAudioPlayer,
 } from "./chat-types";
 
+const FENCED_CODE_BLOCK_SPLIT_PATTERN = /(```[\s\S]*?```)/g;
+const FENCED_CODE_BLOCK_FULL_PATTERN = /^```[\s\S]*```$/;
+const MATH_BLOCK_GLUE_PATTERN =
+  /(\$\$[^$]{1,800})\${3,4}(?=(?:\\|[A-Za-z([{]))/gu;
+const MATH_AFTER_COLON_PATTERN =
+  /([：:])\s*(\$\$)(?=(?:\\|[A-Za-z([{]))/gu;
+const DANGLING_COLON_LINE_PATTERN = /^[ \t]*([：:])([ \t]*)(.*\S)?[ \t]*$/u;
+const INLINE_HEADING_GLUE_PATTERN =
+  /([^\s#])[ \t]*(#{2,6})(?=[ \t]*[0-9A-Za-z\u4e00-\u9fff([{(（【])/gu;
+const HEADING_WITHOUT_SPACE_PATTERN =
+  /^([ \t]*#{1,6})(?=[0-9A-Za-z\u4e00-\u9fff([{(（【])/gmu;
+const DISPLAY_MATH_PATTERN = /\$\$([\s\S]*?)\$\$/gu;
+const INLINE_MATH_PATTERN = /(?<!\$)\$([^$\n]+?)\$(?!\$)/gu;
+const HEADING_TABLE_GLUE_PATTERN =
+  /(^|\n)([ \t]*#{1,6}[^\n|]+?)\|(?=[^\n]*\|[ \t]*:?-{3,}:?)/gu;
+const TABLE_SEPARATOR_ROW_PATTERN =
+  /^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|){2,}[ \t]*:?-{3,}:?[ \t]*\|?[ \t]*$/u;
+const TERMINAL_MATH_COMMANDS = [
+  "alpha",
+  "beta",
+  "gamma",
+  "delta",
+  "epsilon",
+  "varepsilon",
+  "zeta",
+  "eta",
+  "theta",
+  "vartheta",
+  "iota",
+  "kappa",
+  "lambda",
+  "mu",
+  "nu",
+  "xi",
+  "pi",
+  "varpi",
+  "rho",
+  "varrho",
+  "sigma",
+  "varsigma",
+  "tau",
+  "upsilon",
+  "phi",
+  "varphi",
+  "chi",
+  "psi",
+  "omega",
+  "Gamma",
+  "Delta",
+  "Theta",
+  "Lambda",
+  "Xi",
+  "Pi",
+  "Sigma",
+  "Upsilon",
+  "Phi",
+  "Psi",
+  "Omega",
+  "partial",
+  "nabla",
+  "hbar",
+  "ell",
+  "infty",
+  "imath",
+  "jmath",
+];
+const TERMINAL_MATH_COMMAND_PATTERN = new RegExp(
+  String.raw`\\(?:${TERMINAL_MATH_COMMANDS.join("|")})(?=[A-Za-z0-9])`,
+  "gu",
+);
+
+function mergeDanglingColonLines(lines: string[]): string[] {
+  if (!lines.length) {
+    return lines;
+  }
+
+  const merged: string[] = [];
+  for (const line of lines) {
+    const match = line.match(DANGLING_COLON_LINE_PATTERN);
+    if (
+      match &&
+      merged.length > 0 &&
+      merged[merged.length - 1]?.trim() &&
+      !merged[merged.length - 1]?.trimEnd().endsWith(match[1])
+    ) {
+      const previous = merged.pop()?.trimEnd() ?? "";
+      const gap = match[2] ?? "";
+      const content = match[3] ?? "";
+      merged.push(`${previous}${match[1]}${gap}${content}`.trimEnd());
+      continue;
+    }
+    merged.push(line);
+  }
+
+  return merged;
+}
+
+function normalizeMathRenderingLine(line: string): string {
+  if (!line.includes("$$")) {
+    return line;
+  }
+
+  return line
+    .replace(MATH_BLOCK_GLUE_PATTERN, (_, prefix: string) => `${prefix}$$\n$$`)
+    .replace(MATH_AFTER_COLON_PATTERN, "$1\n$2");
+}
+
+function normalizeMathBody(body: string): string {
+  if (!body.includes("\\")) {
+    return body;
+  }
+  return body.replace(TERMINAL_MATH_COMMAND_PATTERN, (match) => `${match} `);
+}
+
+function normalizeMathExpressions(segment: string): string {
+  return segment
+    .replace(DISPLAY_MATH_PATTERN, (_, body: string) => {
+      return `$$${normalizeMathBody(body)}$$`;
+    })
+    .replace(INLINE_MATH_PATTERN, (_, body: string) => {
+      return `$${normalizeMathBody(body)}$`;
+    });
+}
+
+function normalizeHeadingMarkers(segment: string): string {
+  return segment
+    .replace(INLINE_HEADING_GLUE_PATTERN, "$1\n$2")
+    .replace(HEADING_WITHOUT_SPACE_PATTERN, "$1 ");
+}
+
+function ensureTableRowPipes(row: string): string {
+  let normalized = row.trim();
+  if (!normalized.startsWith("|")) {
+    normalized = `|${normalized}`;
+  }
+  if (!normalized.endsWith("|")) {
+    normalized = `${normalized}|`;
+  }
+  return normalized;
+}
+
+function normalizeTableLine(line: string): string {
+  if (!line.includes("|") || !line.includes("||") || !line.includes("---")) {
+    return line;
+  }
+
+  const rows = line
+    .split("||")
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .map(ensureTableRowPipes);
+
+  if (rows.length < 2 || !rows.some((row) => TABLE_SEPARATOR_ROW_PATTERN.test(row))) {
+    return line;
+  }
+
+  return rows.join("\n");
+}
+
+function normalizeMarkdownTables(segment: string): string {
+  return segment
+    .replace(HEADING_TABLE_GLUE_PATTERN, "$1$2\n|")
+    .split("\n")
+    .map(normalizeTableLine)
+    .join("\n");
+}
+
+function normalizeRenderableMarkdown(text: string): string {
+  if (
+    !text.includes("$") &&
+    !text.includes("\n:") &&
+    !text.includes("\n：") &&
+    !text.includes("#") &&
+    !text.includes("|")
+  ) {
+    return text;
+  }
+
+  return text
+    .split(FENCED_CODE_BLOCK_SPLIT_PATTERN)
+    .map((segment) => {
+      if (FENCED_CODE_BLOCK_FULL_PATTERN.test(segment)) {
+        return segment;
+      }
+      const mergedLines = mergeDanglingColonLines(
+        segment.split("\n").map(normalizeMathRenderingLine),
+      ).join("\n");
+      return normalizeMarkdownTables(
+        normalizeHeadingMarkers(normalizeMathExpressions(mergedLines)),
+      );
+    })
+    .join("");
+}
+
 /* ------------------------------------------------------------------ */
 /*  AnimatedMessageText                                                */
 /* ------------------------------------------------------------------ */
@@ -72,6 +266,7 @@ function AnimatedMessageText({
 
   const displayCount = shouldAnimate ? visibleCount : segments.length;
   const visibleText = segments.slice(0, displayCount).join("");
+  const renderableText = normalizeRenderableMarkdown(visibleText);
   const showCursor =
     streaming || (shouldAnimate && displayCount < segments.length);
 
@@ -96,7 +291,7 @@ function AnimatedMessageText({
           ),
         }}
       >
-        {visibleText}
+        {renderableText}
       </ReactMarkdown>
       {showCursor ? <span className="chat-inline-cursor">&#x2588;</span> : null}
     </div>
@@ -755,9 +950,11 @@ function SourceFavicon({ source }: { source: SearchSource }) {
 
 function SourceAwareAssistantMarkdown({
   message,
+  content,
   sourceEntries,
 }: {
   message: Message;
+  content: string;
   sourceEntries: Map<
     number,
     {
@@ -801,7 +998,7 @@ function SourceAwareAssistantMarkdown({
           },
         }}
       >
-        {message.content}
+        {content}
       </ReactMarkdown>
     </div>
   );
@@ -846,6 +1043,7 @@ function AssistantMessageBody({
   t: (key: string) => string;
 }) {
   const sources = message.sources ?? [];
+  const normalizedContent = normalizeRenderableMarkdown(message.content);
   if (!sources.length || message.isStreaming) {
     return (
       <AnimatedMessageText
@@ -856,7 +1054,7 @@ function AssistantMessageBody({
     );
   }
 
-  const citationSnippets = buildCitationSnippetMap(message.content);
+  const citationSnippets = buildCitationSnippetMap(normalizedContent);
   const sourceEntries = new Map(
     sources.map((source, index) => {
       const displayIndex = getSourceDisplayIndex(source, index + 1);
@@ -867,13 +1065,14 @@ function AssistantMessageBody({
     }),
   );
   const hasCitationAnchors = Array.from(
-    message.content.matchAll(CITATION_PATTERN),
+    normalizedContent.matchAll(CITATION_PATTERN),
   ).some((match) => sourceEntries.has(Number.parseInt(match[1] || "0", 10)));
 
   return (
     <>
       <SourceAwareAssistantMarkdown
         message={message}
+        content={normalizedContent}
         sourceEntries={sourceEntries}
       />
       {!hasCitationAnchors ? (

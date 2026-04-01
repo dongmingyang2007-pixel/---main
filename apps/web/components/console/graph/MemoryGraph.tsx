@@ -103,7 +103,8 @@ const COLORS = {
   temporary: "#4a8ac8",
   core: "#dd8a62",
   structure: "#d59863",
-  theme: "#c46e58",
+  subject: "#9d5c63",
+  concept: "#c46e58",
   summary: "#b68a2f",
   file: "#8a7a6a",
   centerGradStart: "#c8734a",
@@ -131,7 +132,8 @@ function nodeRadius(node: MemoryNode, isCenter: boolean): number {
   if (isFileMemoryNode(node)) return Math.max(FILE_NODE_W, FILE_NODE_H) / 2 + 4;
   const role = getMemoryNodeRole(node);
   if (role === "summary") return MEMORY_NODE_RADIUS + 4;
-  if (role === "theme") return MEMORY_NODE_RADIUS + 2;
+  if (role === "subject") return MEMORY_NODE_RADIUS + 4;
+  if (role === "concept") return MEMORY_NODE_RADIUS + 2;
   if (role === "structure") return MEMORY_NODE_RADIUS - 1;
   if (isPinnedMemoryNode(node)) return MEMORY_NODE_RADIUS + 2;
   return MEMORY_NODE_RADIUS;
@@ -175,8 +177,11 @@ function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string
     if (role === "structure") {
       return COLORS.structure;
     }
-    if (role === "theme") {
-      return COLORS.theme;
+    if (role === "subject") {
+      return COLORS.subject;
+    }
+    if (role === "concept") {
+      return COLORS.concept;
     }
     if (isPinnedMemoryNode(node)) {
       return COLORS.core;
@@ -197,7 +202,9 @@ function getMemoryNodeColor(node: MemoryNode, maxRetrievalCount: number): string
           ? "#8a6715"
           : role === "structure"
             ? "#b1713d"
-            : role === "theme"
+            : role === "subject"
+              ? "#804650"
+            : role === "concept"
               ? "#a94b38"
           : isPinnedMemoryNode(node) || kind === "profile" || kind === "preference" || kind === "goal"
             ? "#b85d39"
@@ -455,7 +462,8 @@ function sortTreeChildren(left: SimNode, right: SimNode): number {
   const roleWeight = (node: SimNode) => {
     const role = getMemoryNodeRole(node);
     if (role === "structure") return 4;
-    if (role === "theme") return 3;
+    if (role === "subject") return 5;
+    if (role === "concept") return 3;
     if (role === "summary") return 2;
     return 1;
   };
@@ -480,7 +488,10 @@ function getTreeNodeDistance(node: SimNode, depth: number, centerNodeId: string)
   if (role === "summary") {
     return PARENT_LINK_DISTANCE + 14;
   }
-  if (role === "theme") {
+  if (role === "subject") {
+    return PARENT_LINK_DISTANCE + 10;
+  }
+  if (role === "concept") {
     return PARENT_LINK_DISTANCE + 18;
   }
   return PARENT_LINK_DISTANCE + 22;
@@ -597,6 +608,8 @@ function createTreeScaffoldForce(centerNodeId: string): d3.Force<SimNode, SimLin
           ? 0.05
           : getMemoryNodeRole(node) === "structure"
             ? 0.22
+            : getMemoryNodeRole(node) === "subject"
+              ? 0.18
             : 0.14;
       node.vx = (node.vx ?? 0) + (target.x - node.x) * spring * alpha;
       node.vy = (node.vy ?? 0) + (target.y - node.y) * spring * alpha;
@@ -1466,6 +1479,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const isSummaryEdge = link.edge_type === "summary";
       const isManualRelatedEdge = link.edge_type === "manual";
       const isSystemRelatedEdge = link.edge_type === "related";
+      const isPrerequisiteEdge = link.edge_type === "prerequisite";
+      const isEvidenceEdge = link.edge_type === "evidence";
       const isLateralEdge = isManualRelatedEdge || isSystemRelatedEdge;
       const isStructuralEdge = isStructuralTreeEdgePair(
         simNodeById,
@@ -1480,12 +1495,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         link.edge_type === "parent" || (isStructuralEdge && !isCenterEdge);
       const lineWidth = isFileEdge
         ? 1
+        : isEvidenceEdge
+          ? isOrbitMode ? 1.35 : 1.15
         : isCenterEdge
           ? isOrbitMode ? 2.1 : 1.75
           : isParentEdge
             ? isOrbitMode ? 1.55 : 1.3
             : isManualRelatedEdge
               ? isOrbitMode ? 1.95 : 1.7
+              : isPrerequisiteEdge
+                ? isOrbitMode ? 1.7 : 1.45
               : isSystemRelatedEdge
                 ? isOrbitMode ? 1.65 : 1.4
                 : isSummaryEdge
@@ -1505,6 +1524,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
+      } else if (isEvidenceEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([3, 5]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(123, 104, 238, 0.62)" : "rgba(111, 92, 214, 0.46)";
       } else if (isParentEdge) {
         ctx.beginPath();
         ctx.moveTo(src.x, src.y);
@@ -1523,6 +1548,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ctx.lineTo(tgt.x, tgt.y);
         ctx.setLineDash([6, 6]);
         ctx.strokeStyle = isOrbitMode ? "rgba(91, 118, 255, 0.66)" : "rgba(89, 102, 241, 0.52)";
+      } else if (isPrerequisiteEdge) {
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.setLineDash([8, 5]);
+        ctx.strokeStyle = isOrbitMode ? "rgba(37, 99, 235, 0.72)" : "rgba(37, 99, 235, 0.58)";
       } else if (isManualRelatedEdge) {
         ctx.beginPath();
         ctx.moveTo(src.x, src.y);
@@ -1859,11 +1890,17 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             if (link.edge_type === "file") {
               return FILE_LINK_DISTANCE;
             }
+            if (link.edge_type === "evidence") {
+              return isOrbitMode ? 126 : 112;
+            }
             if (isStructuralParentEdge) {
               return isOrbitMode ? PARENT_LINK_DISTANCE + 10 : PARENT_LINK_DISTANCE;
             }
             if (isStructuralCenterEdge) {
               return isOrbitMode ? CENTER_LINK_DISTANCE + 6 : CENTER_LINK_DISTANCE - 16;
+            }
+            if (link.edge_type === "prerequisite") {
+              return isOrbitMode ? 154 : 138;
             }
             if (link.edge_type === "related") {
               return isOrbitMode ? 148 : 134;
@@ -1888,11 +1925,17 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             if (link.edge_type === "file") {
               return 0.9;
             }
+            if (link.edge_type === "evidence") {
+              return Math.max(0.18, link.strength * (isOrbitMode ? 0.22 : 0.26));
+            }
             if (isStructuralParentEdge) {
               return isOrbitMode ? 0.42 : 0.48;
             }
             if (isStructuralCenterEdge) {
               return Math.max(isOrbitMode ? 0.12 : 0.14, link.strength * (isOrbitMode ? 0.18 : 0.22));
+            }
+            if (link.edge_type === "prerequisite") {
+              return Math.max(0.12, link.strength * (isOrbitMode ? 0.18 : 0.21));
             }
             if (link.edge_type === "related") {
               return Math.max(isOrbitMode ? 0.1 : 0.12, link.strength * (isOrbitMode ? 0.16 : 0.18));
@@ -1914,7 +1957,9 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           }
           return getMemoryNodeRole(node) === "structure"
             ? (isOrbitMode ? -178 : -140)
-            : getMemoryNodeRole(node) === "theme"
+            : getMemoryNodeRole(node) === "subject"
+              ? (isOrbitMode ? -176 : -144)
+              : getMemoryNodeRole(node) === "concept"
               ? (isOrbitMode ? -188 : -150)
               : (isOrbitMode ? -196 : -160);
         }),

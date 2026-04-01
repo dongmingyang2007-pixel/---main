@@ -35,22 +35,36 @@ from app.services.memory_graph_events import (
     session_has_pending_graph_mutations,
 )
 from app.services.memory_metadata import (
+    ACTIVE_NODE_STATUS,
     CONCEPT_NODE_KIND,
+    FACT_NODE_TYPE,
     MEMORY_KIND_GOAL,
     MEMORY_KIND_PREFERENCE,
     get_memory_kind,
+    get_subject_kind,
+    get_subject_memory_id,
     is_category_path_memory,
     is_concept_memory,
+    is_subject_memory,
     is_summary_memory,
     normalize_memory_metadata,
     set_manual_parent_binding,
 )
-from app.services.memory_related_edges import ensure_project_related_edges
-from app.services.memory_roots import ensure_project_assistant_root, is_assistant_root_memory
-from app.services.memory_visibility import build_private_memory_metadata
+from app.services.memory_related_edges import ensure_project_prerequisite_edges, ensure_project_related_edges
+from app.services.memory_roots import (
+    ensure_project_assistant_root,
+    ensure_project_subject,
+    ensure_project_user_subject,
+    is_assistant_root_memory,
+)
+from app.services.memory_visibility import (
+    build_private_memory_metadata,
+    get_memory_owner_user_id,
+    is_private_memory,
+)
+from app.services import project_cleanup as project_cleanup_service
 from app.services.project_cleanup import ProjectDeletionError, delete_project_permanently
 from app.services.runtime_state import runtime_state
-from app.services.storage import delete_object
 from app.services import dashscope_client
 from app.tasks.celery_app import celery_app
 
@@ -63,6 +77,10 @@ MEMORY_EXTRACTION_STATUS_FAILED = "failed"
 MEMORY_EXTRACTION_FAILURE_SUMMARY = "本轮记忆处理失败，请稍后重试"
 MEMORY_EXTRACTION_MAX_ATTEMPTS = 3
 _MEMORY_EXTRACTION_UNSET = object()
+
+
+def delete_object(*, bucket_name: str, object_key: str) -> None:
+    project_cleanup_service.delete_object(bucket_name=bucket_name, object_key=object_key)
 
 
 @celery_app.task(name="app.tasks.worker_tasks.process_data_item")
@@ -504,14 +522,25 @@ def _normalize_text_key(value: str) -> str:
     return re.sub(r"[，。、“”‘’\"'`()（）,.!?！？:：;；\-_/\\]+", "", normalized)
 
 
-def _rebind_memory_under_parent(memory: Memory, parent_memory_id: str) -> None:
+def _rebind_memory_under_parent(memory: Memory, parent: Memory) -> None:
+    parent_memory_id = parent.id
     memory.parent_memory_id = parent_memory_id
+    if is_subject_memory(parent):
+        memory.subject_memory_id = parent.id
+    elif parent.subject_memory_id:
+        memory.subject_memory_id = parent.subject_memory_id
+    metadata = dict(memory.metadata_json or {})
+    if is_private_memory(parent):
+        metadata = build_private_memory_metadata(
+            metadata,
+            owner_user_id=get_memory_owner_user_id(parent),
+        )
     memory.metadata_json = normalize_memory_metadata(
         content=memory.content,
         category=memory.category,
         memory_type=memory.type,
         metadata=set_manual_parent_binding(
-            dict(memory.metadata_json or {}),
+            metadata,
             parent_memory_id=parent_memory_id,
         ),
     )
@@ -520,6 +549,7 @@ def _rebind_memory_under_parent(memory: Memory, parent_memory_id: str) -> None:
 def _is_structural_parent_memory(memory: Memory | dict[str, object] | None) -> bool:
     return (
         is_assistant_root_memory(memory)
+        or is_subject_memory(memory)
         or is_concept_memory(memory)
         or is_category_path_memory(memory)
         or is_summary_memory(memory)
@@ -536,6 +566,64 @@ _STABLE_PREFERENCE_FACT_PATTERN = re.compile(
 _STABLE_GOAL_FACT_PATTERN = re.compile(
     rf"^(?:用户|我|本人){_FACT_LEADING_MODIFIER_PATTERN}(?:计划|打算|准备|希望|想要)"
 )
+_QUOTED_SUBJECT_PATTERN = re.compile(r"[《“\"]([^》”\"]{2,48})[》”\"]")
+_SUBJECT_REFERENCE_HINTS = (
+    "这本书",
+    "这门课",
+    "这个课程",
+    "这个项目",
+    "这个理论",
+    "这个模型",
+    "这个框架",
+    "这篇论文",
+    "这个设备",
+    "这套系统",
+    "this book",
+    "this course",
+    "this project",
+    "this theory",
+    "this model",
+    "this paper",
+)
+_SUBJECT_KIND_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("book", ("这本书", "书里", "书中", "章节", "作者", "book", "chapter")),
+    ("course", ("这门课", "课程", "讲义", "作业", "课堂", "course", "lesson")),
+    ("project", ("项目", "工程", "系统", "平台", "仓库", "repo", "app", "应用", "产品")),
+    ("theory", ("理论", "模型", "框架", "定律", "定理", "算法", "theory", "model", "framework")),
+    ("paper", ("论文", "paper", "arxiv", "preprint")),
+    ("device", ("设备", "仪器", "手机", "电脑", "相机", "机器人", "device", "hardware")),
+    ("person", ("老师", "教授", "作者", "人物", "传记", "professor", "author")),
+    ("domain", ("学科", "领域", "数学", "物理", "化学", "生物", "历史", "哲学", "拓扑", "代数")),
+)
+_CATEGORY_SUBJECT_KIND_HINTS: tuple[tuple[str, str], ...] = (
+    ("书", "book"),
+    ("课程", "course"),
+    ("课", "course"),
+    ("项目", "project"),
+    ("工程", "project"),
+    ("论文", "paper"),
+    ("理论", "theory"),
+    ("模型", "theory"),
+    ("框架", "theory"),
+    ("设备", "device"),
+    ("硬件", "device"),
+    ("学科", "domain"),
+    ("领域", "domain"),
+)
+_GENERIC_SUBJECT_LABELS = {
+    "这本书",
+    "这个项目",
+    "这个理论",
+    "这门课",
+    "课程",
+    "项目",
+    "理论",
+    "模型",
+    "框架",
+    "论文",
+    "设备",
+    "系统",
+}
 
 
 def _normalize_extracted_fact_text(value: str) -> str:
@@ -543,6 +631,213 @@ def _normalize_extracted_fact_text(value: str) -> str:
     normalized = re.sub(r"\s+", " ", normalized).strip()
     normalized = _FIRST_PERSON_FACT_PREFIX_PATTERN.sub("用户", normalized)
     return normalized
+
+
+def _normalize_subject_label(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "").strip())
+    cleaned = cleaned.strip("，。、“”‘’\"'`()（）[]【】<>《》:：;；,.!?！？")
+    if not cleaned or cleaned in _GENERIC_SUBJECT_LABELS:
+        return ""
+    if len(cleaned) > 48:
+        return ""
+    return cleaned
+
+
+def _looks_like_user_fact(fact_text: str) -> bool:
+    normalized = str(fact_text or "").strip()
+    return bool(
+        normalized
+        and (
+            normalized.startswith("用户")
+            or normalized.startswith("我")
+            or normalized.startswith("本人")
+        )
+    )
+
+
+def _is_deictic_subject_reference(text: str) -> bool:
+    haystack = str(text or "").strip().lower()
+    return any(hint in haystack for hint in _SUBJECT_REFERENCE_HINTS)
+
+
+def _infer_subject_kind(*values: str) -> str | None:
+    haystack = "\n".join(str(value or "").strip().lower() for value in values if str(value or "").strip())
+    if not haystack:
+        return None
+    for token, kind in _CATEGORY_SUBJECT_KIND_HINTS:
+        if token in haystack:
+            return kind
+    for kind, hints in _SUBJECT_KIND_KEYWORDS:
+        if any(hint in haystack for hint in hints):
+            return kind
+    return None
+
+
+def _extract_subject_hint(*, text: str, category: str) -> tuple[str | None, str | None]:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return None, None
+
+    for match in _QUOTED_SUBJECT_PATTERN.finditer(raw_text):
+        label = _normalize_subject_label(match.group(1))
+        if not label:
+            continue
+        kind = _infer_subject_kind(raw_text, category) or "custom"
+        return label, kind
+
+    named_patterns: tuple[tuple[re.Pattern[str], str], ...] = (
+        (
+            re.compile(r"(?:项目|工程|系统|平台|应用|工具|产品)[：:\s]*([A-Za-z0-9\u4e00-\u9fff._\-]{2,40})"),
+            "project",
+        ),
+        (
+            re.compile(r"(?:课程|这门课|课题|讲义)[：:\s]*([A-Za-z0-9\u4e00-\u9fff._\-]{2,40})"),
+            "course",
+        ),
+        (
+            re.compile(r"(?:理论|模型|框架|定律|定理)[：:\s]*([A-Za-z0-9\u4e00-\u9fff._\-]{2,40})"),
+            "theory",
+        ),
+        (
+            re.compile(r"(?:论文|paper)[：:\s]*([A-Za-z0-9\u4e00-\u9fff._\-]{2,40})"),
+            "paper",
+        ),
+        (
+            re.compile(r"(?:设备|仪器|机器人)[：:\s]*([A-Za-z0-9\u4e00-\u9fff._\-]{2,40})"),
+            "device",
+        ),
+    )
+    for pattern, default_kind in named_patterns:
+        match = pattern.search(raw_text)
+        if not match:
+            continue
+        label = _normalize_subject_label(match.group(1))
+        if not label:
+            continue
+        kind = _infer_subject_kind(raw_text, category) or default_kind
+        return label, kind
+
+    return None, None
+
+
+def _subject_visible_to_owner(subject: Memory, *, owner_user_id: str | None) -> bool:
+    if not is_private_memory(subject):
+        return True
+    return get_memory_owner_user_id(subject) == owner_user_id
+
+
+def _score_subject_match(subject: Memory, *, text_key: str, subject_kind: str | None) -> int:
+    label_key = _normalize_text_key(subject.content)
+    if not label_key or not text_key:
+        return 0
+    score = 0
+    if label_key in text_key:
+        score += min(12, len(label_key))
+    canonical_key = _normalize_text_key(subject.canonical_key or "")
+    if canonical_key and canonical_key in text_key:
+        score += 4
+    existing_kind = get_subject_kind(subject)
+    if subject_kind and existing_kind == subject_kind:
+        score += 3
+    return score
+
+
+def _resolve_subject_memory_for_fact(
+    db,
+    *,
+    project: Project,
+    conversation: Conversation,
+    user_message: str,
+    fact_text: str,
+    fact_category: str,
+) -> tuple[Memory, bool, str]:
+    user_subject, user_subject_changed = ensure_project_user_subject(
+        db,
+        project,
+        owner_user_id=conversation.created_by,
+    )
+    subject_memories = [
+        memory
+        for memory in (
+            db.query(Memory)
+            .filter(
+                Memory.workspace_id == project.workspace_id,
+                Memory.project_id == project.id,
+                Memory.node_type == "subject",
+            )
+            .all()
+        )
+        if _subject_visible_to_owner(memory, owner_user_id=conversation.created_by)
+    ]
+    subjects_by_id = {memory.id: memory for memory in subject_memories}
+    combined_text = "\n".join(
+        value for value in [user_message, fact_text, fact_category] if str(value or "").strip()
+    )
+    combined_key = _normalize_text_key(combined_text)
+    subject_label, subject_kind = _extract_subject_hint(text=combined_text, category=fact_category)
+
+    best_subject: Memory | None = None
+    best_score = 0
+    for subject in subject_memories:
+        score = _score_subject_match(subject, text_key=combined_key, subject_kind=subject_kind)
+        if score > best_score:
+            best_subject = subject
+            best_score = score
+    if best_subject is not None and best_score >= 5:
+        return best_subject, user_subject_changed, "lexical_subject_match"
+
+    conversation_meta = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+    primary_subject_id = str(conversation_meta.get("primary_subject_id") or "").strip()
+    primary_subject = subjects_by_id.get(primary_subject_id) if primary_subject_id else None
+    if (
+        primary_subject is not None
+        and get_subject_kind(primary_subject) != "user"
+        and not _looks_like_user_fact(fact_text)
+        and (_is_deictic_subject_reference(user_message) or not subject_label)
+    ):
+        return primary_subject, user_subject_changed, "conversation_focus_subject"
+
+    if subject_label and not _looks_like_user_fact(fact_text):
+        subject_kind = subject_kind or _infer_subject_kind(user_message, fact_text, fact_category) or "custom"
+        subject_memory, subject_changed = ensure_project_subject(
+            db,
+            project,
+            subject_kind=subject_kind,
+            label=subject_label,
+            owner_user_id=conversation.created_by,
+        )
+        return subject_memory, user_subject_changed or subject_changed, "created_or_reused_subject"
+
+    if primary_subject is not None and get_subject_kind(primary_subject) != "user" and not _looks_like_user_fact(fact_text):
+        return primary_subject, user_subject_changed, "non_user_focus_fallback"
+
+    return user_subject, user_subject_changed, "user_subject_fallback"
+
+
+def _load_subject_memory(
+    db,
+    *,
+    workspace_id: str,
+    project_id: str,
+    owner_user_id: str | None,
+    subject_id: str | None,
+) -> Memory | None:
+    if not subject_id:
+        return None
+    subject = (
+        db.query(Memory)
+        .filter(
+            Memory.id == subject_id,
+            Memory.workspace_id == workspace_id,
+            Memory.project_id == project_id,
+        )
+        .first()
+    )
+    if subject is None or not is_subject_memory(subject):
+        return None
+    if not _subject_visible_to_owner(subject, owner_user_id=owner_user_id):
+        return None
+    return subject
 
 
 def _looks_like_aggregate_fact(
@@ -666,6 +961,7 @@ def _find_existing_concept_parent(
     workspace_id: str,
     project_id: str,
     conversation_id: str,
+    subject_memory_id: str,
     parent_text: str,
     topic: str,
     parent_category: str,
@@ -681,6 +977,7 @@ def _find_existing_concept_parent(
         .filter(
             Memory.workspace_id == workspace_id,
             Memory.project_id == project_id,
+            Memory.subject_memory_id == subject_memory_id,
         )
         .all()
     )
@@ -718,6 +1015,7 @@ async def _resolve_concept_parent(
     project_id: str,
     conversation_id: str,
     owner_user_id: str | None,
+    subject_memory: Memory,
     fact_text: str,
     fact_category: str,
     fact_memory_kind: str,
@@ -749,6 +1047,7 @@ async def _resolve_concept_parent(
         workspace_id=workspace_id,
         project_id=project_id,
         conversation_id=conversation_id,
+        subject_memory_id=subject_memory.id,
         parent_text=plan["parent_text"],
         topic=plan["topic"],
         parent_category=plan["parent_category"],
@@ -757,13 +1056,12 @@ async def _resolve_concept_parent(
     if existing:
         return existing, False, plan.get("reason") or None
 
-    project = db.get(Project, project_id)
-    if not project:
-        return None, False, None
-    root_memory, _ = ensure_project_assistant_root(db, project, reparent_orphans=False)
-
     metadata: dict[str, object] = {
         "node_kind": CONCEPT_NODE_KIND,
+        "node_type": CONCEPT_NODE_KIND,
+        "node_status": ACTIVE_NODE_STATUS,
+        "subject_kind": None,
+        "subject_memory_id": subject_memory.id,
         "concept_topic": plan["topic"],
         "auto_generated": True,
         "source": "auto_concept_parent",
@@ -784,8 +1082,13 @@ async def _resolve_concept_parent(
         content=plan["parent_text"],
         category=plan["parent_category"],
         type="permanent",
+        node_type=CONCEPT_NODE_KIND,
+        subject_kind=None,
         source_conversation_id=None,
-        parent_memory_id=root_memory.id,
+        parent_memory_id=subject_memory.id,
+        subject_memory_id=subject_memory.id,
+        node_status=ACTIVE_NODE_STATUS,
+        canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
         metadata_json=metadata,
     )
     db.add(concept_memory)
@@ -1322,14 +1625,15 @@ def run_memory_extraction(
     from app.services.dashscope_http import close_current_client
     from app.services.embedding import embed_and_store, find_duplicate_memory_with_vector, find_related_memories
 
-    EXTRACTION_PROMPT = """你是一个严格的 JSON 记忆提取器。只根据用户原话，提取用户本人明确表达的可记忆事实。
+    EXTRACTION_PROMPT = """你是一个严格的 JSON 记忆提取器。只根据用户原话，提取用户明确表达的可记忆原子事实。
 
 规则：
 - 只提取用户明确说出的事实，不做推测
-- 事实必须关于用户本人（身份、偏好、计划、经历、关系、限制条件）
+- 事实既可以关于用户本人，也可以关于当前明确提到的主体，例如书、课程、项目、理论、论文、设备、人物
 - 不提取 assistant 复述出的汇总句，不根据 assistant 回复新增事实
 - 如果一句话里包含多个并列偏好或事实，必须拆成多条叶子事实
 - 禁止输出“用户偏好A和B”这类聚合句
+- 如果事实属于非用户主体，要在 fact 文本里保留主体名称，不要偷偷改写成“用户……”
 - 每个事实用一句话表达
 - importance: 0-1，其中 >=0.7 创建为临时记忆，>=0.9 直接升级为永久记忆
 - category: 用中文，层级用点分隔（如"工作.计划"、"健康.用药"）
@@ -1342,12 +1646,13 @@ def run_memory_extraction(
 
 如果没有值得记忆的事实，输出空数组 []。"""
 
-    FALLBACK_EXTRACTION_PROMPT = """你是一个严格的 JSON 记忆提取器。只根据用户原话，提取用户本人明确表达的可记忆事实。
+    FALLBACK_EXTRACTION_PROMPT = """你是一个严格的 JSON 记忆提取器。只根据用户原话，提取用户明确表达的可记忆原子事实。
 
 规则：
 - 只提取用户明确说出的事实，不做推测
-- 优先提取：身份、偏好、计划、经历、关系、限制条件
+- 优先提取：身份、偏好、计划、经历、关系、限制条件，以及当前明确谈论的书、课程、项目、理论等主体事实
 - 如果一句话里包含多个并列偏好或事实，要拆成多条
+- 对非用户主体的事实，保留主体名称
 - importance: 0-1，明确且稳定的偏好/身份/计划通常 >=0.9
 - category: 用中文，层级用点分隔
 - 输出必须是 JSON 数组，不要输出解释文字或 markdown
@@ -1503,11 +1808,27 @@ def run_memory_extraction(
                     if not fact_text:
                         continue
 
+                    subject_memory, subject_changed, subject_resolution = _resolve_subject_memory_for_fact(
+                        db,
+                        project=project,
+                        conversation=conversation,
+                        user_message=user_message,
+                        fact_text=fact_text,
+                        fact_category=category,
+                    )
+                    if subject_changed:
+                        db.flush()
+
                     preview_metadata = normalize_memory_metadata(
                         content=fact_text,
                         category=category,
                         memory_type="temporary",
-                        metadata={"source": "auto_extraction"},
+                        metadata={
+                            "source": "auto_extraction",
+                            "node_type": FACT_NODE_TYPE,
+                            "node_status": ACTIVE_NODE_STATUS,
+                            "subject_memory_id": subject_memory.id,
+                        },
                     )
                     memory_kind = str(preview_metadata.get("memory_kind") or "").strip().lower()
                     importance = _normalize_explicit_fact_importance(
@@ -1520,6 +1841,10 @@ def run_memory_extraction(
                         "fact": fact_text,
                         "category": category,
                         "importance": importance,
+                        "subject_memory_id": subject_memory.id,
+                        "subject_label": subject_memory.content,
+                        "subject_kind": get_subject_kind(subject_memory),
+                        "subject_resolution": subject_resolution,
                     }
 
                     if importance < 0.7:
@@ -1681,7 +2006,33 @@ def run_memory_extraction(
                                 triage_action = "create"
                                 triage_target_memory_id = None
 
-                    metadata = {"importance": importance, "source": "auto_extraction"}
+                    if parent_memory and not is_assistant_root_memory(parent_memory):
+                        parent_subject_id = (
+                            parent_memory.id if is_subject_memory(parent_memory) else get_subject_memory_id(parent_memory)
+                        )
+                        parent_subject = _load_subject_memory(
+                            db,
+                            workspace_id=workspace_id,
+                            project_id=project_id,
+                            owner_user_id=conversation.created_by,
+                            subject_id=parent_subject_id,
+                        )
+                        if parent_subject is not None and parent_subject.id != subject_memory.id:
+                            subject_memory = parent_subject
+                            fact_display["subject_memory_id"] = subject_memory.id
+                            fact_display["subject_label"] = subject_memory.content
+                            fact_display["subject_kind"] = get_subject_kind(subject_memory)
+                            if subject_resolution == "user_subject_fallback":
+                                subject_resolution = "parent_subject_alignment"
+                                fact_display["subject_resolution"] = subject_resolution
+
+                    metadata = {
+                        "importance": importance,
+                        "source": "auto_extraction",
+                        "node_type": FACT_NODE_TYPE,
+                        "node_status": ACTIVE_NODE_STATUS,
+                        "subject_memory_id": subject_memory.id,
+                    }
                     if memory_type == "permanent":
                         metadata = build_private_memory_metadata(metadata, owner_user_id=conversation.created_by)
                     metadata = normalize_memory_metadata(
@@ -1700,6 +2051,7 @@ def run_memory_extraction(
                             project_id=project_id,
                             conversation_id=conversation_id,
                             owner_user_id=conversation.created_by,
+                            subject_memory=subject_memory,
                             fact_text=fact_text,
                             fact_category=category,
                             fact_memory_kind=memory_kind,
@@ -1710,7 +2062,7 @@ def run_memory_extraction(
                             parent_memory = concept_parent
                             anchor_strength = 0.84 if concept_created else 0.8
                             if append_candidate_memory and append_candidate_memory.id != concept_parent.id:
-                                _rebind_memory_under_parent(append_candidate_memory, concept_parent.id)
+                                _rebind_memory_under_parent(append_candidate_memory, concept_parent)
                                 triage_action = "append"
                                 triage_target_memory_id = append_candidate_memory.id
                                 try:
@@ -1738,15 +2090,8 @@ def run_memory_extraction(
                             anchor_strength = 0.0
 
                     if parent_memory_id is None:
-                        project = db.get(Project, project_id)
-                        if project:
-                            root_memory, _ = ensure_project_assistant_root(
-                                db,
-                                project,
-                                reparent_orphans=False,
-                            )
-                            parent_memory_id = root_memory.id
-                            parent_memory = root_memory
+                        parent_memory_id = subject_memory.id
+                        parent_memory = subject_memory
 
                     if append_candidate_memory and parent_memory and not is_assistant_root_memory(parent_memory):
                         metadata = normalize_memory_metadata(
@@ -1765,8 +2110,13 @@ def run_memory_extraction(
                         content=fact_text,
                         category=fact.get("category", ""),
                         type=memory_type,
+                        node_type=FACT_NODE_TYPE,
+                        subject_kind=None,
                         source_conversation_id=conversation_id if memory_type == "temporary" else None,
                         parent_memory_id=parent_memory_id,
+                        subject_memory_id=subject_memory.id,
+                        node_status=ACTIVE_NODE_STATUS,
+                        canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
                         metadata_json=metadata,
                     )
                     db.add(memory)
@@ -1880,17 +2230,64 @@ def run_memory_extraction(
                 if not owner_user_id:
                     continue
                 try:
+                    subject_memory = _load_subject_memory(
+                        db,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        owner_user_id=owner_user_id,
+                        subject_id=mem.subject_memory_id,
+                    )
+                    if subject_memory is None and mem.source_conversation_id:
+                        source_conversation = (
+                            db.query(Conversation)
+                            .filter(
+                                Conversation.id == mem.source_conversation_id,
+                                Conversation.project_id == project_id,
+                                Conversation.workspace_id == workspace_id,
+                            )
+                            .first()
+                        )
+                        conversation_meta = (
+                            source_conversation.metadata_json
+                            if source_conversation and isinstance(source_conversation.metadata_json, dict)
+                            else {}
+                        )
+                        focused_subject_id = str(conversation_meta.get("primary_subject_id") or "").strip() or None
+                        subject_memory = _load_subject_memory(
+                            db,
+                            workspace_id=workspace_id,
+                            project_id=project_id,
+                            owner_user_id=owner_user_id,
+                            subject_id=focused_subject_id,
+                        )
+                    if subject_memory is None:
+                        subject_memory, _ = ensure_project_user_subject(
+                            db,
+                            project,
+                            owner_user_id=owner_user_id,
+                        )
                     mem.type = "permanent"
+                    mem.node_type = mem.node_type or FACT_NODE_TYPE
+                    mem.subject_memory_id = mem.subject_memory_id or subject_memory.id
+                    mem.node_status = ACTIVE_NODE_STATUS
+                    mem.canonical_key = mem.canonical_key or None
                     mem.source_conversation_id = None  # Detach from conversation
                     mem.metadata_json = normalize_memory_metadata(
                         content=mem.content,
                         category=mem.category,
                         memory_type="permanent",
                         metadata=build_private_memory_metadata(
-                            {**(mem.metadata_json or {}), "promoted_by": "auto_repeat"},
+                            {
+                                **(mem.metadata_json or {}),
+                                "promoted_by": "auto_repeat",
+                                "node_type": mem.node_type or FACT_NODE_TYPE,
+                                "node_status": ACTIVE_NODE_STATUS,
+                                "subject_memory_id": mem.subject_memory_id or subject_memory.id,
+                            },
                             owner_user_id=owner_user_id,
                         ),
                     )
+                    mem.canonical_key = str((mem.metadata_json or {}).get("canonical_key") or "").strip() or mem.canonical_key
                 except Exception:  # noqa: BLE001
                     continue
 
@@ -1900,6 +2297,11 @@ def run_memory_extraction(
             project_id=project_id,
         )
         ensure_project_related_edges(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+        )
+        ensure_project_prerequisite_edges(
             db,
             workspace_id=workspace_id,
             project_id=project_id,
@@ -1972,7 +2374,16 @@ def repair_project_memory_graph_task(
             workspace_id=workspace_id,
             project_id=project_id,
         )
-        graph_changed = any(repair_summary.as_dict().values()) or any(related_summary.as_dict().values())
+        prerequisite_summary = ensure_project_prerequisite_edges(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+        )
+        graph_changed = (
+            any(repair_summary.as_dict().values())
+            or any(related_summary.as_dict().values())
+            or any(prerequisite_summary.as_dict().values())
+        )
         db.commit()
         if graph_changed:
             bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
@@ -2005,13 +2416,18 @@ def compact_project_memories_task(
             workspace_id=workspace_id,
             project_id=project_id,
         )
+        prerequisite_summary = ensure_project_prerequisite_edges(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+        )
         graph_changed = any(
             (
                 compaction_summary.created_summaries,
                 compaction_summary.updated_summaries,
                 compaction_summary.deleted_summaries,
             )
-        ) or any(related_summary.as_dict().values())
+        ) or any(related_summary.as_dict().values()) or any(prerequisite_summary.as_dict().values())
         db.commit()
         if graph_changed:
             bump_project_memory_graph_revision(workspace_id=workspace_id, project_id=project_id)
