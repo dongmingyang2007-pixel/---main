@@ -135,6 +135,55 @@ export function labelForToken(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Pipeline slot → scene label map                                   */
+/* ------------------------------------------------------------------ */
+
+const SCENE_MAP: Record<string, string> = {
+  llm: "discover.scene.llm",
+  asr: "discover.scene.asr",
+  tts: "discover.scene.tts",
+  vision: "discover.scene.vision",
+  realtime: "discover.scene.realtime",
+  realtime_asr: "discover.scene.realtime_asr",
+  realtime_tts: "discover.scene.realtime_tts",
+};
+
+/**
+ * Translate a pipeline_slot key to a user-friendly scene name.
+ */
+export function sceneLabel(
+  slot: string,
+  t: (key: string) => string,
+): string {
+  return SCENE_MAP[slot] ? t(SCENE_MAP[slot]) : slot;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Allowed tokens for discover page model cards                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tokens allowed on discover page model cards.
+ * Technical tokens (streaming, structured_output, cache, ranking) are excluded.
+ */
+const ALLOWED_CARD_TOKENS = new Set([
+  "text",
+  "image",
+  "audio",
+  "video",
+  "function_calling",
+  "web_search",
+  "deep_thinking",
+]);
+
+/**
+ * Filter tokens to only those appropriate for consumer-facing cards.
+ */
+export function filterCardTokens(tokens: string[]): string[] {
+  return tokens.filter((token) => ALLOWED_CARD_TOKENS.has(token));
+}
+
+/* ------------------------------------------------------------------ */
 /*  Provider display label                                            */
 /* ------------------------------------------------------------------ */
 
