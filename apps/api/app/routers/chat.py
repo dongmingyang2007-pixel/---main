@@ -25,6 +25,7 @@ from app.core.errors import ApiError
 from app.models import Conversation, Memory, Message, Project, User
 from app.schemas.conversation import ConversationCreate, ConversationOut, MessageCreate, MessageOut
 from app.services.dashscope_client import InferenceTimeoutError, UpstreamServiceError
+from app.services.assistant_markdown import normalize_assistant_markdown
 from app.services.orchestrator import (
     orchestrate_inference,
     orchestrate_inference_stream,
@@ -33,6 +34,7 @@ from app.services.orchestrator import (
     transcribe_audio_input_for_project,
 )
 from app.services.memory_context import build_conversation_focus_metadata, touch_memories_from_trace
+from app.services.voice_response_limits import clamp_voice_response_text
 from app.routers.utils import get_project_in_workspace_or_404
 from app.services.upload_validation import (
     UPLOAD_SIGNATURE_READ_BYTES,
@@ -65,7 +67,7 @@ _MEMORY_EXTRACTION_STATUS_PENDING = "pending"
 
 def _normalize_inference_result(result: str | dict) -> tuple[str, str | None, dict[str, object]]:
     if isinstance(result, str):
-        return result, None, {}
+        return normalize_assistant_markdown(result), None, {}
 
     raw_sources = result.get("sources")
     sources = [
@@ -81,7 +83,37 @@ def _normalize_inference_result(result: str | dict) -> tuple[str, str | None, di
     if isinstance(retrieval_trace, dict) and retrieval_trace:
         metadata_json["retrieval_trace"] = retrieval_trace
 
-    return result.get("content", "") or "", result.get("reasoning_content"), metadata_json
+    content = normalize_assistant_markdown(result.get("content", "") or "")
+    reasoning_content = result.get("reasoning_content")
+    normalized_reasoning = (
+        normalize_assistant_markdown(reasoning_content)
+        if isinstance(reasoning_content, str) and reasoning_content.strip()
+        else None
+    )
+
+    return content, normalized_reasoning, metadata_json
+
+
+def _serialize_message(message: Message) -> MessageOut:
+    content = message.content
+    reasoning_content = message.reasoning_content
+    if message.role == "assistant":
+        content = normalize_assistant_markdown(content)
+        reasoning_content = (
+            normalize_assistant_markdown(reasoning_content)
+            if isinstance(reasoning_content, str) and reasoning_content.strip()
+            else None
+        )
+
+    return MessageOut(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        role=message.role,
+        content=content,
+        reasoning_content=reasoning_content,
+        metadata_json=message.metadata_json if isinstance(message.metadata_json, dict) else {},
+        created_at=message.created_at,
+    )
 
 
 def _apply_pending_memory_extraction_metadata(
@@ -316,7 +348,7 @@ def list_messages(
         .order_by(Message.created_at.asc())
         .all()
     )
-    return [MessageOut.model_validate(m, from_attributes=True) for m in messages]
+    return [_serialize_message(message) for message in messages]
 
 
 @router.get("/conversations/{conversation_id}/events")
@@ -489,7 +521,7 @@ async def send_message(
         assistant_message_id=ai_message.id,
     )
 
-    return MessageOut.model_validate(ai_message, from_attributes=True)
+    return _serialize_message(ai_message)
 
 
 # ---------------------------------------------------------------------------
@@ -809,7 +841,7 @@ def _save_pipeline_messages(
 def _build_pipeline_response(ai_msg: Message, result: dict) -> dict:
     """Format the JSON response shared by voice & image endpoints."""
     return {
-        "message": MessageOut.model_validate(ai_msg, from_attributes=True).model_dump(),
+        "message": _serialize_message(ai_msg).model_dump(),
         "text_input": result["text_input"],
         "audio_response": (
             base64.b64encode(result["audio_response"]).decode()
@@ -934,7 +966,7 @@ async def synthesize_message_audio(
     conversation = _get_conversation_or_404(db, conversation_id, workspace_id, current_user.id, workspace_role)
     _ensure_model_api_configured()
 
-    text = payload.content.strip()
+    text = clamp_voice_response_text(payload.content or "")
     if not text:
         raise ApiError("bad_request", "Text is required", status_code=400)
 

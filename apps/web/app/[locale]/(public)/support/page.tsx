@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { gsap } from "@/lib/gsap-register";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 
 const DOC_KEYS = ["start", "product", "workflow", "security"] as const;
 const FAQ_INDICES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
@@ -12,33 +12,7 @@ export default function SupportPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const sections = el.querySelectorAll(".support-section");
-    const tweens: gsap.core.Tween[] = [];
-    sections.forEach((section) => {
-      tweens.push(
-        gsap.from(section, {
-          opacity: 0,
-          y: 30,
-          duration: 0.6,
-          ease: "power2.out",
-          scrollTrigger: {
-            trigger: section,
-            start: "top 85%",
-            once: true,
-          },
-        }),
-      );
-    });
-    return () => {
-      tweens.forEach((tw) => {
-        tw.scrollTrigger?.kill();
-        tw.kill();
-      });
-    };
-  }, []);
+  useScrollReveal(containerRef);
 
   const email = t("contact.email");
   const wechatId = t("contact.wechatId");
@@ -56,7 +30,7 @@ export default function SupportPage() {
       </section>
 
       {/* Documentation paths */}
-      <section className="support-section mx-auto max-w-4xl px-6 py-16">
+      <section data-reveal className="support-section mx-auto max-w-4xl px-6 py-16">
         <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("docs.title")}</h2>
         <div className="mt-8 grid gap-4 md:grid-cols-2">
           {DOC_KEYS.map((key) => (
@@ -80,7 +54,7 @@ export default function SupportPage() {
       </section>
 
       {/* FAQ — accordion */}
-      <section id="faq" className="support-section bg-[var(--bg-surface)] px-6 py-16">
+      <section id="faq" data-reveal className="support-section bg-[var(--bg-surface)] px-6 py-16">
         <div className="mx-auto max-w-3xl">
           <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("faq.title")}</h2>
           <div className="mt-8 flex flex-col gap-1">
@@ -120,7 +94,7 @@ export default function SupportPage() {
       </section>
 
       {/* Contact */}
-      <section id="contact" className="support-section mx-auto max-w-3xl px-6 py-16 text-center">
+      <section id="contact" data-reveal className="support-section mx-auto max-w-3xl px-6 py-16 text-center">
         <h2 className="text-2xl font-bold text-[var(--text-primary)]">{t("contact.title")}</h2>
         <p className="mt-4 text-[var(--text-secondary)]">
           {t("contact.response")}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef } from "react";
 import { useTranslations } from "next-intl";
-import { gsap } from "@/lib/gsap-register";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 import { MagneticButton } from "@/components/MagneticButton";
 
@@ -13,27 +13,7 @@ export default function EcosystemPage() {
   const tc = useTranslations("common");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const cards = el.querySelectorAll(".capability-card");
-    const tween = gsap.from(cards, {
-      opacity: 0,
-      y: 30,
-      stagger: 0.1,
-      duration: 0.6,
-      ease: "power2.out",
-      scrollTrigger: {
-        trigger: el.querySelector(".capabilities-grid"),
-        start: "top 80%",
-        once: true,
-      },
-    });
-    return () => {
-      tween.scrollTrigger?.kill();
-      tween.kill();
-    };
-  }, []);
+  useScrollReveal(containerRef);
 
   return (
     <div ref={containerRef}>
@@ -53,9 +33,11 @@ export default function EcosystemPage() {
       {/* Capabilities grid */}
       <section className="capabilities-grid mx-auto max-w-5xl px-6 py-20">
         <div className="grid gap-6 md:grid-cols-2">
-          {CAPABILITY_KEYS.map((key) => (
+          {CAPABILITY_KEYS.map((key, i) => (
             <div
               key={key}
+              data-reveal
+              data-reveal-delay={`${i + 1}`}
               className="capability-card rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-surface)] p-8 transition-all hover:shadow-lg hover:border-[var(--brand-v2)]/30 hover:-translate-y-0.5"
             >
               <ImagePlaceholder label={`${t(`capabilities.${key}.title`)} Illustration`} aspect="2/1" icon="image" />

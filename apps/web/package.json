@@ -6,9 +6,9 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dev --webpack -p 3000",
     "build": "next build --webpack",
-    "start": "next start -p 3000 -H 0.0.0.0",
+    "start": "node server.mjs",
     "lint": "eslint .",
     "e2e": "playwright test",
     "e2e:viewer-glb": "playwright test tests/viewer-custom-glb-visual.spec.ts"
@@ -40,10 +40,12 @@
     "react-resizable-panels": "^4.7.2",
     "recharts": "^2.15.1",
     "rehype-katex": "^7.0.1",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
+    "three": "^0.183.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -51,6 +53,7 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.183.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.38.0",
     "eslint-config-next": "16.1.6",

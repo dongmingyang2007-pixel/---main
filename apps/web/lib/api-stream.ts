@@ -94,18 +94,39 @@ export async function* apiStream(
     return null;
   };
 
+  const waitForNextPaint = async () => {
+    await new Promise<void>((resolve) => {
+      if (
+        typeof window !== "undefined" &&
+        typeof window.requestAnimationFrame === "function"
+      ) {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+      setTimeout(resolve, 0);
+    });
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const parsedEvents: StreamEvent[] = [];
 
     let newlineIndex = buffer.indexOf("\n");
     while (newlineIndex !== -1) {
       const nextEventChunk = processLine(buffer.slice(0, newlineIndex));
       if (nextEventChunk) {
-        yield nextEventChunk;
+        parsedEvents.push(nextEventChunk);
       }
       buffer = buffer.slice(newlineIndex + 1);
       newlineIndex = buffer.indexOf("\n");
+    }
+
+    for (let index = 0; index < parsedEvents.length; index += 1) {
+      if (index > 0) {
+        await waitForNextPaint();
+      }
+      yield parsedEvents[index];
     }
 
     if (done) {
@@ -113,15 +134,23 @@ export async function* apiStream(
     }
   }
 
+  const trailingEvents: StreamEvent[] = [];
   if (buffer.length) {
     const finalBufferedEvent = processLine(buffer);
     if (finalBufferedEvent) {
-      yield finalBufferedEvent;
+      trailingEvents.push(finalBufferedEvent);
     }
   }
 
   const trailingEvent = flushCurrentEvent();
   if (trailingEvent) {
-    yield trailingEvent;
+    trailingEvents.push(trailingEvent);
+  }
+
+  for (let index = 0; index < trailingEvents.length; index += 1) {
+    if (index > 0) {
+      await waitForNextPaint();
+    }
+    yield trailingEvents[index];
   }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.qwen_official_catalog import find_model
+from app.services.responses_native_tools import merge_native_tool_names, normalize_native_tool_name
 
 
 # Verified against Alibaba Cloud Model Studio docs on 2026-03-23:
@@ -98,16 +99,27 @@ def model_supports_deep_thinking(model_id: str) -> bool:
 
 
 def model_supports_native_web_search(model_id: str) -> bool:
+    return model_supports_native_responses_tool(model_id, "web_search")
+
+
+def model_supported_native_responses_tools(model_id: str) -> set[str]:
     if not model_supports_responses_api(model_id):
-        return False
+        return set()
     official = find_model(model_id.strip().lower())
     if not official:
-        return False
-    supported_tools = {
+        return set()
+    return {
         str(value).lower()
-        for value in official.get("supported_tools", [])
+        for value in merge_native_tool_names(
+            model_id.strip().lower(),
+            official.get("supported_tools", []),
+        )
     }
-    return "web_search" in supported_tools
+
+
+def model_supports_native_responses_tool(model_id: str, tool_name: str) -> bool:
+    normalized_tool = normalize_native_tool_name(tool_name)
+    return normalized_tool in model_supported_native_responses_tools(model_id)
 
 
 def model_supports_image_input(model_id: str) -> bool:

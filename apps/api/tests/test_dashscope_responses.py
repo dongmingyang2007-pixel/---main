@@ -51,3 +51,51 @@ def test_parse_responses_result_raises_for_failed_payload() -> None:
                 "output": [],
             }
         )
+
+
+def test_parse_responses_result_extracts_image_and_extractor_sources() -> None:
+    result = _parse_responses_result(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "web_search_image_call",
+                    "results": [
+                        {
+                            "title": "Blue Topology Background",
+                            "source_url": "https://images.example.com/topology",
+                            "image_url": "https://cdn.example.com/topology.jpg",
+                            "thumbnail_url": "https://cdn.example.com/topology-thumb.jpg",
+                            "summary": "Abstract blue topology background.",
+                        }
+                    ],
+                },
+                {
+                    "type": "web_extractor_call",
+                    "action": {
+                        "results": [
+                            {
+                                "title": "Aliyun Tool Docs",
+                                "url": "https://help.aliyun.com/zh/model-studio/web-search-image",
+                                "summary": "Web search image documentation.",
+                            }
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+
+    assert len(result.search_sources) == 2
+    image_source = next(source for source in result.search_sources if source.image_url)
+    assert image_source.tool_type == "web_search_image"
+    assert image_source.image_url == "https://cdn.example.com/topology.jpg"
+    assert image_source.thumbnail_url == "https://cdn.example.com/topology-thumb.jpg"
+    assert image_source.url == "https://images.example.com/topology"
+
+    extractor_source = next(
+        source
+        for source in result.search_sources
+        if source.url == "https://help.aliyun.com/zh/model-studio/web-search-image"
+    )
+    assert extractor_source.tool_type == "web_extractor"

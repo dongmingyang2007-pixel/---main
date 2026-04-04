@@ -3,14 +3,50 @@
 import clsx from "clsx";
 import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
-import { HomeIcon, ChatIcon, MemoryIcon, DevicesIcon, DiscoverIcon } from "./NavIcons";
+import { DISCOVER_ENABLED } from "@/lib/feature-flags";
+import {
+  HomeIcon,
+  ChatIcon,
+  MemoryIcon,
+  DevicesIcon,
+  DiscoverIcon,
+} from "./NavIcons";
 
 const MAIN_TABS = [
-  { href: "/app", labelKey: "nav.home" as const, short: "首页", Icon: HomeIcon },
-  { href: "/app/chat", labelKey: "nav.chat" as const, short: "对话", Icon: ChatIcon },
-  { href: "/app/memory", labelKey: "nav.memory" as const, short: "记忆", Icon: MemoryIcon },
-  { href: "/app/devices", labelKey: "nav.devices" as const, short: "设备", Icon: DevicesIcon },
-  { href: "/app/discover", labelKey: "nav.discover" as const, short: "发现", Icon: DiscoverIcon },
+  {
+    href: "/app",
+    labelKey: "nav.home" as const,
+    short: "首页",
+    Icon: HomeIcon,
+  },
+  {
+    href: "/app/chat",
+    labelKey: "nav.chat" as const,
+    short: "对话",
+    Icon: ChatIcon,
+  },
+  {
+    href: "/app/memory",
+    labelKey: "nav.memory" as const,
+    short: "记忆",
+    Icon: MemoryIcon,
+  },
+  {
+    href: "/app/devices",
+    labelKey: "nav.devices" as const,
+    short: "设备",
+    Icon: DevicesIcon,
+  },
+  ...(DISCOVER_ENABLED
+    ? [
+        {
+          href: "/app/discover",
+          labelKey: "nav.discover" as const,
+          short: "发现",
+          Icon: DiscoverIcon,
+        },
+      ]
+    : []),
 ];
 
 export function MobileTabBar() {
@@ -21,7 +57,11 @@ export function MobileTabBar() {
     href === "/app" ? pathname === "/app" : pathname.startsWith(href);
 
   return (
-    <nav className="mobile-tab-bar" role="navigation" aria-label="Mobile navigation">
+    <nav
+      className="mobile-tab-bar"
+      role="navigation"
+      aria-label="Mobile navigation"
+    >
       {MAIN_TABS.map((tab) => {
         const active = isActive(tab.href);
         return (

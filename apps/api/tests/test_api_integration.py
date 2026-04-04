@@ -58,6 +58,7 @@ import app.services.memory_context as memory_context_service
 import app.services.memory_metadata as memory_metadata_service
 import app.services.project_cleanup as project_cleanup_service
 import app.services.orchestrator as orchestrator_service
+import app.services.ai_gateway_tool_selection as ai_gateway_tool_selection_service
 from app.core.config import settings
 from app.core.deps import revoke_user_tokens
 from app.db.base import Base
@@ -80,7 +81,11 @@ from app.models import (
     Workspace,
 )
 from app.services.model_catalog_seed import seed_model_catalog
-from app.services.memory_roots import ensure_project_assistant_root, ensure_project_user_subject
+from app.services.memory_roots import (
+    ensure_project_assistant_root,
+    ensure_project_subject,
+    ensure_project_user_subject,
+)
 from app.services import storage as storage_service
 from app.services.runtime_state import runtime_state
 import app.tasks.worker_tasks as worker_tasks
@@ -420,6 +425,87 @@ def test_realtime_websocket_auth_uses_cookie_and_rejects_revoked_token() -> None
         assert message["code"] == "unauthorized"
 
 
+def test_realtime_ws_ticket_allows_cookie_free_websocket_session(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    stub_realtime_upstream(monkeypatch)
+
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "realtime-ticket@example.com", "Realtime Ticket")
+    workspace_id = owner_info["workspace"]["id"]
+    owner_user_id = owner_info["user"]["id"]
+    project = create_project(client, "Realtime Ticket Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        owner_user_id,
+        "Ticket Voice",
+    )
+
+    ticket_response = client.get("/api/v1/realtime/ws-ticket", headers=public_headers())
+    assert ticket_response.status_code == 200
+    ticket = ticket_response.json()["ticket"]
+
+    shadow = TestClient(main_module.app)
+    with shadow.websocket_connect(
+        f"/api/v1/realtime/voice?ticket={ticket}",
+        headers=public_headers(),
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+        websocket.send_json({"type": "session.end"})
+
+
+def test_realtime_ws_ticket_is_single_use(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    stub_realtime_upstream(monkeypatch)
+
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "realtime-ticket-once@example.com", "Realtime Ticket Once")
+    workspace_id = owner_info["workspace"]["id"]
+    owner_user_id = owner_info["user"]["id"]
+    project = create_project(client, "Realtime Ticket Single Use")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        owner_user_id,
+        "Ticket Voice Once",
+    )
+
+    ticket_response = client.get("/api/v1/realtime/ws-ticket", headers=public_headers())
+    assert ticket_response.status_code == 200
+    ticket = ticket_response.json()["ticket"]
+
+    shadow = TestClient(main_module.app)
+    with shadow.websocket_connect(
+        f"/api/v1/realtime/voice?ticket={ticket}",
+        headers=public_headers(),
+    ) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        assert websocket.receive_json()["type"] == "session.ready"
+        websocket.send_json({"type": "session.end"})
+
+    with shadow.websocket_connect(
+        f"/api/v1/realtime/voice?ticket={ticket}",
+        headers=public_headers(),
+    ) as websocket:
+        message = websocket.receive_json()
+        assert message["type"] == "error"
+        assert message["code"] == "unauthorized"
+
+
 def test_realtime_websocket_enforces_conversation_access(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     stub_realtime_upstream(monkeypatch)
@@ -663,6 +749,198 @@ def test_realtime_post_turn_tasks_persists_metadata_and_notifies_client(monkeypa
         assert messages[1].metadata_json["retrieval_trace"]["strategy"] == "subject_graph_v1"
 
 
+def test_upstream_listener_skips_post_turn_tasks_for_cancelled_response_done(monkeypatch) -> None:
+    class _DummyClientWebSocket:
+        def __init__(self) -> None:
+            self.json_payloads: list[dict[str, object]] = []
+            self.binary_payloads: list[bytes] = []
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.json_payloads.append(payload)
+
+        async def send_bytes(self, payload: bytes) -> None:
+            self.binary_payloads.append(payload)
+
+    class _QueuedUpstream:
+        def __init__(self, session, messages: list[dict[str, object]]) -> None:
+            self._session = session
+            self._messages = [json.dumps(message) for message in messages]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            self._session.state = self._session.state.CLOSING
+            raise StopAsyncIteration
+
+        async def send(self, _message: str) -> None:
+            return None
+
+    session = realtime_router.RealtimeSession(
+        workspace_id="ws",
+        project_id="project",
+        conversation_id="conversation",
+        user_id="user",
+    )
+    session._upstream_ws = _QueuedUpstream(session, [{"type": "response.done"}])
+    session._ai_speaking = True
+    session._current_transcript = "第一句"
+    session._current_response_text = "旧回答"
+
+    asyncio.run(session.cancel_response())
+
+    posted: list[tuple[str, str]] = []
+
+    async def fake_post_turn_tasks(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
+        posted.append((user_text, ai_text))
+
+    monkeypatch.setattr(realtime_router, "_post_turn_tasks", fake_post_turn_tasks)
+
+    ws = _DummyClientWebSocket()
+    result = asyncio.run(realtime_router._upstream_listener(ws, session))
+
+    assert result is None
+    assert ws.json_payloads == []
+    assert ws.binary_payloads == []
+    assert posted == []
+
+
+def test_realtime_refresh_context_clears_stale_retrieval_trace_on_failure(monkeypatch) -> None:
+    session = realtime_router.RealtimeSession(
+        workspace_id="ws",
+        project_id="project",
+        conversation_id="conversation",
+        user_id="user",
+    )
+    session._active_turn_retrieval_trace = {"primary_subject_id": "subject-stale"}
+
+    called = {"request_response": 0}
+
+    async def fake_build_context(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    async def fake_request_response() -> None:
+        called["request_response"] += 1
+
+    monkeypatch.setattr(realtime_router, "_build_realtime_context", fake_build_context)
+    monkeypatch.setattr(session, "request_response", fake_request_response)
+
+    asyncio.run(
+        realtime_router._refresh_realtime_context_and_request_response(
+            session,
+            user_text="新的问题",
+        )
+    )
+
+    assert session._active_turn_retrieval_trace is None
+    assert called["request_response"] == 1
+
+
+def test_schedule_realtime_context_refresh_debounces_repeated_transcript_completion(monkeypatch) -> None:
+    session = realtime_router.RealtimeSession(
+        workspace_id="ws",
+        project_id="project",
+        conversation_id="conversation",
+        user_id="user",
+    )
+    session._awaiting_transcript_response = True
+
+    called: list[str] = []
+
+    async def fake_refresh(_session, *, user_text: str) -> None:
+        called.append(user_text)
+
+    monkeypatch.setattr(realtime_router, "_refresh_realtime_context_and_request_response", fake_refresh)
+    monkeypatch.setattr(realtime_router, "REALTIME_TRANSCRIPT_SETTLE_SECONDS", 0.01)
+
+    async def _run() -> None:
+        realtime_router._schedule_realtime_context_refresh(session, user_text="第一句")
+        await asyncio.sleep(0)
+        realtime_router._schedule_realtime_context_refresh(session, user_text="第一句补充")
+        await asyncio.sleep(0.03)
+
+    asyncio.run(_run())
+
+    assert called == ["第一句补充"]
+    assert session._awaiting_transcript_response is False
+    assert session._response_request_started_for_current_input is True
+
+
+def test_upstream_listener_schedules_realtime_response_after_speech_stopped(monkeypatch) -> None:
+    class _DummyClientWebSocket:
+        def __init__(self) -> None:
+            self.json_payloads: list[dict[str, object]] = []
+
+        async def send_json(self, payload: dict[str, object]) -> None:
+            self.json_payloads.append(payload)
+
+        async def send_bytes(self, _payload: bytes) -> None:
+            raise AssertionError("binary output is not expected in this test")
+
+    class _QueuedUpstream:
+        def __init__(self, session, messages: list[dict[str, object]]) -> None:
+            self._session = session
+            self._messages = [json.dumps(message) for message in messages]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            self._session.state = self._session.state.CLOSING
+            raise StopAsyncIteration
+
+        async def send(self, _message: str) -> None:
+            return None
+
+    session = realtime_router.RealtimeSession(
+        workspace_id="ws",
+        project_id="project",
+        conversation_id="conversation",
+        user_id="user",
+    )
+    session._upstream_ws = _QueuedUpstream(
+        session,
+        [
+            {"type": "input_audio_buffer.speech_started"},
+            {"type": "input_audio_buffer.speech_stopped"},
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "你好",
+            },
+        ],
+    )
+
+    called: list[str] = []
+
+    async def fake_refresh(_session, *, user_text: str) -> None:
+        called.append(user_text)
+
+    monkeypatch.setattr(
+        realtime_router,
+        "_refresh_realtime_context_and_request_response",
+        fake_refresh,
+    )
+    monkeypatch.setattr(realtime_router, "REALTIME_TRANSCRIPT_SETTLE_SECONDS", 0.01)
+
+    async def _run() -> None:
+        ws = _DummyClientWebSocket()
+        result = await realtime_router._upstream_listener(ws, session)
+        assert result is None
+        await asyncio.sleep(0.03)
+        assert ws.json_payloads == [{"type": "transcript.final", "text": "你好"}]
+
+    asyncio.run(_run())
+
+    assert called == ["你好"]
+    assert session._awaiting_transcript_response is False
+    assert session._response_request_started_for_current_input is True
+
+
 def test_realtime_websocket_prefers_project_realtime_model_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     model_sink: list[str] = []
@@ -704,6 +982,57 @@ def test_realtime_websocket_prefers_project_realtime_model_when_configured(monke
         websocket.send_json({"type": "session.end"})
 
     assert model_sink == ["qwen3-omni-flash-realtime"]
+
+
+def test_realtime_websocket_accepts_continuous_camera_frames(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    stub_realtime_upstream(monkeypatch)
+    captured_frames: list[bytes] = []
+
+    async def fake_relay_image(self, image_bytes: bytes) -> None:
+        captured_frames.append(image_bytes)
+
+    monkeypatch.setattr(
+        "app.services.realtime_bridge.RealtimeSession.relay_image_to_upstream",
+        fake_relay_image,
+    )
+
+    client = TestClient(main_module.app)
+    user_info = register_user(
+        client,
+        f"realtime-camera-{os.urandom(4).hex()}@example.com",
+        "Realtime Camera",
+    )
+    project = create_project(client, "Realtime Camera Project")
+    conversation_id = create_conversation_record(
+        user_info["workspace"]["id"],
+        project["id"],
+        user_info["user"]["id"],
+        "Realtime Camera Conversation",
+    )
+
+    frame_bytes = b"\xff\xd8\xff\xdbcamera-frame"
+    frame_data_url = f"data:image/jpeg;base64,{base64.b64encode(frame_bytes).decode('utf-8')}"
+
+    with client.websocket_connect("/api/v1/realtime/voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "conversation_id": conversation_id,
+                "project_id": project["id"],
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+        websocket.send_json(
+            {
+                "type": "input.image.append",
+                "data_url": frame_data_url,
+            }
+        )
+        websocket.send_json({"type": "session.end"})
+
+    assert captured_frames == [frame_bytes]
 
 
 def test_composed_realtime_websocket_runs_synthetic_pipeline(monkeypatch) -> None:
@@ -920,6 +1249,352 @@ def test_composed_realtime_websocket_autostarts_turn_without_audio_stop(monkeypa
     assert persisted_turns == [("你好", "你好，我在。")]
 
 
+def test_composed_realtime_websocket_commits_after_asr_speech_stopped(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    persisted_turns: list[tuple[str, str]] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "你好"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "你好，我在。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "你好，我在。"
+        return b"fake-mp3"
+
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
+        persisted_turns.append((user_text, ai_text))
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            self.sent_stop = False
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            if not self.sent_stop:
+                self.sent_stop = True
+                await self.events.put({"type": "speech_stopped", "text": ""})
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "你好"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-realtime-speech-stopped@example.com", "Synthetic Realtime Speech Stopped")
+    project = create_project(client, "Synthetic Speech Stopped Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Speech Stopped Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "你好"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "你好，我在。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
+
+    assert persisted_turns == [("你好", "你好，我在。")]
+
+
+def test_composed_realtime_websocket_batches_transcripts_until_last_ai_reply(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(
+        realtime_router,
+        "COMPOSED_AUTO_START_DEBOUNCE_SECONDS",
+        1.0,
+    )
+    persisted_turns: list[tuple[str, str]] = []
+    tts_segments: list[str] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "第一句。第二句。"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        return {
+            "text_input": user_text,
+            "text_response": "收到：第一句。第二句。",
+        }
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text in {"收到：第一句。", "第二句。"}
+        tts_segments.append(text)
+        return f"audio:{text}".encode("utf-8")
+
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
+        persisted_turns.append((user_text, ai_text))
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            self.chunk_count = 0
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes in {b"pcm-turn-1", b"pcm-turn-2"}
+            self.chunk_count += 1
+            if self.chunk_count == 1:
+                await self.events.put({"type": "transcript.final", "text": "第一句。"})
+            elif self.chunk_count == 2:
+                await self.events.put({"type": "transcript.final", "text": "第二句。"})
+
+        async def commit(self) -> None:
+            raise AssertionError("audio.stop should not be required for this turn")
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-realtime-batching@example.com", "Synthetic Realtime Batching")
+    project = create_project(client, "Synthetic Batching Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Batching Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn-1")
+        first = websocket.receive_json()
+        assert first == {"type": "transcript.final", "text": "第一句。"}
+
+        websocket.send_bytes(b"pcm-turn-2")
+        second = websocket.receive_json()
+        assert second == {"type": "transcript.final", "text": "第一句。第二句。"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "收到：第一句。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio.decode("utf-8") == "audio:收到：第一句。"
+
+        assistant_chunk_2 = websocket.receive_json()
+        assert assistant_chunk_2 == {"type": "response.text", "text": "第二句。"}
+
+        audio_2 = websocket.receive_bytes()
+        assert audio_2.decode("utf-8") == "audio:第二句。"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
+
+    assert persisted_turns == [("第一句。第二句。", "收到：第一句。第二句。")]
+    assert tts_segments == ["收到：第一句。", "第二句。"]
+
+
+def test_composed_realtime_websocket_starts_turn_when_asr_final_times_out(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    monkeypatch.setattr(
+        realtime_router,
+        "COMPOSED_TRANSCRIPT_FINAL_TIMEOUT_SECONDS",
+        0.01,
+    )
+    persisted_turns: list[tuple[str, str]] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "你好"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        return {"text_input": "你好", "text_response": "你好，我在。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "你好，我在。"
+        return b"fake-mp3"
+
+    async def fake_persist(_ws, _session, user_text: str, ai_text: str, **kwargs) -> None:
+        del _ws, _session, kwargs
+        persisted_turns.append((user_text, ai_text))
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            self.sent_partial = False
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            if not self.sent_partial:
+                self.sent_partial = True
+                await self.events.put({"type": "transcript.partial", "text": "你好"})
+
+        async def commit(self) -> None:
+            return None
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+    monkeypatch.setattr("app.routers.realtime._persist_composed_turn", fake_persist)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-realtime-timeout@example.com", "Synthetic Realtime Timeout")
+    project = create_project(client, "Synthetic Timeout Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Timeout Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        partial = websocket.receive_json()
+        assert partial == {"type": "transcript.partial", "text": "你好"}
+
+        websocket.send_json({"type": "audio.stop"})
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "你好，我在。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
+
+    assert persisted_turns == [("你好", "你好，我在。")]
+
+
 def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     async def fake_orchestrate(
@@ -1005,6 +1680,250 @@ def test_composed_realtime_websocket_keeps_session_open_on_turn_failure(monkeypa
         websocket.send_json({"type": "session.end"})
         with pytest.raises(WebSocketDisconnect):
             websocket.receive_json()
+
+
+def test_composed_realtime_websocket_interrupts_active_turn(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+    interrupted = asyncio.Event()
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "第一句"
+        _ = image_bytes
+        _ = image_mime_type
+        _ = video_bytes
+        _ = video_mime_type
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            interrupted.set()
+            raise
+        return {"text_input": "第一句", "text_response": "不应该返回"}
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "第一句"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-interrupt@example.com", "Synthetic Interrupt")
+    project = create_project(client, "Synthetic Interrupt Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Interrupt Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "第一句"}
+
+        websocket.send_json({"type": "input.interrupt"})
+        ack = websocket.receive_json()
+        assert ack == {"type": "interrupt.ack"}
+
+        websocket.send_json({"type": "session.end"})
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+    assert interrupted.is_set()
+
+
+def test_composed_realtime_interrupt_keeps_all_user_input_since_last_reply(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    interrupted = asyncio.Event()
+    orchestrate_calls: list[str] = []
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert image_bytes is None
+        assert image_mime_type == "image/jpeg"
+        assert video_bytes is None
+        _ = video_mime_type
+        orchestrate_calls.append(user_text)
+
+        if user_text == "我现在是大一。":
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                interrupted.set()
+                raise
+            raise AssertionError("first turn should be interrupted before completion")
+
+        assert user_text == "我现在是大一。我在哪儿上大学？"
+        return {
+            "text_input": user_text,
+            "text_response": "你刚才补充了年级和学校问题。",
+        }
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "你刚才补充了年级和学校问题。"
+        return b"fake-mp3"
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+            self._last_audio: bytes | None = None
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes in {b"pcm-turn-1", b"pcm-turn-2"}
+            self._last_audio = audio_bytes
+
+        async def commit(self) -> None:
+            if self._last_audio == b"pcm-turn-1":
+                await self.events.put({"type": "transcript.final", "text": "我现在是大一。"})
+            elif self._last_audio == b"pcm-turn-2":
+                await self.events.put({"type": "transcript.final", "text": "我在哪儿上大学？"})
+            else:
+                raise AssertionError("commit called without buffered audio")
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-accumulate-interrupt@example.com", "Synthetic Accumulate Interrupt")
+    project = create_project(client, "Synthetic Accumulate Interrupt Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Accumulate Interrupt Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn-1")
+        websocket.send_json({"type": "audio.stop"})
+
+        first = websocket.receive_json()
+        assert first == {"type": "transcript.final", "text": "我现在是大一。"}
+
+        websocket.send_bytes(b"pcm-turn-2")
+        ack = websocket.receive_json()
+        assert ack == {"type": "interrupt.ack"}
+
+        websocket.send_json({"type": "audio.stop"})
+
+        second = websocket.receive_json()
+        assert second == {
+            "type": "transcript.final",
+            "text": "我现在是大一。我在哪儿上大学？",
+        }
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {
+            "type": "response.text",
+            "text": "你刚才补充了年级和学校问题。",
+        }
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done == {"type": "response.done"}
+
+        websocket.send_json({"type": "session.end"})
+        try:
+            close_event = websocket.receive()
+        except WebSocketDisconnect:
+            close_event = None
+        if close_event is not None:
+            if close_event["type"] == "websocket.send":
+                persisted_payload = json.loads(close_event["text"])
+                assert persisted_payload["type"] == "turn.persisted"
+                close_event = websocket.receive()
+            assert close_event["type"] == "websocket.close"
+
+    assert interrupted.is_set()
+    assert orchestrate_calls == [
+        "我现在是大一。",
+        "我现在是大一。我在哪儿上大学？",
+    ]
 
 
 def test_realtime_dictate_websocket_streams_partial_and_final_transcripts(monkeypatch) -> None:
@@ -1330,6 +2249,107 @@ def test_composed_realtime_websocket_streams_partial_transcript_before_turn_comp
             assert close_event["type"] == "websocket.close"
 
 
+def test_composed_realtime_uses_buffered_partial_when_commit_returns_empty(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "现在几点了"
+        assert image_bytes is None
+        assert image_mime_type == "image/jpeg"
+        assert video_bytes is None
+        _ = video_mime_type
+        return {"text_input": user_text, "text_response": "现在是测试时间。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "现在是测试时间。"
+        return b"fake-mp3"
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+            await self.events.put({"type": "transcript.partial", "text": "现在几点了"})
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.empty", "text": ""})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr(
+        "app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text",
+        fake_orchestrate,
+    )
+    monkeypatch.setattr(
+        "app.services.composed_realtime.synthesize_realtime_speech_for_project",
+        fake_tts,
+    )
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-buffered-partial@example.com", "Synthetic Buffered Partial")
+    project = create_project(client, "Synthetic Buffered Partial Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Buffered Partial Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_bytes(b"pcm-turn")
+        partial = websocket.receive_json()
+        assert partial == {"type": "transcript.partial", "text": "现在几点了"}
+
+        websocket.send_json({"type": "audio.stop"})
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "现在是测试时间。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done == {"type": "response.done"}
+
 def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> None:
     monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
     async def fake_orchestrate(
@@ -1425,6 +2445,227 @@ def test_composed_realtime_media_is_cleared_after_turn_starts(monkeypatch) -> No
 
         cleared = websocket.receive_json()
         assert cleared == {"type": "media.cleared"}
+
+
+def test_composed_realtime_camera_frames_are_buffered_as_video_context(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+        video_frame_data_urls: list[str] | None = None,
+        video_fps: float = 1.0,
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "看图"
+        assert image_bytes is None
+        assert video_bytes is None
+        _ = image_mime_type
+        _ = video_mime_type
+        assert video_frame_data_urls is not None
+        assert len(video_frame_data_urls) == 2
+        assert all(frame.startswith("data:image/jpeg;base64,") for frame in video_frame_data_urls)
+        assert video_fps == 1.0
+        return {"text_input": "看图", "text_response": "我已经结合视频上下文理解了。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "我已经结合视频上下文理解了。"
+        return b"fake-mp3"
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes == b"pcm-turn"
+
+        async def commit(self) -> None:
+            await self.events.put({"type": "transcript.final", "text": "看图"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-frame-video@example.com", "Synthetic Frame Video")
+    project = create_project(client, "Synthetic Frame Video Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Frame Video Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+    image_bytes, _ = upload_fixture("frame.jpg")
+    image_payload = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_json({"type": "media.frame.append", "data_url": image_payload, "fps": 1})
+        websocket.send_json({"type": "media.frame.append", "data_url": image_payload, "fps": 1})
+        websocket.send_bytes(b"pcm-turn")
+        websocket.send_json({"type": "audio.stop"})
+
+        transcript = websocket.receive_json()
+        assert transcript == {"type": "transcript.final", "text": "看图"}
+
+        cleared = websocket.receive_json()
+        assert cleared == {"type": "media.cleared"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {
+            "type": "response.text",
+            "text": "我已经结合视频上下文理解了。",
+        }
+
+
+def test_composed_realtime_preserves_pending_media_when_first_transcription_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(realtime_router.settings, "dashscope_api_key", "test-key")
+
+    async def fake_orchestrate(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_text: str,
+        image_bytes: bytes | None = None,
+        image_mime_type: str = "image/jpeg",
+        video_bytes: bytes | None = None,
+        video_mime_type: str = "video/mp4",
+    ) -> dict[str, str]:
+        assert workspace_id
+        assert project_id
+        assert conversation_id
+        assert user_text == "看图"
+        assert image_bytes is not None
+        assert image_mime_type == "image/jpeg"
+        assert video_bytes is None
+        _ = video_mime_type
+        return {"text_input": "看图", "text_response": "已看到图片。"}
+
+    async def fake_tts(_db, *, project_id: str, text: str) -> bytes:
+        assert project_id
+        assert text == "已看到图片。"
+        return b"fake-mp3"
+
+    commit_counter = {"count": 0}
+
+    class FakeRealtimeBridge:
+        def __init__(self, model: str) -> None:
+            self.model = model
+            self.events: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+        async def connect(self) -> None:
+            return None
+
+        async def send_audio_chunk(self, audio_bytes: bytes) -> None:
+            assert audio_bytes in {b"pcm-empty", b"pcm-final"}
+
+        async def commit(self) -> None:
+            commit_counter["count"] += 1
+            if commit_counter["count"] == 1:
+                await self.events.put({"type": "transcript.empty", "text": ""})
+            else:
+                await self.events.put({"type": "transcript.final", "text": "看图"})
+
+        async def next_event(self) -> dict[str, str]:
+            return await self.events.get()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(realtime_router, "RealtimeTranscriptionBridge", FakeRealtimeBridge)
+    monkeypatch.setattr("app.services.composed_realtime.orchestrate_synthetic_realtime_turn_from_text", fake_orchestrate)
+    monkeypatch.setattr("app.services.composed_realtime.synthesize_realtime_speech_for_project", fake_tts)
+
+    client = TestClient(main_module.app)
+    register_user(client, "synthetic-empty-media@example.com", "Synthetic Empty Media")
+    project = create_project(client, "Synthetic Empty Media Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Synthetic Empty Media Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+    image_bytes, _ = upload_fixture("frame.jpg")
+    image_payload = f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode()}"
+
+    with client.websocket_connect("/api/v1/realtime/composed-voice", headers=public_headers()) as websocket:
+        websocket.send_json(
+            {
+                "type": "session.start",
+                "project_id": project["id"],
+                "conversation_id": conversation_id,
+            }
+        )
+        ready = websocket.receive_json()
+        assert ready["type"] == "session.ready"
+
+        websocket.send_json({"type": "media.set", "data_url": image_payload, "filename": "frame.jpg"})
+        attached = websocket.receive_json()
+        assert attached["type"] == "media.attached"
+
+        websocket.send_bytes(b"pcm-empty")
+        websocket.send_json({"type": "audio.stop"})
+        notice = websocket.receive_json()
+        assert notice == {
+            "type": "turn.notice",
+            "code": "empty_transcription",
+            "message": "未识别到语音，请重试。",
+        }
+
+        websocket.send_bytes(b"pcm-final")
+        websocket.send_json({"type": "audio.stop"})
+
+        final = websocket.receive_json()
+        assert final == {"type": "transcript.final", "text": "看图"}
+
+        cleared = websocket.receive_json()
+        assert cleared == {"type": "media.cleared"}
+
+        assistant_chunk = websocket.receive_json()
+        assert assistant_chunk == {"type": "response.text", "text": "已看到图片。"}
+
+        audio_meta = websocket.receive_json()
+        assert audio_meta["type"] == "audio.meta"
+
+        audio = websocket.receive_bytes()
+        assert audio == b"fake-mp3"
+
+        done = websocket.receive_json()
+        assert done["type"] == "response.done"
 
 
 def test_composed_realtime_media_set_rejects_oversized_payload(monkeypatch) -> None:
@@ -2697,8 +3938,8 @@ def test_send_message_persists_reasoning_content_when_thinking_enabled(monkeypat
     async def fake_orchestrate_inference(*args, **kwargs):
         captured["enable_thinking"] = kwargs.get("enable_thinking")
         return {
-            "content": "最终回答",
-            "reasoning_content": "先拆解问题，再形成回答。",
+            "content": "核心灵感\n: 先看相对论约束。",
+            "reasoning_content": "🎯\n\n脑洞推导路径\n\n：\n\n先拆解问题，再形成回答。",
         }
 
     monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
@@ -2712,15 +3953,16 @@ def test_send_message_persists_reasoning_content_when_thinking_enabled(monkeypat
 
     assert resp.status_code == 200
     assert captured["enable_thinking"] is True
-    assert resp.json()["content"] == "最终回答"
-    assert resp.json()["reasoning_content"] == "先拆解问题，再形成回答。"
+    assert resp.json()["content"] == "核心灵感: 先看相对论约束。"
+    assert resp.json()["reasoning_content"] == "🎯 脑洞推导路径：先拆解问题，再形成回答。"
 
     messages = client.get(
         f"/api/v1/chat/conversations/{conversation_id}/messages",
         headers={"origin": ORIGIN},
     )
     assert messages.status_code == 200
-    assert messages.json()[1]["reasoning_content"] == "先拆解问题，再形成回答。"
+    assert messages.json()[1]["content"] == "核心灵感: 先看相对论约束。"
+    assert messages.json()[1]["reasoning_content"] == "🎯 脑洞推导路径：先拆解问题，再形成回答。"
 
 
 def test_send_message_persists_search_sources_metadata(monkeypatch) -> None:
@@ -3239,6 +4481,61 @@ def test_normalize_assistant_markdown_repairs_compact_tables() -> None:
     )
 
 
+def test_normalize_assistant_markdown_merges_punctuation_continuations() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "薛定谔方程\n， 一句话：它是量子力学的“牛顿第二定律”。\n\nH是哈密顿算符\n： 通常 = 动能 + 势能。"
+    )
+
+    assert normalized == (
+        "薛定谔方程，一句话：它是量子力学的“牛顿第二定律”。\n\n"
+        "H是哈密顿算符： 通常 = 动能 + 势能。"
+    )
+
+
+def test_normalize_assistant_markdown_preserves_section_labels_and_lists() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "核心要点\n：\n波函数 Ψ\n： 方程的解。\n\n关键优势\n---\n：\n· 自动处理约束。\n• 坐标无关性。"
+    )
+
+    assert normalized == (
+        "核心要点：\n"
+        "波函数 Ψ： 方程的解。\n\n"
+        "关键优势：\n"
+        "- 自动处理约束。\n"
+        "- 坐标无关性。"
+    )
+
+
+def test_normalize_assistant_markdown_merges_standalone_emoji_headings() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "🎯\n\n核心灵感\n\n:\n\n狄拉克当时在想。\n\n🔮\n\n脑洞推导路径\n\n：\n\n从经典相对论开始。"
+    )
+
+    assert normalized == "🎯 核心灵感: 狄拉克当时在想。\n\n🔮 脑洞推导路径：从经典相对论开始。"
+
+
+def test_normalize_assistant_markdown_merges_short_fragment_continuations() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "场景\n\n： 伦敦地铁（The Tube）那张经典的彩色线路图。\n\n脑洞\n\n： 这不仅仅是地图，这是一个巨大的\n\n拓扑网络\n\n！ 环线（CircleLine）是不是像一个完美的闭合轨道？"
+    )
+
+    assert normalized == (
+        "场景： 伦敦地铁（The Tube）那张经典的彩色线路图。\n\n"
+        "脑洞： 这不仅仅是地图，这是一个巨大的拓扑网络！环线（CircleLine）是不是像一个完美的闭合轨道？"
+    )
+
+
+def test_normalize_assistant_markdown_merges_quoted_followup_continuations() -> None:
+    normalized = assistant_markdown_service.normalize_assistant_markdown(
+        "脑洞\n\n： 每一滴雨落下都是概率云的坍缩\n\n“雨滴狄拉克方程”\n\n的诗？\n\n时空重叠感\n\n是不是超酷？"
+    )
+
+    assert normalized == (
+        "脑洞： 每一滴雨落下都是概率云的坍缩“雨滴狄拉克方程”的诗？\n\n"
+        "时空重叠感是不是超酷？"
+    )
+
+
 def test_build_and_call_llm_normalizes_assistant_markdown(monkeypatch) -> None:
     async def fake_resolve_enable_thinking(*args, **kwargs):
         del args, kwargs
@@ -3321,9 +4618,142 @@ def test_orchestrate_inference_stream_normalizes_message_done_markdown(monkeypat
         ]
 
     events = asyncio.run(collect_events())
+    token_event = next(event for event in events if event["event"] == "token")
     message_done = next(event for event in events if event["event"] == "message_done")
 
+    assert token_event["data"]["content"] == "-冰美式- 手冲- 冷萃"
+    assert token_event["data"]["snapshot"] == "- 冰美式\n- 手冲\n- 冷萃"
     assert message_done["data"]["content"] == "- 冰美式\n- 手冲\n- 冷萃"
+
+
+def test_orchestrate_inference_stream_normalizes_reasoning_snapshots(monkeypatch) -> None:
+    async def fake_resolve_enable_thinking(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_thinking=True)
+
+    async def fake_resolve_search_options(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_search=False, search_options=None)
+
+    async def fake_assemble_prompt_context(*args, **kwargs):
+        del args, kwargs
+        return ([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {})
+
+    async def fake_chat_completion_stream(*args, **kwargs):
+        del args, kwargs
+        yield SimpleNamespace(
+            content="最终回答",
+            reasoning_content="🎯\n\n核心灵感\n\n：\n\n先拆解问题。",
+            search_sources=[],
+        )
+
+    monkeypatch.setattr(orchestrator_service, "resolve_pipeline_model_id", lambda *args, **kwargs: "model_1")
+    monkeypatch.setattr(orchestrator_service, "resolve_enable_thinking", fake_resolve_enable_thinking)
+    monkeypatch.setattr(orchestrator_service, "_resolve_search_options", fake_resolve_search_options)
+    monkeypatch.setattr(orchestrator_service, "_assemble_prompt_context", fake_assemble_prompt_context)
+    monkeypatch.setattr(orchestrator_service, "_load_model_capabilities", lambda *args, **kwargs: set())
+    monkeypatch.setattr(orchestrator_service, "_should_use_responses_auto_tools", lambda **kwargs: False)
+    monkeypatch.setattr(orchestrator_service, "chat_completion_stream", fake_chat_completion_stream)
+
+    async def collect_events() -> list[dict[str, object]]:
+        return [
+            event
+            async for event in orchestrator_service.orchestrate_inference_stream(
+                db=None,
+                workspace_id="ws_1",
+                project_id="proj_1",
+                conversation_id="conv_1",
+                user_message="请展开",
+                recent_messages=[],
+                enable_thinking=True,
+            )
+        ]
+
+    events = asyncio.run(collect_events())
+    reasoning_event = next(event for event in events if event["event"] == "reasoning")
+    message_done = next(event for event in events if event["event"] == "message_done")
+
+    assert reasoning_event["data"]["content"] == "🎯\n\n核心灵感\n\n：\n\n先拆解问题。"
+    assert reasoning_event["data"]["snapshot"] == "🎯 核心灵感：先拆解问题。"
+    assert message_done["data"]["reasoning_content"] == "🎯 核心灵感：先拆解问题。"
+
+
+def test_orchestrate_inference_stream_uses_responses_auto_tools_with_new_signature(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_resolve_enable_thinking(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_thinking=False)
+
+    async def fake_resolve_search_options(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(enable_search=True, search_options=None)
+
+    async def fake_assemble_prompt_context(*args, **kwargs):
+        del args, kwargs
+        return ([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {})
+
+    async def fake_stream_llm_with_auto_tools(
+        db,
+        *,
+        workspace_id,
+        project_id,
+        conversation_id,
+        messages,
+        llm_model_id,
+        tool_definitions,
+        response_enable_thinking,
+    ):
+        del db, workspace_id, project_id, conversation_id, messages, llm_model_id
+        captured["tool_definitions"] = tool_definitions
+        captured["response_enable_thinking"] = response_enable_thinking
+        yield SimpleNamespace(content="自动工具回复", reasoning_content=None, search_sources=[])
+
+    monkeypatch.setattr(orchestrator_service, "resolve_pipeline_model_id", lambda *args, **kwargs: "qwen3.5-plus")
+    monkeypatch.setattr(orchestrator_service, "resolve_enable_thinking", fake_resolve_enable_thinking)
+    monkeypatch.setattr(orchestrator_service, "_resolve_search_options", fake_resolve_search_options)
+    monkeypatch.setattr(orchestrator_service, "_assemble_prompt_context", fake_assemble_prompt_context)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_load_model_capabilities",
+        lambda *args, **kwargs: {"responses_api", "function_calling"},
+    )
+    monkeypatch.setattr(orchestrator_service, "_load_llm_config_json", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_build_response_tool_definitions",
+        lambda **kwargs: [{"type": "web_search"}],
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_build_chat_function_tool_definitions",
+        lambda **kwargs: [],
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_stream_llm_with_auto_tools",
+        fake_stream_llm_with_auto_tools,
+    )
+
+    async def collect_events() -> list[dict[str, object]]:
+        return [
+            event
+            async for event in orchestrator_service.orchestrate_inference_stream(
+                db=None,
+                workspace_id="ws_1",
+                project_id="proj_1",
+                conversation_id="conv_1",
+                user_message="帮我查一下官网",
+                recent_messages=[],
+            )
+        ]
+
+    events = asyncio.run(collect_events())
+    message_done = next(event for event in events if event["event"] == "message_done")
+
+    assert captured["tool_definitions"] == [{"type": "web_search"}]
+    assert captured["response_enable_thinking"] is False
+    assert message_done["data"]["content"] == "自动工具回复"
 
 
 def test_responses_completion_stream_emits_final_message_items_without_duplication(monkeypatch) -> None:
@@ -3408,9 +4838,240 @@ def test_official_catalog_extends_llm_capabilities_for_qwen_flash_models() -> No
 
     assert "function_calling" in capabilities
     assert "web_search" in capabilities
+    assert "web_search_image" in capabilities
+    assert "image_search" in capabilities
+    assert "web_extractor" in capabilities
+    assert "code_interpreter" in capabilities
+    assert "file_search" in capabilities
+    assert "mcp" in capabilities
     assert "deep_thinking" in capabilities
     assert "responses_api" in capabilities
     assert "vision" in capabilities
+
+
+def test_build_response_tool_definitions_adds_supported_native_tools_and_configured_tools() -> None:
+    with SessionLocal() as db:
+        capabilities = orchestrator_service._load_model_capabilities(
+            db,
+            model_id="qwen3.5-plus",
+        )
+
+    tools = orchestrator_service._build_response_tool_definitions(
+        llm_model_id="qwen3.5-plus",
+        llm_capabilities=capabilities,
+        enable_search=True,
+        user_message="请读取这个网页 https://example.com ，帮我找几张适合 PPT 的背景图，顺便以图搜图找来源，并用 python 分析这个 csv。",
+        image_bytes=b"uploaded-image",
+        llm_config_json={
+            "responses_native_tools": {
+                "file_search": {
+                    "vector_store_ids": ["vs_tool_123"],
+                    "max_num_results": 6,
+                },
+                "mcp": {
+                    "server_label": "Figma MCP",
+                    "server_url": "https://mcp.example.com",
+                },
+            }
+        },
+    )
+
+    tool_types = [str(tool.get("type")) for tool in tools]
+    assert "function" in tool_types
+    assert "web_search" in tool_types
+    assert "web_extractor" in tool_types
+    assert "web_search_image" in tool_types
+    assert "image_search" in tool_types
+    assert "code_interpreter" in tool_types
+    assert "file_search" in tool_types
+    assert "mcp" in tool_types
+
+    file_search_tool = next(tool for tool in tools if tool.get("type") == "file_search")
+    assert file_search_tool["vector_store_ids"] == ["vs_tool_123"]
+    mcp_tool = next(tool for tool in tools if tool.get("type") == "mcp")
+    assert mcp_tool["server_label"] == "Figma MCP"
+
+
+def test_build_response_tool_definitions_includes_web_search_when_web_extractor_is_selected() -> None:
+    with SessionLocal() as db:
+        capabilities = orchestrator_service._load_model_capabilities(
+            db,
+            model_id="qwen3-max",
+        )
+
+    tools = orchestrator_service._build_response_tool_definitions(
+        llm_model_id="qwen3-max",
+        llm_capabilities=capabilities,
+        enable_search=False,
+        user_message="请提取这个网页的正文：https://help.aliyun.com/zh/model-studio/web-search-image",
+        image_bytes=None,
+        llm_config_json={},
+    )
+
+    tool_types = [str(tool.get("type")) for tool in tools]
+    assert "web_extractor" in tool_types
+    assert "web_search" in tool_types
+
+
+def test_ai_gateway_tool_selection_prefilter_adds_dependencies_and_uses_query_rewrite(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_rewrite_query_for_tool_selection(*, user_message, recent_messages, config):
+        del recent_messages, config
+        captured["rewrite_user_message"] = user_message
+        return "reverse image source lookup for uploaded diagram"
+
+    async def fake_rerank_candidate_scores(*, query, candidates, config):
+        del config
+        captured["rerank_query"] = query
+        captured["candidate_keys"] = [candidate.key for candidate in candidates]
+        return [
+            ai_gateway_tool_selection_service._CandidateScore(key="native:web_extractor", score=0.94),
+            ai_gateway_tool_selection_service._CandidateScore(key="native:web_search", score=0.11),
+            ai_gateway_tool_selection_service._CandidateScore(key="function:get_current_datetime", score=0.05),
+        ]
+
+    monkeypatch.setattr(
+        ai_gateway_tool_selection_service,
+        "_rewrite_query_for_tool_selection",
+        fake_rewrite_query_for_tool_selection,
+    )
+    monkeypatch.setattr(
+        ai_gateway_tool_selection_service,
+        "_rerank_candidate_scores",
+        fake_rerank_candidate_scores,
+    )
+
+    candidates = [
+        ai_gateway_tool_selection_service.ToolSelectionCandidate(
+            key="native:web_search",
+            tool_name="web_search",
+            category="native",
+            description="Search the public web.",
+            definition={"type": "web_search"},
+        ),
+        ai_gateway_tool_selection_service.ToolSelectionCandidate(
+            key="native:web_extractor",
+            tool_name="web_extractor",
+            category="native",
+            description="Extract content from a URL.",
+            definition={"type": "web_extractor"},
+            dependencies=("web_search",),
+        ),
+        ai_gateway_tool_selection_service.ToolSelectionCandidate(
+            key="function:get_current_datetime",
+            tool_name="get_current_datetime",
+            category="function",
+            description="Get current server time.",
+            definition={
+                "type": "function",
+                "function": {"name": "get_current_datetime"},
+            },
+        ),
+    ]
+
+    result = asyncio.run(
+        ai_gateway_tool_selection_service.select_tools_with_ai_gateway_prefilter(
+            user_message="读一下这个网页并提取内容",
+            recent_messages=[{"role": "user", "content": "上一个问题"}],
+            candidates=candidates,
+            llm_config_json={
+                "ai_gateway_tool_selection": {
+                    "enabled": True,
+                    "trigger_tool_count": 1,
+                    "top_n": 1,
+                    "top_k_percent": 100,
+                    "score_threshold": 0.0,
+                    "query_rewrite_enabled": True,
+                    "query_rewrite_turn_threshold": 1,
+                }
+            },
+        )
+    )
+
+    assert captured["rewrite_user_message"] == "读一下这个网页并提取内容"
+    assert captured["rerank_query"] == "reverse image source lookup for uploaded diagram"
+    assert [candidate.tool_name for candidate in result.candidates] == ["web_search", "web_extractor"]
+    assert result.trace.used_query_rewrite is True
+    assert result.trace.source == "ai_gateway_prefilter"
+
+
+def test_ai_gateway_tool_selection_bypasses_on_rerank_failure(monkeypatch) -> None:
+    async def fake_rerank_candidate_scores(*, query, candidates, config):
+        del query, candidates, config
+        raise RuntimeError("rerank unavailable")
+
+    monkeypatch.setattr(
+        ai_gateway_tool_selection_service,
+        "_rerank_candidate_scores",
+        fake_rerank_candidate_scores,
+    )
+
+    candidates = [
+        ai_gateway_tool_selection_service.ToolSelectionCandidate(
+            key="function:get_current_datetime",
+            tool_name="get_current_datetime",
+            category="function",
+            description="Get current server time.",
+            definition={
+                "type": "function",
+                "function": {"name": "get_current_datetime"},
+            },
+        ),
+        ai_gateway_tool_selection_service.ToolSelectionCandidate(
+            key="function:search_project_memories",
+            tool_name="search_project_memories",
+            category="function",
+            description="Search project memories.",
+            definition={
+                "type": "function",
+                "function": {"name": "search_project_memories"},
+            },
+        ),
+    ]
+
+    result = asyncio.run(
+        ai_gateway_tool_selection_service.select_tools_with_ai_gateway_prefilter(
+            user_message="现在几点",
+            recent_messages=[{"role": "user", "content": "前文"}],
+            candidates=candidates,
+            llm_config_json={
+                "ai_gateway_tool_selection": {
+                    "enabled": True,
+                    "trigger_tool_count": 1,
+                    "failure_mode": "bypass",
+                    "query_rewrite_enabled": False,
+                }
+            },
+        )
+    )
+
+    assert [candidate.key for candidate in result.candidates] == [candidate.key for candidate in candidates]
+    assert result.trace.source == "ai_gateway_bypass"
+    assert "rerank unavailable" in str(result.trace.failure_reason)
+
+
+def test_response_enable_thinking_forces_required_native_tools_on_qwen3_max() -> None:
+    assert orchestrator_service._response_enable_thinking_value(
+        llm_model_id="qwen3-max",
+        enable_thinking=False,
+        tool_definitions=[{"type": "code_interpreter"}],
+    ) is True
+    assert orchestrator_service._response_enable_thinking_value(
+        llm_model_id="qwen3-max",
+        enable_thinking=False,
+        tool_definitions=[{"type": "web_extractor"}],
+    ) is True
+    assert orchestrator_service._response_enable_thinking_value(
+        llm_model_id="qwen3.5-plus",
+        enable_thinking=False,
+        tool_definitions=[{"type": "code_interpreter"}],
+    ) is True
+    assert orchestrator_service._response_enable_thinking_value(
+        llm_model_id="qwen3.5-flash",
+        enable_thinking=False,
+        tool_definitions=[{"type": "web_extractor"}],
+    ) is True
 
 
 def test_build_and_call_llm_uses_responses_auto_tools_for_image_input_when_supported(monkeypatch) -> None:
@@ -3486,6 +5147,220 @@ def test_build_and_call_llm_uses_responses_auto_tools_for_image_input_when_suppo
     assert captured["image_bytes"] == b"image-binary"
     assert captured["image_mime_type"] == "image/png"
     assert {"type": "web_search"} in (captured["tools"] or [])
+
+
+def test_build_and_call_llm_uses_chat_function_tools_for_non_responses_models(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "chat-function-tools@example.com", "Chat Function Tools")
+    project = create_project(client, "Chat Function Tools Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Tool Loop Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    call_count = {"value": 0}
+    captured_tool_payloads: list[dict[str, object] | None] = []
+    captured_messages: list[list[dict[str, object]]] = []
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fail_responses_completion_detailed(*args, **kwargs):
+        raise AssertionError("non-responses models should not use responses auto tools")
+
+    async def fake_chat_completion_detailed(
+        messages,
+        model=None,
+        temperature=0.7,
+        max_tokens=2048,
+        enable_thinking=None,
+        enable_search=None,
+        search_options=None,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+    ):
+        del model, temperature, max_tokens, enable_thinking, enable_search, search_options, tool_choice, parallel_tool_calls
+        captured_tool_payloads.append(tools)
+        captured_messages.append([dict(message) for message in messages])
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            return SimpleNamespace(
+                content="",
+                reasoning_content=None,
+                search_sources=[],
+                tool_calls=[
+                    SimpleNamespace(
+                        id="tool-call-1",
+                        name="get_current_datetime",
+                        arguments='{"timezone":"Europe/London"}',
+                        type="function",
+                    )
+                ],
+            )
+        return SimpleNamespace(
+            content="工具调用成功",
+            reasoning_content=None,
+            search_sources=[],
+            tool_calls=[],
+        )
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_assemble_prompt_context",
+        lambda *args, **kwargs: asyncio.sleep(
+            0,
+            result=([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {}),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_resolve_search_options",
+        lambda *args, **kwargs: asyncio.sleep(
+            0,
+            result=SimpleNamespace(enable_search=False, search_options=None),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "resolve_enable_thinking",
+        lambda *args, **kwargs: asyncio.sleep(0, result=SimpleNamespace(enable_thinking=False)),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fail_responses_completion_detailed,
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "chat_completion_detailed",
+        fake_chat_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service._build_and_call_llm(
+                db,
+                workspace_id=project["workspace_id"],
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="现在伦敦几点？",
+                recent_messages=[],
+                llm_model_id="deepseek-v3.2",
+                enable_thinking=False,
+                enable_search=False,
+            )
+        )
+
+    assert result["content"] == "工具调用成功"
+    assert call_count["value"] == 2
+    assert captured_tool_payloads[0]
+    first_tool_names = {
+        tool["function"]["name"]
+        for tool in captured_tool_payloads[0] or []
+        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+    }
+    assert "get_current_datetime" in first_tool_names
+    assert any(message.get("role") == "tool" for message in captured_messages[1])
+
+
+def test_build_and_call_llm_records_ai_gateway_tool_selection_trace(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    register_user(client, "tool-selection-trace@example.com", "Tool Selection Trace")
+    project = create_project(client, "Tool Selection Trace Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Trace Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_similar(*args, **kwargs) -> list[dict]:
+        return []
+
+    async def fake_responses_completion_detailed(
+        input_items,
+        model=None,
+        enable_thinking=None,
+        tools=None,
+        tool_choice="auto",
+        timeout=90.0,
+        image_bytes=None,
+        image_mime_type="image/jpeg",
+    ):
+        del input_items, model, enable_thinking, tool_choice, timeout, image_bytes, image_mime_type
+        captured["tools"] = tools
+        return orchestrator_service.ChatCompletionResult(content="已完成")
+
+    async def fake_select_response_tool_definitions(**kwargs):
+        del kwargs
+        return (
+            [{"type": "web_search_image"}],
+            {
+                "source": "ai_gateway_prefilter",
+                "candidate_count": 5,
+                "selected_tool_names": ["web_search_image"],
+                "applied": True,
+                "query": "找一张适合演示的背景图",
+            },
+        )
+
+    monkeypatch.setattr(orchestrator_service, "search_similar", fake_search_similar)
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_assemble_prompt_context",
+        lambda *args, **kwargs: asyncio.sleep(
+            0,
+            result=([{"role": "system", "content": "sys"}, {"role": "user", "content": "u"}], {}),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_resolve_search_options",
+        lambda *args, **kwargs: asyncio.sleep(
+            0,
+            result=SimpleNamespace(enable_search=False, search_options=None),
+        ),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "resolve_enable_thinking",
+        lambda *args, **kwargs: asyncio.sleep(0, result=SimpleNamespace(enable_thinking=False)),
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "_select_response_tool_definitions",
+        fake_select_response_tool_definitions,
+    )
+    monkeypatch.setattr(
+        orchestrator_service,
+        "responses_completion_detailed",
+        fake_responses_completion_detailed,
+    )
+
+    with SessionLocal() as db:
+        result = asyncio.run(
+            orchestrator_service._build_and_call_llm(
+                db,
+                workspace_id=project["workspace_id"],
+                project_id=project["id"],
+                conversation_id=conversation.json()["id"],
+                user_message="找一张适合演示的背景图",
+                recent_messages=[],
+                llm_model_id="qwen3.5-plus",
+                enable_thinking=False,
+                enable_search=False,
+            )
+        )
+
+    assert captured["tools"] == [{"type": "web_search_image"}]
+    assert result["retrieval_trace"]["tool_selection"]["source"] == "ai_gateway_prefilter"
+    assert result["retrieval_trace"]["tool_selection"]["selected_tool_names"] == ["web_search_image"]
 
 
 def test_build_and_call_llm_falls_back_to_legacy_multimodal_for_video_input(monkeypatch) -> None:
@@ -3944,6 +5819,39 @@ def test_speech_endpoint_synthesizes_audio_without_creating_messages(monkeypatch
     messages = client.get(f"/api/v1/chat/conversations/{conversation_id}/messages")
     assert messages.status_code == 200
     assert messages.json() == []
+
+
+def test_speech_endpoint_clamps_voice_reply_before_tts(monkeypatch) -> None:
+    monkeypatch.setattr(chat_router.settings, "dashscope_api_key", "test-key")
+    client = TestClient(main_module.app)
+    register_user(client, "chat-speech-clamp@example.com", "Chat Speech Clamp")
+    project = create_project(client, "Chat Speech Clamp Project")
+    conversation = client.post(
+        "/api/v1/chat/conversations",
+        json={"project_id": project["id"], "title": "Thread"},
+        headers=csrf_headers(client),
+    )
+    assert conversation.status_code == 200
+    conversation_id = conversation.json()["id"]
+
+    async def fake_synthesize_speech_for_project(*args, **kwargs):
+        assert kwargs["project_id"] == project["id"]
+        assert kwargs["text"] == "第一句先回答。第二句补充一点。"
+        return b"\x01\x02\x03"
+
+    monkeypatch.setattr(
+        chat_router,
+        "synthesize_speech_for_project",
+        fake_synthesize_speech_for_project,
+    )
+
+    spoken = client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/speech",
+        json={"content": "第一句先回答。第二句补充一点。第三句不应该再播了。"},
+        headers=csrf_headers(client),
+    )
+    assert spoken.status_code == 200
+    assert spoken.json()["audio_response"] == "AQID"
 
 
 def test_transcribe_audio_input_for_project_falls_back_to_qwen3_asr_flash(monkeypatch) -> None:
@@ -4863,7 +6771,16 @@ def test_model_catalog_detail_exposes_modalities_and_support_flags() -> None:
     assert payload["supports_web_search"] is True
     assert payload["supports_structured_output"] is False
     assert payload["supports_cache"] is False
-    assert payload["supported_tools"] == ["function_calling", "web_search"]
+    assert payload["supported_tools"] == [
+        "code_interpreter",
+        "file_search",
+        "function_calling",
+        "image_search",
+        "mcp",
+        "web_extractor",
+        "web_search",
+        "web_search_image",
+    ]
     assert payload["price_unit"] == "tokens"
 
 
@@ -5443,6 +7360,7 @@ def test_extract_memories_targets_explicit_assistant_message_id(monkeypatch) -> 
     monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
     monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
     monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
 
     worker_tasks.extract_memories(
         workspace_id,
@@ -5608,6 +7526,101 @@ def test_build_memory_context_graph_first_dedupes_conflict_lineage_by_default() 
     assert "项目当前使用 REST API。" not in context.system_prompt or "项目当前使用 GraphQL API。" not in context.system_prompt
 
 
+def test_search_project_memories_for_tool_dedupes_same_lineage_by_default() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "tool-lineage-search@example.com", "Tool Lineage Search")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Tool Lineage Search Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Tool Lineage Search Conversation",
+    )
+
+    with SessionLocal() as db:
+        project_record = db.get(Project, project["id"])
+        assert project_record is not None
+        ensure_project_assistant_root(db, project_record, reparent_orphans=False)
+        subject_memory, _ = ensure_project_user_subject(
+            db,
+            project_record,
+            owner_user_id=user_info["user"]["id"],
+        )
+        lineage_key = "family-tool-search-api"
+        created_ids: list[str] = []
+        for content, confidence in (
+            ("项目当前使用 REST API。", 0.45),
+            ("项目当前使用 GraphQL API。", 0.85),
+        ):
+            metadata = memory_metadata_service.normalize_memory_metadata(
+                content=content,
+                category="项目.接口",
+                memory_type="permanent",
+                metadata={
+                    "node_type": "fact",
+                    "node_status": "active",
+                    "subject_memory_id": subject_memory.id,
+                    "lineage_key": lineage_key,
+                    "source_confidence": confidence,
+                },
+            )
+            memory = Memory(
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                content=content,
+                category="项目.接口",
+                type="permanent",
+                node_type="fact",
+                parent_memory_id=subject_memory.id,
+                subject_memory_id=subject_memory.id,
+                node_status="active",
+                canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+                lineage_key=lineage_key,
+                metadata_json=metadata,
+            )
+            db.add(memory)
+            db.flush()
+            created_ids.append(memory.id)
+        db.commit()
+
+    async def fake_semantic_search(*args, **kwargs):
+        return [
+            {"memory_id": created_ids[0], "score": 0.88},
+            {"memory_id": created_ids[1], "score": 0.91},
+        ]
+
+    with SessionLocal() as db:
+        visible_results = asyncio.run(
+            memory_context_service.search_project_memories_for_tool(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation_id,
+                conversation_created_by=user_info["user"]["id"],
+                query="这个项目现在用什么 API？",
+                top_k=5,
+                semantic_search_fn=fake_semantic_search,
+            )
+        )
+        assert len(visible_results) == 1
+        assert visible_results[0]["content"] == "项目当前使用 GraphQL API。"
+
+        conflict_results = asyncio.run(
+            memory_context_service.search_project_memories_for_tool(
+                db,
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                conversation_id=conversation_id,
+                conversation_created_by=user_info["user"]["id"],
+                query="这个项目 API 有没有矛盾？",
+                top_k=5,
+                semantic_search_fn=fake_semantic_search,
+            )
+        )
+    assert len(conflict_results) == 2
+
+
 def test_extract_memories_retries_with_user_only_fallback_when_primary_returns_empty(monkeypatch) -> None:
     import app.services.dashscope_client as dashscope_client_module
     import app.services.embedding as embedding_service
@@ -5683,6 +7696,7 @@ def test_extract_memories_retries_with_user_only_fallback_when_primary_returns_e
     monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
     monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
     monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
 
     worker_tasks.extract_memories(
         workspace_id,
@@ -5839,8 +7853,20 @@ def test_extract_memories_heuristically_marks_duplicate_preferences_when_model_r
         extracted_facts = metadata.get("extracted_facts")
         assert isinstance(extracted_facts, list)
         assert [item["fact"] for item in extracted_facts] == ["用户喜欢乌龙茶。", "用户喜欢茉莉花茶。"]
-        assert all(item["status"] == "duplicate" for item in extracted_facts)
-        assert metadata.get("memories_extracted") == "重复跳过 2 条"
+        assert all(item["status"] == "permanent" for item in extracted_facts)
+        assert all(item["triage_action"] == "promote" for item in extracted_facts)
+        assert metadata.get("memories_extracted") == "新增永久记忆 2 条"
+
+        promoted = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content.in_(["用户喜欢乌龙茶。", "用户喜欢茉莉花茶。"]),
+            )
+            .all()
+        )
+        assert len(promoted) == 2
+        assert all(memory.type == "permanent" for memory in promoted)
 
 
 def test_extract_facts_heuristically_ignores_instructional_prompt() -> None:
@@ -5912,6 +7938,7 @@ def test_extract_memories_resolves_conversation_from_assistant_message_id(monkey
     monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
     monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
     monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
 
     worker_tasks.extract_memories(
         workspace_id,
@@ -5992,6 +8019,7 @@ def test_extract_memories_resolves_non_user_subject_from_quoted_title(monkeypatc
     monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
     monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
     monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
 
     worker_tasks.extract_memories(
         workspace_id,
@@ -6031,6 +8059,166 @@ def test_extract_memories_resolves_non_user_subject_from_quoted_title(monkeypatc
         assert extracted_facts[0]["subject_memory_id"] == subject.id
         assert extracted_facts[0]["subject_kind"] == "book"
         assert extracted_facts[0]["subject_resolution"] == "created_or_reused_subject"
+
+
+def test_canonicalize_fact_text_for_storage_rewrites_deictic_pronouns() -> None:
+    subject_memory = Memory(
+        workspace_id="workspace",
+        project_id="project",
+        content="比那名居天子",
+        category="custom",
+        type="permanent",
+        node_type="subject",
+        subject_kind="custom",
+        source_conversation_id=None,
+        parent_memory_id=None,
+        subject_memory_id=None,
+        node_status="active",
+        canonical_key=None,
+        lineage_key=None,
+        metadata_json={"node_type": "subject", "node_kind": "subject", "subject_kind": "custom"},
+    )
+
+    rewritten = worker_tasks._canonicalize_fact_text_for_storage(
+        fact_text="她的天人设定很有辨识度。",
+        user_message="她的天人设定很有辨识度。",
+        subject_memory=subject_memory,
+        subject_resolution="conversation_focus_subject",
+    )
+
+    assert rewritten == "比那名居天子的天人设定很有辨识度。"
+
+
+def test_canonicalize_fact_text_for_storage_prefixes_subject_for_predicate_only_fact() -> None:
+    subject_memory = Memory(
+        workspace_id="workspace",
+        project_id="project",
+        content="比那名居天子",
+        category="custom",
+        type="permanent",
+        node_type="subject",
+        subject_kind="custom",
+        source_conversation_id=None,
+        parent_memory_id=None,
+        subject_memory_id=None,
+        node_status="active",
+        canonical_key=None,
+        lineage_key=None,
+        metadata_json={"node_type": "subject", "node_kind": "subject", "subject_kind": "custom"},
+    )
+
+    rewritten = worker_tasks._canonicalize_fact_text_for_storage(
+        fact_text="很有辨识度。",
+        user_message="这个角色很有辨识度。",
+        subject_memory=subject_memory,
+        subject_resolution="conversation_focus_subject",
+    )
+
+    assert rewritten == "比那名居天子很有辨识度。"
+
+
+def test_extract_memories_canonicalizes_deictic_non_user_fact_text(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-canonical-non-user@example.com", "Memory Canonical Non User")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Canonical Non User Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Canonical Non User Conversation",
+    )
+
+    with SessionLocal() as db:
+        project_model = db.get(Project, project["id"])
+        assert project_model is not None
+        subject_memory, _ = ensure_project_subject(
+            db,
+            project_model,
+            subject_kind="custom",
+            label="比那名居天子",
+            owner_user_id=user_info["user"]["id"],
+        )
+        conversation = db.get(Conversation, conversation_id)
+        assert conversation is not None
+        conversation.metadata_json = {
+            **(conversation.metadata_json or {}),
+            "primary_subject_id": subject_memory.id,
+        }
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="已记住。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "她的天人设定很有辨识度。",
+                    "category": "人物.设定",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.17, 0.29, 0.41]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_resolve_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None, False, None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_resolve_concept_parent", fake_resolve_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "她的天人设定很有辨识度。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        fact_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "比那名居天子的天人设定很有辨识度。",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert fact_memory is not None
+        extracted_facts = (assistant_message.metadata_json or {}).get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "比那名居天子的天人设定很有辨识度。"
+        assert extracted_facts[0]["subject_label"] == "比那名居天子"
+        assert extracted_facts[0]["subject_resolution"] == "conversation_focus_subject"
 
 
 def test_temporary_preference_keeps_preference_memory_kind() -> None:
@@ -6179,6 +8367,72 @@ def test_memory_compaction_skips_concept_nodes() -> None:
     )
 
     assert memory_compaction_service._eligible_for_compaction(concept_memory) is False
+
+
+def test_plan_concept_parent_uses_heuristic_for_non_user_fact_subject(monkeypatch) -> None:
+    async def fail_completion(*args, **kwargs):
+        raise AssertionError("fact concept heuristic should not call the LLM")
+
+    monkeypatch.setattr(worker_tasks.dashscope_client, "chat_completion", fail_completion)
+
+    subject = Memory(
+        workspace_id="ws_1",
+        project_id="proj_1",
+        content="比那名居天子",
+        category="人物",
+        type="permanent",
+        node_type="subject",
+        metadata_json={"node_kind": "subject", "subject_kind": "person"},
+    )
+
+    result = asyncio.run(
+        worker_tasks._plan_concept_parent(
+            subject_memory=subject,
+            fact_text="比那名居天子的天人设定很有辨识度。",
+            fact_category="人物.设定",
+            fact_memory_kind="fact",
+        )
+    )
+
+    assert result == {
+        "topic": "设定",
+        "parent_text": "角色设定",
+        "parent_category": "人物.设定",
+        "reason": "根据分类和事实内容归入「角色设定」主题。",
+    }
+
+
+def test_plan_concept_parent_groups_user_profile_facts_under_structural_concept(monkeypatch) -> None:
+    async def fail_completion(*args, **kwargs):
+        raise AssertionError("user fact concept heuristic should not call the LLM")
+
+    monkeypatch.setattr(worker_tasks.dashscope_client, "chat_completion", fail_completion)
+
+    subject = Memory(
+        workspace_id="ws_1",
+        project_id="proj_1",
+        content="用户",
+        category="identity",
+        type="permanent",
+        node_type="subject",
+        metadata_json={"node_kind": "subject", "subject_kind": "user"},
+    )
+
+    result = asyncio.run(
+        worker_tasks._plan_concept_parent(
+            subject_memory=subject,
+            fact_text="用户现在是大一学生。",
+            fact_category="教育.学业阶段",
+            fact_memory_kind="fact",
+        )
+    )
+
+    assert result == {
+        "topic": "教育",
+        "parent_text": "教育背景",
+        "parent_category": "教育",
+        "reason": "根据分类和事实内容归入「教育背景」主题。",
+    }
 
 
 def test_extract_memories_groups_specific_preference_under_concept_parent(monkeypatch) -> None:
@@ -6500,6 +8754,222 @@ def test_extract_memories_promotes_first_person_preference_to_permanent(monkeypa
         assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
 
 
+def test_extract_memories_infers_interest_from_repeated_topic_questions(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-interest-topic@example.com", "Memory Topic Interest")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Topic Interest Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Topic Interest Conversation",
+    )
+
+    def create_turn(user_content: str) -> str:
+        with SessionLocal() as db:
+            user_message = Message(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_content,
+                metadata_json={},
+            )
+            assistant_message = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content="我来讲讲。",
+                metadata_json={},
+            )
+            db.add_all([user_message, assistant_message])
+            db.commit()
+            return assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return "[]"
+
+    async def fake_find_duplicate(db, *args, **kwargs):
+        del args
+        fact_text = str(kwargs.get("text") or "")
+        existing = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == fact_text,
+            )
+            .order_by(Memory.created_at.asc())
+            .first()
+        )
+        if existing is not None:
+            return {"memory_id": existing.id}, [0.31, 0.52, 0.73]
+        return None, [0.31, 0.52, 0.73]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    async def fake_plan_concept_parent(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "_plan_concept_parent", fake_plan_concept_parent)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
+
+    first_assistant_id = create_turn("你能介绍一下比那名居天子这个角色吗？")
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "你能介绍一下比那名居天子这个角色吗？",
+        "我来讲讲。",
+        first_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        first_assistant = db.get(Message, first_assistant_id)
+        assert first_assistant is not None
+        assert (first_assistant.metadata_json or {}).get("extracted_facts") == []
+        assert (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对比那名居天子感兴趣。",
+            )
+            .first()
+            is None
+        )
+
+    second_assistant_id = create_turn("比那名居天子的设定为什么这么特别？")
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "比那名居天子的设定为什么这么特别？",
+        "我来讲讲。",
+        second_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        subject_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "比那名居天子",
+            )
+            .first()
+        )
+        interest_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对比那名居天子感兴趣。",
+            )
+            .first()
+        )
+        second_assistant = db.get(Message, second_assistant_id)
+        assert subject_memory is not None
+        assert interest_memory is not None
+        assert interest_memory.type == "temporary"
+        assert interest_memory.parent_memory_id == subject_memory.id
+        metadata = second_assistant.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "用户对比那名居天子感兴趣。"
+        assert extracted_facts[0]["status"] == "temporary"
+        assert "连续 2 轮" in extracted_facts[0]["triage_reason"]
+        temporary_interest_id = interest_memory.id
+
+    third_assistant_id = create_turn("再讲讲比那名居天子的能力和背景。")
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "再讲讲比那名居天子的能力和背景。",
+        "我来讲讲。",
+        third_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        interest_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户对比那名居天子感兴趣。",
+            )
+            .first()
+        )
+        third_assistant = db.get(Message, third_assistant_id)
+        assert interest_memory is not None
+        assert interest_memory.id == temporary_interest_id
+        assert interest_memory.type == "permanent"
+        assert interest_memory.source_conversation_id is None
+        assert (interest_memory.metadata_json or {}).get("source") == "behavioral_interest"
+        metadata = third_assistant.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["status"] == "permanent"
+        assert extracted_facts[0]["triage_action"] == "promote"
+        assert "升级为永久记忆" in extracted_facts[0]["triage_reason"]
+
+
+def test_extract_subject_hint_ignores_deictic_placeholder_subjects() -> None:
+    subject_label, subject_kind = worker_tasks._extract_subject_hint(
+        text="这个角色放在东方里是不是特别离谱？",
+        category="偏好.关注",
+    )
+
+    assert subject_label is None
+    assert subject_kind is None
+
+
+def test_extract_subject_hint_ignores_pronoun_based_subject_labels() -> None:
+    subject_label, subject_kind = worker_tasks._extract_subject_hint(
+        text="她的天人设定很有辨识度。",
+        category="人物.设定",
+    )
+
+    assert subject_label is None
+    assert subject_kind is None
+
+
+def test_extract_subject_hint_supports_background_queries_with_intermediate_tokens() -> None:
+    subject_label, subject_kind = worker_tasks._extract_subject_hint(
+        text="还有比那名居天子的绯想剑和天人背景，你觉得最有意思的是哪块？",
+        category="偏好.关注",
+    )
+
+    assert subject_label == "比那名居天子"
+    assert subject_kind == "custom"
+
+
+def test_extract_subject_hint_supports_soft_leadin_topic_queries() -> None:
+    subject_label, subject_kind = worker_tasks._extract_subject_hint(
+        text="最近突然又想聊芙兰朵露，这个角色为什么这么适合二创？",
+        category="偏好.关注",
+    )
+
+    assert subject_label == "芙兰朵露"
+    assert subject_kind == "custom"
+
+
+def test_deictic_subject_reference_recognizes_topic_attributes() -> None:
+    assert worker_tasks._is_deictic_subject_reference("这个人设为什么总让人记住？") is True
+    assert worker_tasks._is_deictic_subject_reference("这个设定放在东方里是不是特别离谱？") is True
+
+
 def test_extract_memories_reuses_near_duplicate_concept_topics(monkeypatch) -> None:
     import app.services.dashscope_client as dashscope_client_module
     import app.services.embedding as embedding_service
@@ -6611,6 +9081,523 @@ def test_extract_memories_reuses_near_duplicate_concept_topics(monkeypatch) -> N
         assert len(concept_nodes) == 1
         assert concept_nodes[0].content == "用户对咖啡感兴趣"
         assert len(child_nodes) == 2
+
+
+def test_extract_memories_groups_non_user_fact_under_generated_concept(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-fact-concept@example.com", "Memory Fact Concept")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Fact Concept Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Fact Concept Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "比那名居天子的天人设定很有辨识度。",
+                    "category": "人物.设定",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.21, 0.43, 0.65]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "比那名居天子的天人设定很有辨识度。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        subject_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "比那名居天子",
+            )
+            .first()
+        )
+        concept_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "角色设定",
+            )
+            .first()
+        )
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "比那名居天子的天人设定很有辨识度。",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+
+        assert subject_memory is not None
+        assert concept_memory is not None
+        assert child_memory is not None
+        assert concept_memory.parent_memory_id == subject_memory.id
+        assert child_memory.parent_memory_id == concept_memory.id
+        assert (concept_memory.metadata_json or {}).get("node_kind") == "concept"
+        assert (concept_memory.metadata_json or {}).get("memory_kind") == "fact"
+
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert "角色设定" in extracted_facts[0]["triage_reason"]
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
+
+
+def test_extract_memories_groups_user_fact_under_structural_concept(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-user-fact-concept@example.com", "Memory User Fact Concept")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory User Fact Concept Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory User Fact Concept Conversation",
+    )
+
+    with SessionLocal() as db:
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add(assistant_message)
+        db.commit()
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户现在是大一学生。",
+                    "category": "教育.学业阶段",
+                    "importance": 0.95,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.21, 0.43, 0.65]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我现在是大一学生。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        subject_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "用户",
+            )
+            .first()
+        )
+        concept_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "教育背景",
+            )
+            .first()
+        )
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户现在是大一学生。",
+            )
+            .first()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+
+        assert subject_memory is not None
+        assert concept_memory is not None
+        assert child_memory is not None
+        assert concept_memory.parent_memory_id == subject_memory.id
+        assert child_memory.parent_memory_id == concept_memory.id
+        assert (concept_memory.metadata_json or {}).get("node_kind") == "concept"
+        assert (concept_memory.metadata_json or {}).get("memory_kind") == "fact"
+
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert "教育背景" in extracted_facts[0]["triage_reason"]
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条；新增主题节点 1 条"
+
+
+def test_extract_memories_reuses_existing_user_fact_concept(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-user-fact-concept-reuse@example.com", "Memory User Fact Concept Reuse")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory User Fact Concept Reuse Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory User Fact Concept Reuse Conversation",
+    )
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=user_info["user"]["id"],
+        )
+        concept_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="教育",
+            category="教育",
+            memory_type="permanent",
+            metadata={
+                "node_kind": "concept",
+                "node_type": "concept",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "concept_topic": "教育",
+                "auto_generated": True,
+                "source": "auto_concept_parent",
+            },
+        )
+        concept = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="教育",
+            category="教育",
+            type="permanent",
+            node_type="concept",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(concept_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=concept_metadata,
+        )
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content="这条消息稍后会展示记忆变更。",
+            metadata_json={},
+        )
+        db.add_all([concept, assistant_message])
+        db.commit()
+        concept_id = concept.id
+        assistant_message_id = assistant_message.id
+
+    async def fake_extract_completion(*args, **kwargs):
+        del args, kwargs
+        return json.dumps(
+            [
+                {
+                    "fact": "用户在英国的帝国理工学院学习物理",
+                    "category": "教育.学校",
+                    "importance": 0.9,
+                }
+            ],
+            ensure_ascii=False,
+        )
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.21, 0.43, 0.65]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
+
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "我在英国的帝国理工学院学习物理。",
+        "已记住。",
+        assistant_message_id,
+    )
+
+    with SessionLocal() as db:
+        concept = db.get(Memory, concept_id)
+        child_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "用户在英国的帝国理工学院学习物理",
+            )
+            .first()
+        )
+        concept_nodes = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "concept",
+                Memory.subject_memory_id == concept.subject_memory_id,
+            )
+            .all()
+        )
+        assistant_message = db.get(Message, assistant_message_id)
+        assert concept is not None
+        assert child_memory is not None
+        assert child_memory.parent_memory_id == concept.id
+        assert concept.parent_memory_id != concept.id
+        assert len(concept_nodes) == 1
+        assert concept.content == "教育背景"
+        assert (concept.metadata_json or {}).get("concept_label") == "教育背景"
+        metadata = assistant_message.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["parent_memory_id"] == concept.id
+        assert extracted_facts[0]["parent_memory_content"] == "教育背景"
+        assert metadata["memories_extracted"] == "新增永久记忆 1 条"
+
+
+def test_extract_memories_reuses_fact_concept_for_pronoun_follow_up(monkeypatch) -> None:
+    import app.services.dashscope_client as dashscope_client_module
+    import app.services.embedding as embedding_service
+
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-fact-concept-followup@example.com", "Memory Fact Concept Followup")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Memory Fact Concept Followup Project")
+    conversation_id = create_conversation_record(
+        workspace_id,
+        project["id"],
+        user_info["user"]["id"],
+        "Memory Fact Concept Followup Conversation",
+    )
+
+    def create_turn(user_content: str, assistant_content: str) -> str:
+        with SessionLocal() as db:
+            user_message = Message(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_content,
+                metadata_json={},
+            )
+            assistant_message = Message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=assistant_content,
+                metadata_json={},
+            )
+            db.add_all([user_message, assistant_message])
+            db.commit()
+            return assistant_message.id
+
+    responses = {
+        "比那名居天子的天人设定很有辨识度。": [
+            {
+                "fact": "比那名居天子的天人设定很有辨识度。",
+                "category": "人物.设定",
+                "importance": 0.95,
+            }
+        ],
+        "她的战斗设定也很有辨识度。": [
+            {
+                "fact": "她的战斗设定也很有辨识度。",
+                "category": "人物.设定",
+                "importance": 0.95,
+            }
+        ],
+    }
+
+    async def fake_extract_completion(messages, *args, **kwargs):
+        del args, kwargs
+        prompt = messages[0]["content"]
+        for user_message, payload in reversed(tuple(responses.items())):
+            if user_message in prompt:
+                return json.dumps(payload, ensure_ascii=False)
+        return "[]"
+
+    async def fake_find_duplicate(*args, **kwargs):
+        del args, kwargs
+        return None, [0.19, 0.27, 0.42]
+
+    async def fake_find_related(*args, **kwargs):
+        del args, kwargs
+        return []
+
+    async def fake_embed_and_store(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(dashscope_client_module, "chat_completion", fake_extract_completion)
+    monkeypatch.setattr(embedding_service, "find_duplicate_memory_with_vector", fake_find_duplicate)
+    monkeypatch.setattr(embedding_service, "find_related_memories", fake_find_related)
+    monkeypatch.setattr(embedding_service, "embed_and_store", fake_embed_and_store)
+    monkeypatch.setattr(worker_tasks, "compact_project_memories_task", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_tasks, "repair_project_memory_graph_task", lambda *args, **kwargs: None)
+
+    first_assistant_id = create_turn("比那名居天子的天人设定很有辨识度。", "这点确实很鲜明。")
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "比那名居天子的天人设定很有辨识度。",
+        "这点确实很鲜明。",
+        first_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        subject_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "比那名居天子",
+            )
+            .first()
+        )
+        conversation = db.get(Conversation, conversation_id)
+        assert subject_memory is not None
+        assert conversation is not None
+        conversation.metadata_json = {
+            **(conversation.metadata_json or {}),
+            "primary_subject_id": subject_memory.id,
+            "active_subject_ids": [subject_memory.id],
+        }
+        db.commit()
+
+    second_assistant_id = create_turn("她的战斗设定也很有辨识度。", "这种风格也很强。")
+    worker_tasks.extract_memories(
+        workspace_id,
+        project["id"],
+        conversation_id,
+        "她的战斗设定也很有辨识度。",
+        "这种风格也很强。",
+        second_assistant_id,
+    )
+
+    with SessionLocal() as db:
+        subject_memory = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "subject",
+                Memory.content == "比那名居天子",
+            )
+            .first()
+        )
+        assert subject_memory is not None
+        concept_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.content == "角色设定",
+            )
+            .all()
+        )
+        fact_memories = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "fact",
+                Memory.subject_memory_id == subject_memory.id,
+            )
+            .order_by(Memory.created_at.asc())
+            .all()
+        )
+        second_assistant = db.get(Message, second_assistant_id)
+
+        assert len(concept_memories) == 1
+        assert len(fact_memories) == 2
+        assert all(memory.parent_memory_id == concept_memories[0].id for memory in fact_memories)
+        assert fact_memories[1].content == "比那名居天子的战斗设定也很有辨识度。"
+
+        metadata = second_assistant.metadata_json or {}
+        extracted_facts = metadata.get("extracted_facts")
+        assert isinstance(extracted_facts, list)
+        assert extracted_facts[0]["fact"] == "比那名居天子的战斗设定也很有辨识度。"
+        assert "归入主题「角色设定」" in extracted_facts[0]["triage_reason"]
 
 
 def test_upsert_auto_memory_edge_deduplicates_pending_edges() -> None:
@@ -7007,6 +9994,576 @@ def test_repair_project_memory_graph_deletes_legacy_primary_nodes() -> None:
         assert repaired_category_fact.parent_memory_id == subject.id
         assert repaired_summary_fact.parent_memory_id == subject.id
         assert summary.deleted_legacy_nodes == 2
+
+
+def test_repair_project_memory_graph_backfills_concepts_for_non_user_fact_leaves() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair-concept-backfill@example.com", "Repair Concept Backfill")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Repair Concept Backfill Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_subject(
+            db,
+            project_row,
+            subject_kind="person",
+            label="比那名居天子",
+            owner_user_id=user_info["user"]["id"],
+        )
+
+        def _fact(content: str, category: str) -> Memory:
+            metadata = memory_metadata_service.normalize_memory_metadata(
+                content=content,
+                category=category,
+                memory_type="permanent",
+                metadata={
+                    "node_type": "fact",
+                    "node_status": "active",
+                    "subject_memory_id": subject.id,
+                    "source": "auto_extraction",
+                },
+            )
+            return Memory(
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                content=content,
+                category=category,
+                type="permanent",
+                node_type="fact",
+                parent_memory_id=subject.id,
+                subject_memory_id=subject.id,
+                node_status="active",
+                canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+                metadata_json=metadata,
+            )
+
+        first_fact = _fact("比那名居天子的天人设定很有辨识度。", "人物.设定")
+        second_fact = _fact("比那名居天子的战斗设定也很有辨识度。", "人物.设定")
+        db.add_all([first_fact, second_fact])
+        db.commit()
+        first_fact_id = first_fact.id
+        second_fact_id = second_fact.id
+        subject_id = subject.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        concept_nodes = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "concept",
+                Memory.subject_memory_id == subject_id,
+            )
+            .all()
+        )
+        repaired_first = db.get(Memory, first_fact_id)
+        repaired_second = db.get(Memory, second_fact_id)
+        assert len(concept_nodes) == 1
+        assert concept_nodes[0].content == "角色设定"
+        assert concept_nodes[0].parent_memory_id == subject_id
+        assert (concept_nodes[0].metadata_json or {}).get("source") == "repair_concept_backfill"
+        assert (concept_nodes[0].metadata_json or {}).get("concept_topic") == "设定"
+        assert (concept_nodes[0].metadata_json or {}).get("concept_label") == "角色设定"
+        assert repaired_first is not None
+        assert repaired_second is not None
+        assert repaired_first.parent_memory_id == concept_nodes[0].id
+        assert repaired_second.parent_memory_id == concept_nodes[0].id
+        assert summary.created_concept_nodes == 1
+        assert summary.reparented_nodes == 2
+
+        subject_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == subject_id,
+                MemoryEdge.target_memory_id == concept_nodes[0].id,
+                MemoryEdge.edge_type == "auto",
+            )
+            .first()
+        )
+        first_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == concept_nodes[0].id,
+                MemoryEdge.target_memory_id == first_fact_id,
+                MemoryEdge.edge_type == "auto",
+            )
+            .first()
+        )
+        second_edge = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == concept_nodes[0].id,
+                MemoryEdge.target_memory_id == second_fact_id,
+                MemoryEdge.edge_type == "auto",
+            )
+            .first()
+        )
+        assert subject_edge is not None
+        assert first_edge is not None
+        assert second_edge is not None
+
+
+def test_repair_project_memory_graph_backfills_structural_concepts_for_user_facts() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair-user-education@example.com", "Repair User Education")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Repair User Education Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=user_info["user"]["id"],
+        )
+        metadata = memory_metadata_service.normalize_memory_metadata(
+            content="用户现在是大一学生。",
+            category="教育.学业阶段",
+            memory_type="permanent",
+            metadata={
+                "node_type": "fact",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "source": "auto_extraction",
+            },
+        )
+        fact = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户现在是大一学生。",
+            category="教育.学业阶段",
+            type="permanent",
+            node_type="fact",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=metadata,
+        )
+        db.add(fact)
+        db.commit()
+        fact_id = fact.id
+        subject_id = subject.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        repaired_fact = db.get(Memory, fact_id)
+        concept_node = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "concept",
+                Memory.subject_memory_id == subject_id,
+                Memory.content == "教育背景",
+            )
+            .first()
+        )
+        assert repaired_fact is not None
+        assert concept_node is not None
+        assert concept_node.parent_memory_id == subject_id
+        assert repaired_fact.parent_memory_id == concept_node.id
+        assert (concept_node.metadata_json or {}).get("source") == "repair_concept_backfill"
+        assert (concept_node.metadata_json or {}).get("concept_topic") == "教育"
+        assert (concept_node.metadata_json or {}).get("concept_label") == "教育背景"
+        assert summary.created_concept_nodes == 1
+        assert summary.reparented_nodes == 1
+
+
+def test_repair_project_memory_graph_reuses_existing_user_concept_without_self_parenting() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair-user-concept-reuse@example.com", "Repair User Concept Reuse")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Repair User Concept Reuse Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=user_info["user"]["id"],
+        )
+
+        concept_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="教育",
+            category="教育",
+            memory_type="permanent",
+            metadata={
+                "node_kind": "concept",
+                "node_type": "concept",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "concept_topic": "教育",
+                "auto_generated": True,
+                "source": "repair_concept_backfill",
+            },
+        )
+        concept = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="教育",
+            category="教育",
+            type="permanent",
+            node_type="concept",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(concept_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=concept_metadata,
+        )
+
+        fact_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="用户在英国的帝国理工学院学习物理",
+            category="教育.学校",
+            memory_type="permanent",
+            metadata={
+                "node_type": "fact",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "source": "auto_extraction",
+            },
+        )
+        fact = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户在英国的帝国理工学院学习物理",
+            category="教育.学校",
+            type="permanent",
+            node_type="fact",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(fact_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=fact_metadata,
+        )
+
+        db.add_all([concept, fact])
+        db.commit()
+        concept_id = concept.id
+        fact_id = fact.id
+        subject_id = subject.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        repaired_concept = db.get(Memory, concept_id)
+        repaired_fact = db.get(Memory, fact_id)
+        assert repaired_concept is not None
+        assert repaired_fact is not None
+        assert repaired_concept.content == "教育背景"
+        assert repaired_concept.parent_memory_id == subject_id
+        assert repaired_fact.parent_memory_id == concept_id
+        assert summary.created_concept_nodes == 0
+        assert summary.reparented_nodes == 1
+
+
+def test_repair_project_memory_graph_merges_duplicate_concepts_by_topic() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair-concept-dedupe@example.com", "Repair Concept Dedupe")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Repair Concept Dedupe Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=user_info["user"]["id"],
+        )
+
+        concept_a_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="教育",
+            category="教育",
+            memory_type="permanent",
+            metadata={
+                "node_kind": "concept",
+                "node_type": "concept",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "concept_topic": "教育",
+                "auto_generated": True,
+                "source": "auto_concept_parent",
+            },
+        )
+        concept_a = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="教育",
+            category="教育",
+            type="permanent",
+            node_type="concept",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(concept_a_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=concept_a_metadata,
+        )
+
+        concept_b_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="教育背景",
+            category="教育",
+            memory_type="permanent",
+            metadata={
+                "node_kind": "concept",
+                "node_type": "concept",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "concept_topic": "教育",
+                "concept_label": "教育背景",
+                "auto_generated": True,
+                "source": "repair_concept_backfill",
+            },
+        )
+        concept_b = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="教育背景",
+            category="教育",
+            type="permanent",
+            node_type="concept",
+            parent_memory_id=subject.id,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(concept_b_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=concept_b_metadata,
+        )
+
+        fact_a_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="用户现在是大一学生。",
+            category="教育.学业阶段",
+            memory_type="permanent",
+            metadata={
+                "node_type": "fact",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "source": "auto_extraction",
+            },
+        )
+        fact_a = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户现在是大一学生。",
+            category="教育.学业阶段",
+            type="permanent",
+            node_type="fact",
+            parent_memory_id=None,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(fact_a_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=fact_a_metadata,
+        )
+
+        fact_b_metadata = memory_metadata_service.normalize_memory_metadata(
+            content="用户在英国的帝国理工学院学习物理",
+            category="教育.学校",
+            memory_type="permanent",
+            metadata={
+                "node_type": "fact",
+                "node_status": "active",
+                "subject_memory_id": subject.id,
+                "source": "auto_extraction",
+            },
+        )
+        fact_b = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="用户在英国的帝国理工学院学习物理",
+            category="教育.学校",
+            type="permanent",
+            node_type="fact",
+            parent_memory_id=None,
+            subject_memory_id=subject.id,
+            node_status="active",
+            canonical_key=str(fact_b_metadata.get("canonical_key") or "").strip() or None,
+            metadata_json=fact_b_metadata,
+        )
+
+        db.add_all([concept_a, concept_b])
+        db.flush()
+        fact_a.parent_memory_id = concept_a.id
+        fact_b.parent_memory_id = concept_b.id
+        db.add_all([fact_a, fact_b])
+        db.commit()
+        fact_a_id = fact_a.id
+        fact_b_id = fact_b.id
+        subject_id = subject.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        concept_nodes = (
+            db.query(Memory)
+            .filter(
+                Memory.project_id == project["id"],
+                Memory.node_type == "concept",
+                Memory.subject_memory_id == subject_id,
+            )
+            .all()
+        )
+        repaired_fact_a = db.get(Memory, fact_a_id)
+        repaired_fact_b = db.get(Memory, fact_b_id)
+
+        assert len(concept_nodes) == 1
+        assert concept_nodes[0].content == "教育背景"
+        assert (concept_nodes[0].metadata_json or {}).get("concept_topic") == "教育"
+        assert repaired_fact_a is not None
+        assert repaired_fact_b is not None
+        assert repaired_fact_a.parent_memory_id == concept_nodes[0].id
+        assert repaired_fact_b.parent_memory_id == concept_nodes[0].id
+        assert summary.deleted_duplicate_concepts == 1
+        assert summary.reparented_nodes >= 1
+
+
+def test_repair_project_memory_graph_preserves_version_edges() -> None:
+    client = TestClient(main_module.app)
+    user_info = register_user(client, "memory-repair-version-edges@example.com", "Repair Version Edges")
+    workspace_id = user_info["workspace"]["id"]
+    project = create_project(client, "Repair Version Edge Project")
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        root_memory, _ = ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=user_info["user"]["id"],
+        )
+
+        def _fact(content: str, *, node_status: str, lineage_key: str) -> Memory:
+            metadata = memory_metadata_service.normalize_memory_metadata(
+                content=content,
+                category="项目.接口",
+                memory_type="permanent",
+                metadata={
+                    "node_type": "fact",
+                    "node_status": node_status,
+                    "subject_memory_id": subject.id,
+                    "lineage_key": lineage_key,
+                    "source": "auto_extraction",
+                },
+            )
+            return Memory(
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                content=content,
+                category="项目.接口",
+                type="permanent",
+                node_type="fact",
+                parent_memory_id=subject.id,
+                subject_memory_id=subject.id,
+                node_status=node_status,
+                canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+                lineage_key=lineage_key,
+                metadata_json=metadata,
+            )
+
+        predecessor = _fact("项目曾经使用 REST API。", node_status="superseded", lineage_key="repair-lineage")
+        successor = _fact("项目当前使用 GraphQL API。", node_status="active", lineage_key="repair-lineage")
+        conflicting = _fact("项目当前使用 gRPC API。", node_status="active", lineage_key="repair-lineage")
+        category_path = Memory(
+            workspace_id=workspace_id,
+            project_id=project["id"],
+            content="接口路径",
+            category="项目.接口",
+            type="permanent",
+            parent_memory_id=root_memory.id,
+            metadata_json={
+                "node_type": "concept",
+                "node_kind": "category-path",
+                "concept_source": "category_path",
+                "structural_only": True,
+            },
+        )
+        db.add_all([predecessor, successor, conflicting, category_path])
+        db.flush()
+        legacy_child = _fact("项目接口迁移信息。", node_status="active", lineage_key="repair-legacy-child")
+        legacy_child.parent_memory_id = category_path.id
+        db.add(legacy_child)
+        db.flush()
+        supersedes_edge = MemoryEdge(
+            source_memory_id=successor.id,
+            target_memory_id=predecessor.id,
+            edge_type="supersedes",
+            strength=0.99,
+        )
+        conflict_edge = MemoryEdge(
+            source_memory_id=min(successor.id, conflicting.id),
+            target_memory_id=max(successor.id, conflicting.id),
+            edge_type="conflict",
+            strength=0.88,
+        )
+        db.add_all([supersedes_edge, conflict_edge])
+        db.commit()
+        category_path_id = category_path.id
+        legacy_child_id = legacy_child.id
+        predecessor_id = predecessor.id
+        successor_id = successor.id
+        conflicting_id = conflicting.id
+
+        summary = memory_graph_repair_service.repair_project_memory_graph(
+            db,
+            workspace_id=workspace_id,
+            project_id=project["id"],
+        )
+        db.commit()
+
+        assert db.get(Memory, category_path_id) is None
+        repaired_child = db.get(Memory, legacy_child_id)
+        assert repaired_child is not None
+        repaired_parent = db.get(Memory, repaired_child.parent_memory_id)
+        assert repaired_parent is not None
+        assert repaired_parent.id == subject.id or (
+            repaired_parent.node_type == "concept" and repaired_parent.parent_memory_id == subject.id
+        )
+        assert summary.deleted_legacy_nodes == 1
+
+        preserved_supersedes = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == successor_id,
+                MemoryEdge.target_memory_id == predecessor_id,
+                MemoryEdge.edge_type == "supersedes",
+            )
+            .one_or_none()
+        )
+        preserved_conflict = (
+            db.query(MemoryEdge)
+            .filter(
+                MemoryEdge.source_memory_id == min(successor_id, conflicting_id),
+                MemoryEdge.target_memory_id == max(successor_id, conflicting_id),
+                MemoryEdge.edge_type == "conflict",
+            )
+            .one_or_none()
+        )
+        assert preserved_supersedes is not None
+        assert preserved_conflict is not None
 
 
 def test_cleanup_pending_upload_session_skips_completed_items_when_task_replays(monkeypatch) -> None:
@@ -8431,6 +11988,121 @@ def test_memory_compaction_removes_stale_summary_when_group_shrinks(monkeypatch)
 
     with SessionLocal() as db:
         assert db.get(MemoryView, summary_id) is None
+
+
+def test_memory_compaction_uses_only_primary_active_fact_per_lineage(monkeypatch) -> None:
+    client = TestClient(main_module.app)
+    owner_info = register_user(client, "summary-lineage@example.com", "Summary Lineage")
+    workspace_id = owner_info["workspace"]["id"]
+    project = create_project(client, "Summary Lineage Project")
+
+    async def fake_chat_completion(*args, **kwargs):
+        return json.dumps(
+            {
+                "skip": False,
+                "summary": "项目接口和部署信息已经稳定。",
+                "category": "项目.接口",
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr("app.services.memory_compaction.chat_completion", fake_chat_completion)
+
+    with SessionLocal() as db:
+        project_row = db.get(Project, project["id"])
+        assert project_row is not None
+        ensure_project_assistant_root(db, project_row, reparent_orphans=False)
+        subject, _ = ensure_project_user_subject(
+            db,
+            project_row,
+            owner_user_id=owner_info["user"]["id"],
+        )
+
+        def _create_fact(
+            content: str,
+            *,
+            lineage_key: str,
+            salience: float,
+        ) -> str:
+            metadata = memory_metadata_service.normalize_memory_metadata(
+                content=content,
+                category="项目.接口",
+                memory_type="permanent",
+                metadata={
+                    "node_type": "fact",
+                    "node_status": "active",
+                    "subject_memory_id": subject.id,
+                    "lineage_key": lineage_key,
+                    "salience": salience,
+                },
+            )
+            memory = Memory(
+                workspace_id=workspace_id,
+                project_id=project["id"],
+                content=content,
+                category="项目.接口",
+                type="permanent",
+                node_type="fact",
+                parent_memory_id=subject.id,
+                subject_memory_id=subject.id,
+                node_status="active",
+                canonical_key=str(metadata.get("canonical_key") or "").strip() or None,
+                lineage_key=lineage_key,
+                metadata_json=metadata,
+            )
+            db.add(memory)
+            db.flush()
+            return memory.id
+
+        primary_conflict_id = _create_fact(
+            "项目当前使用 GraphQL API。",
+            lineage_key="compaction-lineage-api",
+            salience=0.95,
+        )
+        dropped_conflict_id = _create_fact(
+            "项目当前使用 REST API。",
+            lineage_key="compaction-lineage-api",
+            salience=0.25,
+        )
+        deployment_id = _create_fact(
+            "项目部署在欧洲区域。",
+            lineage_key="compaction-lineage-region",
+            salience=0.72,
+        )
+        auth_id = _create_fact(
+            "项目接口要求 Bearer Token。",
+            lineage_key="compaction-lineage-auth",
+            salience=0.68,
+        )
+        db.add(
+            MemoryEdge(
+                source_memory_id=min(primary_conflict_id, dropped_conflict_id),
+                target_memory_id=max(primary_conflict_id, dropped_conflict_id),
+                edge_type="conflict",
+                strength=0.83,
+            )
+        )
+        db.commit()
+
+    worker_tasks.compact_project_memories_task(workspace_id, project["id"])
+
+    with SessionLocal() as db:
+        summary = next(
+            view for view in db.query(MemoryView)
+            .filter(
+                MemoryView.project_id == project["id"],
+                MemoryView.workspace_id == workspace_id,
+                MemoryView.view_type == "summary",
+            )
+            .all()
+            if (view.metadata_json or {}).get("summary_group_key")
+        )
+        source_memory_ids = summary.metadata_json["source_memory_ids"]
+        assert primary_conflict_id in source_memory_ids
+        assert dropped_conflict_id not in source_memory_ids
+        assert deployment_id in source_memory_ids
+        assert auth_id in source_memory_ids
+        assert summary.metadata_json["source_count"] == 3
 
 
 def test_memory_graph_revision_increments_on_structure_mutations() -> None:

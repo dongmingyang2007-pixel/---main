@@ -1,6 +1,26 @@
 """Tests for real-time voice features."""
+import asyncio
 import base64
+import types
+
+import pytest
+
 from app.core.config import Settings
+import app.services.orchestrator as orchestrator_service
+from app.services.asr_client import RealtimeTranscriptionBridge, transcribe_audio_realtime
+from app.services.context_loader import (
+    build_system_prompt,
+    extract_personality,
+)
+from app.services.composed_realtime import split_text_for_realtime_tts
+from app.services.dashscope_client import UpstreamServiceError
+from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
+from app.services.voice_response_limits import (
+    VOICE_RESPONSE_INSTRUCTION_MARKER,
+    append_voice_response_instruction,
+    clamp_voice_response_text,
+    split_voice_response_sentences,
+)
 
 
 def test_realtime_settings_defaults():
@@ -16,6 +36,9 @@ def test_realtime_settings_defaults():
     assert s.realtime_context_history_turns == 10
     assert s.realtime_rag_refresh_turns == 5
     assert s.realtime_reconnect_max_attempts == 3
+    assert s.voice_reply_max_sentences == 2
+    assert s.voice_reply_soft_char_limit == 60
+    assert s.voice_reply_hard_char_limit == 90
 
 
 def test_memory_triage_settings_defaults():
@@ -35,13 +58,6 @@ def test_thinking_classifier_settings_defaults():
     )
     assert s.thinking_classifier_model == "qwen3.5-flash"
     assert s.thinking_classifier_min_confidence == 0.65
-
-
-from app.services.context_loader import (
-    extract_personality,
-    build_system_prompt,
-)
-from app.services.composed_realtime import split_text_for_realtime_tts
 
 
 def test_extract_personality_from_description():
@@ -95,6 +111,68 @@ def test_split_text_for_realtime_tts_keeps_decimal_or_inline_periods_inside_segm
     ]
 
 
+def test_append_voice_response_instruction_is_idempotent():
+    prompt = "你是一个简洁的助手。"
+    updated = append_voice_response_instruction(prompt)
+
+    assert VOICE_RESPONSE_INSTRUCTION_MARKER in updated
+    assert append_voice_response_instruction(updated) == updated
+
+
+def test_clamp_voice_response_text_limits_sentence_count():
+    text = "第一句先回答。第二句补充一点。第三句不应该再播了。"
+
+    assert clamp_voice_response_text(
+        text,
+        max_sentences=2,
+        soft_char_limit=30,
+        hard_char_limit=40,
+    ) == "第一句先回答。第二句补充一点。"
+
+
+def test_clamp_voice_response_text_trims_long_single_sentence_cleanly():
+    text = "这是一个特别长的单句，其中包含很多补充说明，还会继续延伸到不适合语音播报的长度"
+
+    clamped = clamp_voice_response_text(
+        text,
+        max_sentences=2,
+        soft_char_limit=18,
+        hard_char_limit=24,
+    )
+
+    assert len(clamped) <= 25
+    assert clamped.endswith("。")
+    assert "不适合语音播报的长度" not in clamped
+
+
+def test_split_voice_response_sentences_respects_english_periods_and_decimals():
+    assert split_voice_response_sentences(
+        "Version 2.1 is stable. Next step starts now. Final check passes."
+    ) == [
+        "Version 2.1 is stable.",
+        "Next step starts now.",
+        "Final check passes.",
+    ]
+
+
+def test_clamp_voice_response_text_limits_english_sentences_with_spacing():
+    assert clamp_voice_response_text(
+        "First sentence! Second sentence? Third sentence.",
+        max_sentences=2,
+        soft_char_limit=80,
+        hard_char_limit=90,
+    ) == "First sentence! Second sentence?"
+
+
+def test_clamp_voice_response_text_preserves_terminal_quote_when_truncated():
+    assert clamp_voice_response_text(
+        "“好的。”第二句补充说明。",
+        max_sentences=1,
+        soft_char_limit=20,
+        hard_char_limit=30,
+    ) == "“好的。”"
+
+
 def test_build_system_prompt_with_recent_messages():
     prompt = build_system_prompt(
         personality="你是助手",
@@ -110,11 +188,145 @@ def test_build_system_prompt_with_recent_messages():
     assert "助手: 你好，请说" in prompt
 
 
-import asyncio
-import pytest
-from app.services.realtime_bridge import RealtimeSession, SessionState, register_session, unregister_session
-from app.services.dashscope_client import UpstreamServiceError
-from app.services.asr_client import RealtimeTranscriptionBridge, transcribe_audio_realtime
+def test_orchestrate_synthetic_realtime_turn_from_text_clamps_voice_output(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_resolve_pipeline_model_id(_db, *, project_id: str, model_type: str) -> str:
+        assert project_id == "project-1"
+        assert model_type == "llm"
+        return "qwen3.5-plus"
+
+    async def fake_build_and_call_llm(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_message: str,
+        recent_messages: list[dict[str, str]],
+        llm_model_id: str,
+        **kwargs,
+    ) -> dict[str, object]:
+        captured["workspace_id"] = workspace_id
+        captured["project_id"] = project_id
+        captured["conversation_id"] = conversation_id
+        captured["user_message"] = user_message
+        captured["recent_messages"] = list(recent_messages)
+        captured["llm_model_id"] = llm_model_id
+        captured["voice_response_mode"] = kwargs.get("voice_response_mode")
+        return {
+            "content": "第一句先回答。第二句补充一点。第三句不应该再播了。",
+            "reasoning_content": None,
+            "sources": [],
+            "retrieval_trace": {},
+        }
+
+    monkeypatch.setattr(orchestrator_service, "resolve_pipeline_model_id", fake_resolve_pipeline_model_id)
+    monkeypatch.setattr(orchestrator_service, "load_recent_messages", lambda _db, *, conversation_id, limit: [])
+    monkeypatch.setattr(orchestrator_service, "_build_and_call_llm", fake_build_and_call_llm)
+
+    result = asyncio.run(
+        orchestrator_service.orchestrate_synthetic_realtime_turn_from_text(
+            None,
+            workspace_id="workspace-1",
+            project_id="project-1",
+            conversation_id="conversation-1",
+            user_text="晚上好",
+        )
+    )
+
+    assert captured["voice_response_mode"] is True
+    assert result["text_input"] == "晚上好"
+    assert result["text_response"] == "第一句先回答。第二句补充一点。"
+
+
+def test_orchestrate_voice_inference_clamps_audio_reply_before_tts(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeTransaction:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeQuery:
+        def __init__(self, result):
+            self._result = result
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return self._result
+
+    class FakeDb:
+        def __init__(self):
+            self.model_info = types.SimpleNamespace(capabilities=["text"])
+
+        def query(self, _model):
+            return FakeQuery(self.model_info)
+
+        def begin_nested(self):
+            return FakeTransaction()
+
+    def fake_resolve_pipeline_model_id(_db, *, project_id: str, model_type: str) -> str:
+        assert project_id == "project-1"
+        if model_type == "llm":
+            return "qwen3.5-plus"
+        raise AssertionError(f"unexpected model_type {model_type}")
+
+    async def fake_build_and_call_llm(
+        _db,
+        *,
+        workspace_id: str,
+        project_id: str,
+        conversation_id: str,
+        user_message: str,
+        recent_messages: list[dict[str, str]],
+        llm_model_id: str,
+        **kwargs,
+    ) -> dict[str, object]:
+        captured["workspace_id"] = workspace_id
+        captured["project_id"] = project_id
+        captured["conversation_id"] = conversation_id
+        captured["user_message"] = user_message
+        captured["recent_messages"] = list(recent_messages)
+        captured["llm_model_id"] = llm_model_id
+        captured["voice_response_mode"] = kwargs.get("voice_response_mode")
+        return {
+            "content": "第一句先回答。第二句补充一点。第三句不应该再播了。",
+            "reasoning_content": None,
+            "sources": [],
+            "retrieval_trace": {},
+        }
+
+    async def fake_synthesize_speech_for_project(_db, *, project_id: str, text: str) -> bytes:
+        captured["tts_project_id"] = project_id
+        captured["tts_text"] = text
+        return b"\x01\x02"
+
+    monkeypatch.setattr(orchestrator_service, "resolve_pipeline_model_id", fake_resolve_pipeline_model_id)
+    monkeypatch.setattr(orchestrator_service, "load_recent_messages", lambda _db, *, conversation_id, limit: [])
+    monkeypatch.setattr(orchestrator_service, "_load_model_capabilities", lambda _db, *, model_id: {"text"})
+    monkeypatch.setattr(orchestrator_service, "_build_and_call_llm", fake_build_and_call_llm)
+    monkeypatch.setattr(orchestrator_service, "synthesize_speech_for_project", fake_synthesize_speech_for_project)
+
+    result = asyncio.run(
+        orchestrator_service.orchestrate_voice_inference(
+            FakeDb(),
+            workspace_id="workspace-1",
+            project_id="project-1",
+            conversation_id="conversation-1",
+            text_input="晚上好",
+        )
+    )
+
+    assert captured["voice_response_mode"] is True
+    assert captured["tts_project_id"] == "project-1"
+    assert captured["tts_text"] == "第一句先回答。第二句补充一点。"
+    assert result["text_response"] == "第一句先回答。第二句补充一点。"
+    assert result["audio_response"] == b"\x01\x02"
 
 
 def test_session_initial_state():
@@ -395,6 +607,59 @@ def test_session_audio_transcript_done_only_backfills_missing_suffix_after_text_
     assert session._current_response_text == "你好。"
 
 
+def test_session_cancels_over_limit_voice_stream_and_preserves_clamped_text():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "First sentence! ",
+            }
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "Second sentence?",
+            }
+        )
+    )
+    third = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": " Third sentence.",
+            }
+        )
+    )
+    ignored_audio = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.audio.delta",
+                "delta": base64.b64encode(b"ignored").decode("utf-8"),
+            }
+        )
+    )
+    done = asyncio.run(session.handle_upstream_event({"type": "response.done"}))
+
+    assert first == [{"type": "response.text", "text": "First sentence!"}]
+    assert second == [{"type": "response.text", "text": " Second sentence?"}]
+    assert third == []
+    assert ignored_audio == []
+    assert done == [{"type": "response.done"}]
+    assert session._current_response_text == "First sentence! Second sentence?"
+    assert [json.loads(message) for message in session._upstream_ws.sent_messages] == [
+        {"type": "response.cancel"},
+    ]
+
+    user_text, ai_text = session.get_turn_texts()
+    assert user_text == ""
+    assert ai_text == "First sentence! Second sentence?"
+
+
 class _DummyUpstream:
     def __init__(self, incoming_messages: list[str] | None = None) -> None:
         self.sent_messages: list[str] = []
@@ -500,6 +765,43 @@ def test_request_response_sends_response_create_message():
     assert sent == [{"type": "response.create"}]
 
 
+def test_relay_image_to_upstream_sends_input_image_append_after_audio_started():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._has_sent_input_audio = True
+
+    asyncio.run(session.relay_image_to_upstream(b"\xff\xd8\xff\xdbframe"))
+
+    sent = [json.loads(message) for message in session._upstream_ws.sent_messages]
+    assert sent == [
+        {
+            "type": "input_image_buffer.append",
+            "image": base64.b64encode(b"\xff\xd8\xff\xdbframe").decode("utf-8"),
+        }
+    ]
+
+
+def test_first_audio_chunk_flushes_latest_pending_image_frame():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+
+    asyncio.run(session.relay_image_to_upstream(b"\xff\xd8\xfffirst"))
+    asyncio.run(session.relay_image_to_upstream(b"\xff\xd8\xfflatest"))
+    asyncio.run(session.relay_audio_to_upstream(b"\x01\x02\x03\x04"))
+
+    sent = [json.loads(message) for message in session._upstream_ws.sent_messages]
+    assert sent == [
+        {
+            "type": "input_audio_buffer.append",
+            "audio": base64.b64encode(b"\x01\x02\x03\x04").decode("utf-8"),
+        },
+        {
+            "type": "input_image_buffer.append",
+            "image": base64.b64encode(b"\xff\xd8\xfflatest").decode("utf-8"),
+        },
+    ]
+
+
 def test_transcribe_audio_realtime_encodes_each_raw_chunk_independently(monkeypatch):
     monkeypatch.setattr("app.services.asr_client.settings.dashscope_api_key", "test-key")
     ws = _DummyRealtimeAsrSocket([
@@ -578,6 +880,47 @@ def test_realtime_transcription_bridge_maps_text_and_stash_to_partial_events():
     ]
 
 
+def test_realtime_session_accumulates_multiple_completed_transcripts() -> None:
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {"type": "conversation.item.input_audio_transcription.completed", "transcript": "第一句。"}
+        )
+    )
+    second = asyncio.run(
+        session.handle_upstream_event(
+            {"type": "conversation.item.input_audio_transcription.completed", "transcript": "第二句。"}
+        )
+    )
+
+    assert first == [{"type": "transcript.final", "text": "第一句。"}]
+    assert second == [{"type": "transcript.final", "text": "第一句。第二句。"}]
+    user_text, ai_text = session.get_turn_texts()
+    assert user_text == "第一句。第二句。"
+    assert ai_text == ""
+
+
+def test_realtime_session_speech_stopped_arms_response_refresh() -> None:
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._awaiting_transcript_response = False
+    session._response_request_started_for_current_input = True
+    session._latest_transcript_completion = "旧转写"
+
+    outgoing = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "input_audio_buffer.speech_stopped",
+            }
+        )
+    )
+
+    assert outgoing == []
+    assert session._awaiting_transcript_response is True
+    assert session._response_request_started_for_current_input is False
+    assert session._latest_transcript_completion == ""
+
+
 def test_ai_output_activity_refreshes_idle_timer():
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
     session._last_activity = 0
@@ -611,6 +954,19 @@ def test_client_input_interrupt_while_ai_speaking_returns_ack():
     assert any(m.get("type") == "response.cancel" for m in sent)
 
 
+def test_client_input_interrupt_while_response_is_pending_returns_ack():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._response_in_flight = True
+
+    replies = asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+
+    assert replies == [{"type": "interrupt.ack"}]
+    assert session._response_in_flight is False
+    sent = [json.loads(m) for m in session._upstream_ws.sent_messages]
+    assert any(m.get("type") == "response.cancel" for m in sent)
+
+
 def test_client_input_interrupt_when_ai_silent_is_noop():
     """input.interrupt when AI is not speaking is a no-op (no interrupt.ack returned)."""
     session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
@@ -621,6 +977,91 @@ def test_client_input_interrupt_when_ai_silent_is_noop():
 
     assert replies == []
     assert session._upstream_ws.sent_messages == []
+
+
+def test_client_interrupt_swallows_stale_response_done_and_output():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._ai_speaking = True
+    session._current_transcript = "第一句"
+    session._current_response_text = "旧回答"
+
+    replies = asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+    leaked_text = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "这段不该继续出现",
+            }
+        )
+    )
+    stale_done = asyncio.run(session.handle_upstream_event({"type": "response.done"}))
+
+    assert replies == [{"type": "interrupt.ack"}]
+    assert leaked_text == []
+    assert stale_done == []
+    assert session.consume_response_done_finalization() is False
+    assert session.turn_count == 0
+    user_text, ai_text = session.get_turn_texts()
+    assert user_text == ""
+    assert ai_text == ""
+
+
+def test_new_response_output_clears_interrupt_done_guard():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+    session._ai_speaking = True
+
+    asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+
+    session._reset_response_output_block()
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "新的回答",
+            }
+        )
+    )
+    done = asyncio.run(session.handle_upstream_event({"type": "response.done"}))
+
+    assert first == [{"type": "response.text", "text": "新的回答"}]
+    assert done == [{"type": "response.done"}]
+    assert session.consume_response_done_finalization() is True
+
+
+def test_request_response_is_guarded_while_response_in_flight():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    upstream = _DummyUpstream()
+    session._upstream_ws = upstream
+    session._speech_start_time = 123.0
+
+    asyncio.run(session.request_response())
+    asyncio.run(session.request_response())
+
+    sent = [json.loads(message) for message in upstream.sent_messages]
+    assert sent == [{"type": "response.create"}]
+    assert session._speech_start_time is None
+
+
+def test_text_only_response_marks_ai_speaking_for_interrupts():
+    session = RealtimeSession(workspace_id="ws", project_id="p", conversation_id="c", user_id="u")
+    session._upstream_ws = _DummyUpstream()
+
+    first = asyncio.run(
+        session.handle_upstream_event(
+            {
+                "type": "response.text.delta",
+                "delta": "你好",
+            }
+        )
+    )
+    assert session.is_ai_speaking is True
+    replies = asyncio.run(session.handle_client_message("input.interrupt", {"type": "input.interrupt"}))
+
+    assert first == [{"type": "response.text", "text": "你好"}]
+    assert session.is_ai_speaking is False
+    assert replies == [{"type": "interrupt.ack"}]
 
 
 def test_triage_memory_parses_merge_response(monkeypatch):

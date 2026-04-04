@@ -1,8 +1,5 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { gsap } from "@/lib/gsap-register";
-
 interface HighlightsSceneProps {
   eyebrow: string;
   title: string;
@@ -10,33 +7,8 @@ interface HighlightsSceneProps {
 }
 
 export function HighlightsScene({ eyebrow, title, details }: HighlightsSceneProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const cards = el.querySelectorAll(".highlight-card");
-    const tl = gsap.timeline({
-      scrollTrigger: {
-        trigger: el,
-        start: "top 80%",
-        end: "center center",
-        scrub: false,
-        once: true,
-      },
-    });
-    tl.from(cards, {
-      opacity: 0,
-      y: 40,
-      stagger: 0.12,
-      duration: 0.6,
-      ease: "power2.out",
-    });
-    return () => { tl.kill(); };
-  }, []);
-
   return (
-    <div ref={containerRef} className="flex min-h-screen flex-col items-center justify-center px-6">
+    <div className="flex min-h-screen flex-col items-center justify-center px-6">
       <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
         {eyebrow}
       </p>

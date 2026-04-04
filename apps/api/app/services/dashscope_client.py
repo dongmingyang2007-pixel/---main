@@ -44,6 +44,9 @@ class SearchSource:
     site_name: str | None = None
     summary: str | None = None
     icon: str | None = None
+    tool_type: str | None = None
+    image_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 def raise_upstream_error(exc: Exception) -> NoReturn:
@@ -65,6 +68,8 @@ def _build_multimodal_messages(
     image_mime_type: str = "image/jpeg",
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
+    video_frame_data_urls: list[str] | None = None,
+    video_fps: float = 1.0,
 ) -> list[dict]:
     formatted_messages: list[dict] = []
     for msg in messages:
@@ -89,7 +94,13 @@ def _build_multimodal_messages(
                     },
                 })
 
-            if video_bytes:
+            if video_frame_data_urls:
+                content_parts.append({
+                    "type": "video",
+                    "video": list(video_frame_data_urls),
+                    "fps": video_fps,
+                })
+            elif video_bytes:
                 video_b64 = base64.b64encode(video_bytes).decode("utf-8")
                 content_parts.append({
                     "type": "video_url",
@@ -170,13 +181,41 @@ def _normalize_source_index(value: Any, fallback: int) -> int:
     return fallback
 
 
-def _normalize_search_source(item: dict[str, Any], fallback_index: int) -> SearchSource | None:
-    url = _coerce_nonempty_text(item.get("url"))
-    title = _coerce_nonempty_text(item.get("title"))
-    if not url or not title:
+def _coerce_url_field(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key in ("url", "href", "link"):
+            normalized = _coerce_nonempty_text(value.get(key))
+            if normalized:
+                return normalized
         return None
+    return _coerce_nonempty_text(value)
 
-    hostname = urlparse(url).hostname or ""
+
+def _normalize_search_source(item: dict[str, Any], fallback_index: int) -> SearchSource | None:
+    url = (
+        _coerce_url_field(item.get("url"))
+        or _coerce_url_field(item.get("source_url"))
+        or _coerce_url_field(item.get("page_url"))
+        or _coerce_url_field(item.get("link"))
+    )
+    image_url = (
+        _coerce_url_field(item.get("image_url"))
+        or _coerce_url_field(item.get("image"))
+    )
+    thumbnail_url = (
+        _coerce_url_field(item.get("thumbnail_url"))
+        or _coerce_url_field(item.get("thumbnail"))
+    )
+    effective_url = url or image_url or thumbnail_url
+    if not effective_url:
+        return None
+    title = (
+        _coerce_nonempty_text(item.get("title"))
+        or _coerce_nonempty_text(item.get("name"))
+        or _coerce_nonempty_text(item.get("label"))
+    )
+
+    hostname = urlparse(effective_url).hostname or ""
     domain = hostname.lower()
     summary = (
         _coerce_nonempty_text(item.get("summary"))
@@ -186,14 +225,19 @@ def _normalize_search_source(item: dict[str, Any], fallback_index: int) -> Searc
         or _coerce_nonempty_text(item.get("text"))
         or _coerce_nonempty_text(item.get("content"))
     )
+    if not title:
+        title = domain or effective_url
     return SearchSource(
         index=_normalize_source_index(item.get("index"), fallback_index),
         title=title,
-        url=url,
+        url=effective_url,
         domain=domain,
         site_name=_coerce_nonempty_text(item.get("site_name")) or domain or None,
         summary=summary,
         icon=_coerce_nonempty_text(item.get("icon")),
+        tool_type=_coerce_nonempty_text(item.get("tool_type")),
+        image_url=image_url,
+        thumbnail_url=thumbnail_url,
     )
 
 
@@ -225,7 +269,7 @@ def merge_search_sources(*groups: list[SearchSource]) -> list[SearchSource]:
     merged: dict[str, SearchSource] = {}
     for group in groups:
         for source in group:
-            key = source.url or f"ref:{source.index}"
+            key = source.image_url or source.url or f"ref:{source.index}"
             current = merged.get(key)
             if current is None:
                 merged[key] = SearchSource(**asdict(source))
@@ -242,6 +286,12 @@ def merge_search_sources(*groups: list[SearchSource]) -> list[SearchSource]:
                 current.summary = source.summary
             if not current.icon and source.icon:
                 current.icon = source.icon
+            if not current.tool_type and source.tool_type:
+                current.tool_type = source.tool_type
+            if not current.image_url and source.image_url:
+                current.image_url = source.image_url
+            if not current.thumbnail_url and source.thumbnail_url:
+                current.thumbnail_url = source.thumbnail_url
     return sorted(
         merged.values(),
         key=lambda source: (
@@ -388,6 +438,8 @@ async def chat_completion_multimodal_detailed(
     image_mime_type: str = "image/jpeg",
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
+    video_frame_data_urls: list[str] | None = None,
+    video_fps: float = 1.0,
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
@@ -406,6 +458,8 @@ async def chat_completion_multimodal_detailed(
         image_mime_type=image_mime_type,
         video_bytes=video_bytes,
         video_mime_type=video_mime_type,
+        video_frame_data_urls=video_frame_data_urls,
+        video_fps=video_fps,
     )
 
     payload: dict[str, Any] = {
@@ -455,6 +509,8 @@ async def chat_completion_multimodal(
     image_mime_type: str = "image/jpeg",
     video_bytes: bytes | None = None,
     video_mime_type: str = "video/mp4",
+    video_frame_data_urls: list[str] | None = None,
+    video_fps: float = 1.0,
     temperature: float = 0.7,
     max_tokens: int = 2048,
     enable_thinking: bool | None = None,
@@ -473,6 +529,8 @@ async def chat_completion_multimodal(
         image_mime_type=image_mime_type,
         video_bytes=video_bytes,
         video_mime_type=video_mime_type,
+        video_frame_data_urls=video_frame_data_urls,
+        video_fps=video_fps,
         temperature=temperature,
         max_tokens=max_tokens,
         enable_thinking=enable_thinking,

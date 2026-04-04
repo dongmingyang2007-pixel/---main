@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
+import { DISCOVER_ENABLED } from "@/lib/feature-flags";
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,13 +19,11 @@ const NAVIGATION_ITEMS = [
   { key: "nav.chat", href: "/app/chat" },
   { key: "nav.memory", href: "/app/memory" },
   { key: "nav.devices", href: "/app/devices" },
-  { key: "nav.discover", href: "/app/discover" },
+  ...(DISCOVER_ENABLED ? [{ key: "nav.discover", href: "/app/discover" }] : []),
   { key: "nav.settings", href: "/app/settings" },
 ];
 
-const ACTION_ITEMS = [
-  { key: "cmd.newAssistant", href: "/app/assistants/new" },
-];
+const ACTION_ITEMS = [{ key: "cmd.newAssistant", href: "/app/assistants/new" }];
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -57,10 +56,7 @@ export function CommandPalette() {
         <CommandEmpty>{t("cmd.empty")}</CommandEmpty>
         <CommandGroup heading={t("cmd.navigate")}>
           {NAVIGATION_ITEMS.map((item) => (
-            <CommandItem
-              key={item.href}
-              onSelect={() => navigate(item.href)}
-            >
+            <CommandItem key={item.href} onSelect={() => navigate(item.href)}>
               {t(item.key)}
             </CommandItem>
           ))}

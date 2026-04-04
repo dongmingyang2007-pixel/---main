@@ -54,8 +54,18 @@ class Settings(BaseSettings):
     dashscope_api_key: str = ""
     dashscope_model: str = "qwen3.5-plus"
     dashscope_embedding_model: str = "text-embedding-v3"
+    dashscope_rerank_model: str = "gte-rerank-v2"
     thinking_classifier_model: str = "qwen3.5-flash"
     thinking_classifier_min_confidence: float = 0.65
+    ai_gateway_tool_selection_enabled: bool = True
+    ai_gateway_tool_selection_trigger_tool_count: int = 4
+    ai_gateway_tool_selection_top_n: int = 6
+    ai_gateway_tool_selection_top_k_percent: int = 60
+    ai_gateway_tool_selection_score_threshold: float = 0.0
+    ai_gateway_tool_selection_failure_mode: str = "bypass"
+    ai_gateway_tool_selection_query_rewrite_enabled: bool = True
+    ai_gateway_tool_selection_query_rewrite_turn_threshold: int = 2
+    ai_gateway_tool_selection_query_rewrite_model: str = "qwen3.5-flash"
 
     # ── Memory Triage ──
     memory_triage_model: str = "qwen-turbo"
@@ -72,6 +82,9 @@ class Settings(BaseSettings):
     realtime_rag_refresh_turns: int = 5
     realtime_reconnect_max_attempts: int = 3
     realtime_media_max_mb: int = 12
+    voice_reply_max_sentences: int = 2
+    voice_reply_soft_char_limit: int = 60
+    voice_reply_hard_char_limit: int = 90
 
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

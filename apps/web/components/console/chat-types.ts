@@ -1,3 +1,5 @@
+import { normalizeRenderableMarkdown } from "./chat-markdown-normalization";
+
 export type ChatMode = "standard" | "omni_realtime" | "synthetic_realtime";
 
 export interface SearchSource {
@@ -8,6 +10,9 @@ export interface SearchSource {
   site_name?: string | null;
   summary?: string | null;
   icon?: string | null;
+  tool_type?: string | null;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
 }
 
 export interface ExtractedFact {
@@ -84,6 +89,7 @@ export interface Message {
 
 export interface ApiMessage {
   id: string;
+  conversation_id?: string;
   role: "user" | "assistant";
   content: string;
   reasoning_content?: string | null;
@@ -91,11 +97,7 @@ export interface ApiMessage {
   created_at?: string;
 }
 
-export type InspectorTab =
-  | "context"
-  | "memory_write"
-  | "thinking"
-  | "debug";
+export type InspectorTab = "context" | "memory_write" | "thinking" | "debug";
 
 export type InspectorSection =
   | "sources"
@@ -167,7 +169,10 @@ function normalizeExtractedFacts(value: unknown): ExtractedFact[] | undefined {
   }
 
   const facts = value
-    .filter((f: unknown): f is Record<string, unknown> => typeof f === "object" && f !== null)
+    .filter(
+      (f: unknown): f is Record<string, unknown> =>
+        typeof f === "object" && f !== null,
+    )
     .map((f) => ({
       fact: String(f.fact ?? ""),
       category: String(f.category ?? ""),
@@ -296,9 +301,7 @@ export function joinNaturalText(segments: string[]): string {
 }
 
 export function createAudioPlayer(base64Audio: string) {
-  const audioBytes = Uint8Array.from(atob(base64Audio), (c) =>
-    c.charCodeAt(0),
-  );
+  const audioBytes = Uint8Array.from(atob(base64Audio), (c) => c.charCodeAt(0));
   const blob = new Blob([audioBytes], { type: "audio/mp3" });
   const url = URL.createObjectURL(blob);
   return {
@@ -327,7 +330,9 @@ export function getPipelineModelId(
   modelType: PipelineConfigItem["model_type"],
   fallback: string,
 ) {
-  return items.find((item) => item.model_type === modelType)?.model_id || fallback;
+  return (
+    items.find((item) => item.model_type === modelType)?.model_id || fallback
+  );
 }
 
 export function modelSupportsCapability(
@@ -339,7 +344,9 @@ export function modelSupportsCapability(
   if (!entry) {
     return false;
   }
-  const capabilities = new Set((entry.capabilities || []).map((value) => value.toLowerCase()));
+  const capabilities = new Set(
+    (entry.capabilities || []).map((value) => value.toLowerCase()),
+  );
   return required.every((value) => capabilities.has(value.toLowerCase()));
 }
 
@@ -353,7 +360,8 @@ export function normalizeSearchSources(value: unknown): SearchSource[] {
       return [];
     }
     const candidate = item as Record<string, unknown>;
-    const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+    const title =
+      typeof candidate.title === "string" ? candidate.title.trim() : "";
     const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
     if (!title || !url) {
       return [];
@@ -391,6 +399,19 @@ export function normalizeSearchSources(value: unknown): SearchSource[] {
           typeof candidate.icon === "string" && candidate.icon.trim()
             ? candidate.icon.trim()
             : null,
+        tool_type:
+          typeof candidate.tool_type === "string" && candidate.tool_type.trim()
+            ? candidate.tool_type.trim()
+            : null,
+        image_url:
+          typeof candidate.image_url === "string" && candidate.image_url.trim()
+            ? candidate.image_url.trim()
+            : null,
+        thumbnail_url:
+          typeof candidate.thumbnail_url === "string" &&
+          candidate.thumbnail_url.trim()
+            ? candidate.thumbnail_url.trim()
+            : null,
       },
     ];
   });
@@ -402,14 +423,16 @@ function normalizeTraceMemory(value: unknown): RetrievalTraceMemory | null {
   }
   const candidate = value as Record<string, unknown>;
   const id = typeof candidate.id === "string" ? candidate.id : "";
-  const content = typeof candidate.content === "string" ? candidate.content.trim() : "";
+  const content =
+    typeof candidate.content === "string" ? candidate.content.trim() : "";
   if (!id || !content) {
     return null;
   }
   return {
     id,
     type: typeof candidate.type === "string" ? candidate.type : undefined,
-    category: typeof candidate.category === "string" ? candidate.category : undefined,
+    category:
+      typeof candidate.category === "string" ? candidate.category : undefined,
     memory_kind:
       typeof candidate.memory_kind === "string" ? candidate.memory_kind : null,
     source: typeof candidate.source === "string" ? candidate.source : null,
@@ -424,7 +447,8 @@ function normalizeTraceMemory(value: unknown): RetrievalTraceMemory | null {
         : null,
     pinned: candidate.pinned === true,
     salience:
-      typeof candidate.salience === "number" && Number.isFinite(candidate.salience)
+      typeof candidate.salience === "number" &&
+      Number.isFinite(candidate.salience)
         ? candidate.salience
         : null,
     content,
@@ -444,8 +468,11 @@ function normalizeTraceChunk(value: unknown): RetrievalTraceChunk | null {
   return {
     id: typeof candidate.id === "string" ? candidate.id : null,
     data_item_id:
-      typeof candidate.data_item_id === "string" ? candidate.data_item_id : null,
-    filename: typeof candidate.filename === "string" ? candidate.filename : null,
+      typeof candidate.data_item_id === "string"
+        ? candidate.data_item_id
+        : null,
+    filename:
+      typeof candidate.filename === "string" ? candidate.filename : null,
     score:
       typeof candidate.score === "number" && Number.isFinite(candidate.score)
         ? candidate.score
@@ -479,25 +506,38 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
     candidate.memory_counts && typeof candidate.memory_counts === "object"
       ? {
           static:
-            typeof (candidate.memory_counts as Record<string, unknown>).static === "number"
-              ? ((candidate.memory_counts as Record<string, unknown>).static as number)
+            typeof (candidate.memory_counts as Record<string, unknown>)
+              .static === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>)
+                  .static as number)
               : undefined,
           relevant:
-            typeof (candidate.memory_counts as Record<string, unknown>).relevant === "number"
-              ? ((candidate.memory_counts as Record<string, unknown>).relevant as number)
+            typeof (candidate.memory_counts as Record<string, unknown>)
+              .relevant === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>)
+                  .relevant as number)
               : undefined,
           graph:
-            typeof (candidate.memory_counts as Record<string, unknown>).graph === "number"
-              ? ((candidate.memory_counts as Record<string, unknown>).graph as number)
+            typeof (candidate.memory_counts as Record<string, unknown>)
+              .graph === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>)
+                  .graph as number)
               : undefined,
           temporary:
-            typeof (candidate.memory_counts as Record<string, unknown>).temporary === "number"
-              ? ((candidate.memory_counts as Record<string, unknown>).temporary as number)
+            typeof (candidate.memory_counts as Record<string, unknown>)
+              .temporary === "number"
+              ? ((candidate.memory_counts as Record<string, unknown>)
+                  .temporary as number)
               : undefined,
         }
       : undefined;
 
-  if (!memories.length && !knowledgeChunks.length && !linkedFileChunks.length && !contextLevel) {
+  if (
+    !memories.length &&
+    !knowledgeChunks.length &&
+    !linkedFileChunks.length &&
+    !contextLevel
+  ) {
     return null;
   }
 
@@ -506,9 +546,13 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
       typeof candidate.strategy === "string" ? candidate.strategy : null,
     context_level: contextLevel,
     decision_source:
-      typeof candidate.decision_source === "string" ? candidate.decision_source : null,
+      typeof candidate.decision_source === "string"
+        ? candidate.decision_source
+        : null,
     decision_reason:
-      typeof candidate.decision_reason === "string" ? candidate.decision_reason : null,
+      typeof candidate.decision_reason === "string"
+        ? candidate.decision_reason
+        : null,
     decision_confidence:
       typeof candidate.decision_confidence === "number" &&
       Number.isFinite(candidate.decision_confidence)
@@ -523,13 +567,25 @@ export function normalizeRetrievalTrace(value: unknown): RetrievalTrace | null {
 
 export function toMessage(message: ApiMessage): Message {
   const meta = message.metadata_json ?? null;
+  const normalizedAssistantContent =
+    message.role === "assistant"
+      ? normalizeRenderableMarkdown(message.content)
+      : message.content;
+  const normalizedAssistantReasoning =
+    message.role === "assistant" &&
+    typeof message.reasoning_content === "string" &&
+    message.reasoning_content.trim()
+      ? normalizeRenderableMarkdown(message.reasoning_content)
+      : message.reasoning_content;
   const extractedFacts = normalizeExtractedFacts(meta?.extracted_facts);
   const memoriesExtracted =
-    typeof meta?.memories_extracted === "string" && meta.memories_extracted.trim()
+    typeof meta?.memories_extracted === "string" &&
+    meta.memories_extracted.trim()
       ? meta.memories_extracted
       : undefined;
   const memoryExtractionStatus =
-    typeof meta?.memory_extraction_status === "string" && meta.memory_extraction_status.trim()
+    typeof meta?.memory_extraction_status === "string" &&
+    meta.memory_extraction_status.trim()
       ? meta.memory_extraction_status.trim()
       : null;
   const memoryExtractionAttempts =
@@ -538,15 +594,16 @@ export function toMessage(message: ApiMessage): Message {
       ? meta.memory_extraction_attempts
       : null;
   const memoryExtractionError =
-    typeof meta?.memory_extraction_error === "string" && meta.memory_extraction_error.trim()
+    typeof meta?.memory_extraction_error === "string" &&
+    meta.memory_extraction_error.trim()
       ? meta.memory_extraction_error.trim()
       : null;
 
   return {
     id: message.id,
     role: message.role,
-    content: message.content,
-    reasoningContent: message.reasoning_content,
+    content: normalizedAssistantContent,
+    reasoningContent: normalizedAssistantReasoning,
     sources: normalizeSearchSources(meta?.sources),
     retrievalTrace: normalizeRetrievalTrace(meta?.retrieval_trace),
     memories_extracted: memoriesExtracted,
@@ -626,7 +683,9 @@ export function getApiErrorMessage(
   return t("errors.generic");
 }
 
-export function cycleState(current: "auto" | "on" | "off"): "auto" | "on" | "off" {
+export function cycleState(
+  current: "auto" | "on" | "off",
+): "auto" | "on" | "off" {
   if (current === "auto") return "on";
   if (current === "on") return "off";
   return "auto";

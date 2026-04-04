@@ -13,6 +13,7 @@ import {
 import { useTranslations } from "next-intl";
 
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -24,206 +25,18 @@ import {
   type InspectorTab,
   type Message,
   type MessageInspectorOverride,
+  type MemoryWriteSummaryItem,
   type SearchSource,
   type SpeechResponse,
   createAudioPlayer,
 } from "./chat-types";
 import { ChatMessageMetaRail } from "./chat/ChatMessageMetaRail";
-import { buildChatMetaRailItems } from "./chat/chat-view-models";
-
-const FENCED_CODE_BLOCK_SPLIT_PATTERN = /(```[\s\S]*?```)/g;
-const FENCED_CODE_BLOCK_FULL_PATTERN = /^```[\s\S]*```$/;
-const MATH_BLOCK_GLUE_PATTERN =
-  /(\$\$[^$]{1,800})\${3,4}(?=(?:\\|[A-Za-z([{]))/gu;
-const MATH_AFTER_COLON_PATTERN =
-  /([：:])\s*(\$\$)(?=(?:\\|[A-Za-z([{]))/gu;
-const DANGLING_COLON_LINE_PATTERN = /^[ \t]*([：:])([ \t]*)(.*\S)?[ \t]*$/u;
-const INLINE_HEADING_GLUE_PATTERN =
-  /([^\s#])[ \t]*(#{2,6})(?=[ \t]*[0-9A-Za-z\u4e00-\u9fff([{(（【])/gu;
-const HEADING_WITHOUT_SPACE_PATTERN =
-  /^([ \t]*#{1,6})(?=[0-9A-Za-z\u4e00-\u9fff([{(（【])/gmu;
-const DISPLAY_MATH_PATTERN = /\$\$([\s\S]*?)\$\$/gu;
-const INLINE_MATH_PATTERN = /(?<!\$)\$([^$\n]+?)\$(?!\$)/gu;
-const HEADING_TABLE_GLUE_PATTERN =
-  /(^|\n)([ \t]*#{1,6}[^\n|]+?)\|(?=[^\n]*\|[ \t]*:?-{3,}:?)/gu;
-const TABLE_SEPARATOR_ROW_PATTERN =
-  /^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|){2,}[ \t]*:?-{3,}:?[ \t]*\|?[ \t]*$/u;
-const TERMINAL_MATH_COMMANDS = [
-  "alpha",
-  "beta",
-  "gamma",
-  "delta",
-  "epsilon",
-  "varepsilon",
-  "zeta",
-  "eta",
-  "theta",
-  "vartheta",
-  "iota",
-  "kappa",
-  "lambda",
-  "mu",
-  "nu",
-  "xi",
-  "pi",
-  "varpi",
-  "rho",
-  "varrho",
-  "sigma",
-  "varsigma",
-  "tau",
-  "upsilon",
-  "phi",
-  "varphi",
-  "chi",
-  "psi",
-  "omega",
-  "Gamma",
-  "Delta",
-  "Theta",
-  "Lambda",
-  "Xi",
-  "Pi",
-  "Sigma",
-  "Upsilon",
-  "Phi",
-  "Psi",
-  "Omega",
-  "partial",
-  "nabla",
-  "hbar",
-  "ell",
-  "infty",
-  "imath",
-  "jmath",
-];
-const TERMINAL_MATH_COMMAND_PATTERN = new RegExp(
-  String.raw`\\(?:${TERMINAL_MATH_COMMANDS.join("|")})(?=[A-Za-z0-9])`,
-  "gu",
-);
-
-function mergeDanglingColonLines(lines: string[]): string[] {
-  if (!lines.length) {
-    return lines;
-  }
-
-  const merged: string[] = [];
-  for (const line of lines) {
-    const match = line.match(DANGLING_COLON_LINE_PATTERN);
-    if (
-      match &&
-      merged.length > 0 &&
-      merged[merged.length - 1]?.trim() &&
-      !merged[merged.length - 1]?.trimEnd().endsWith(match[1])
-    ) {
-      const previous = merged.pop()?.trimEnd() ?? "";
-      const gap = match[2] ?? "";
-      const content = match[3] ?? "";
-      merged.push(`${previous}${match[1]}${gap}${content}`.trimEnd());
-      continue;
-    }
-    merged.push(line);
-  }
-
-  return merged;
-}
-
-function normalizeMathRenderingLine(line: string): string {
-  if (!line.includes("$$")) {
-    return line;
-  }
-
-  return line
-    .replace(MATH_BLOCK_GLUE_PATTERN, (_, prefix: string) => `${prefix}$$\n$$`)
-    .replace(MATH_AFTER_COLON_PATTERN, "$1\n$2");
-}
-
-function normalizeMathBody(body: string): string {
-  if (!body.includes("\\")) {
-    return body;
-  }
-  return body.replace(TERMINAL_MATH_COMMAND_PATTERN, (match) => `${match} `);
-}
-
-function normalizeMathExpressions(segment: string): string {
-  return segment
-    .replace(DISPLAY_MATH_PATTERN, (_, body: string) => {
-      return `$$${normalizeMathBody(body)}$$`;
-    })
-    .replace(INLINE_MATH_PATTERN, (_, body: string) => {
-      return `$${normalizeMathBody(body)}$`;
-    });
-}
-
-function normalizeHeadingMarkers(segment: string): string {
-  return segment
-    .replace(INLINE_HEADING_GLUE_PATTERN, "$1\n$2")
-    .replace(HEADING_WITHOUT_SPACE_PATTERN, "$1 ");
-}
-
-function ensureTableRowPipes(row: string): string {
-  let normalized = row.trim();
-  if (!normalized.startsWith("|")) {
-    normalized = `|${normalized}`;
-  }
-  if (!normalized.endsWith("|")) {
-    normalized = `${normalized}|`;
-  }
-  return normalized;
-}
-
-function normalizeTableLine(line: string): string {
-  if (!line.includes("|") || !line.includes("||") || !line.includes("---")) {
-    return line;
-  }
-
-  const rows = line
-    .split("||")
-    .map((row) => row.trim())
-    .filter(Boolean)
-    .map(ensureTableRowPipes);
-
-  if (rows.length < 2 || !rows.some((row) => TABLE_SEPARATOR_ROW_PATTERN.test(row))) {
-    return line;
-  }
-
-  return rows.join("\n");
-}
-
-function normalizeMarkdownTables(segment: string): string {
-  return segment
-    .replace(HEADING_TABLE_GLUE_PATTERN, "$1$2\n|")
-    .split("\n")
-    .map(normalizeTableLine)
-    .join("\n");
-}
-
-function normalizeRenderableMarkdown(text: string): string {
-  if (
-    !text.includes("$") &&
-    !text.includes("\n:") &&
-    !text.includes("\n：") &&
-    !text.includes("#") &&
-    !text.includes("|")
-  ) {
-    return text;
-  }
-
-  return text
-    .split(FENCED_CODE_BLOCK_SPLIT_PATTERN)
-    .map((segment) => {
-      if (FENCED_CODE_BLOCK_FULL_PATTERN.test(segment)) {
-        return segment;
-      }
-      const mergedLines = mergeDanglingColonLines(
-        segment.split("\n").map(normalizeMathRenderingLine),
-      ).join("\n");
-      return normalizeMarkdownTables(
-        normalizeHeadingMarkers(normalizeMathExpressions(mergedLines)),
-      );
-    })
-    .join("");
-}
+import {
+  buildChatMetaRailItems,
+  buildMemoryWriteSummary,
+  buildThinkingSummary,
+} from "./chat/chat-view-models";
+import { normalizeRenderableMarkdown } from "./chat-markdown-normalization";
 
 /* ------------------------------------------------------------------ */
 /*  AnimatedMessageText                                                */
@@ -277,27 +90,31 @@ function AnimatedMessageText({
 
   return (
     <div className="chat-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                color: "var(--console-accent, #6366f1)",
-                textDecoration: "underline",
-              }}
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {renderableText}
-      </ReactMarkdown>
+      {streaming ? (
+        <div className="chat-streaming-plaintext">{renderableText}</div>
+      ) : (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          components={{
+            a: ({ href, children }) => (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  color: "var(--console-accent, #6366f1)",
+                  textDecoration: "underline",
+                }}
+              >
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {renderableText}
+        </ReactMarkdown>
+      )}
       {showCursor ? <span className="chat-inline-cursor">&#x2588;</span> : null}
     </div>
   );
@@ -322,6 +139,10 @@ function getSourceDisplayIndex(
 
 function getSourceCardId(messageId: string, sourceIndex: number): string {
   return `chat-source-${messageId}-${sourceIndex}`;
+}
+
+function getSourceSummaryId(messageId: string): string {
+  return `chat-source-summary-${messageId}`;
 }
 
 function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
@@ -564,6 +385,7 @@ function SourceAwareAssistantMarkdown({
   message,
   content,
   sourceEntries,
+  onOpenInspector,
 }: {
   message: Message;
   content: string;
@@ -575,6 +397,11 @@ function SourceAwareAssistantMarkdown({
       previewSummary: string;
     }
   >;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
 }) {
   const citationPlugin = createCitationRemarkPlugin(
     message.id,
@@ -590,7 +417,7 @@ function SourceAwareAssistantMarkdown({
   return (
     <div className="chat-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, citationPlugin]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath, citationPlugin]}
         rehypePlugins={[rehypeKatex]}
         components={{
           a: ({ href, children }) => {
@@ -602,6 +429,7 @@ function SourceAwareAssistantMarkdown({
                   source={entry.source}
                   displayIndex={entry.displayIndex}
                   previewSummary={entry.previewSummary}
+                  onOpenInspector={onOpenInspector}
                 />
               );
             }
@@ -621,21 +449,34 @@ function CitationAnchor({
   source,
   displayIndex,
   previewSummary,
+  onOpenInspector,
 }: {
   messageId: string;
   source: SearchSource;
   displayIndex: number;
   previewSummary: string;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
 }) {
   return (
     <span className="chat-citation-anchor-wrap">
-      <a
+      <button
+        type="button"
         className="chat-citation-anchor"
-        href={`#${getSourceCardId(messageId, displayIndex)}`}
         title={source.title}
+        onClick={() =>
+          onOpenInspector({
+            tab: "context",
+            messageId,
+            section: "sources",
+          })
+        }
       >
         [{displayIndex}]
-      </a>
+      </button>
       <span className="chat-citation-preview" role="tooltip">
         <span className="chat-citation-preview-title">{source.title}</span>
         <span className="chat-citation-preview-meta">
@@ -647,15 +488,83 @@ function CitationAnchor({
   );
 }
 
+function SourceSummaryTrigger({
+  messageId,
+  sources,
+  t,
+  onOpenInspector,
+}: {
+  messageId: string;
+  sources: SearchSource[];
+  t: (key: string, values?: Record<string, string | number>) => string;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
+}) {
+  if (!sources.length) {
+    return null;
+  }
+
+  const previewSources = sources.slice(0, 3);
+
+  return (
+    <button
+      type="button"
+      id={getSourceSummaryId(messageId)}
+      className="chat-source-summary-trigger"
+      aria-label={t("inspector.meta.sources", { count: sources.length })}
+      onClick={() =>
+        onOpenInspector({
+          tab: "context",
+          messageId,
+          section: "sources",
+        })
+      }
+    >
+      <span className="chat-source-summary-stack" aria-hidden="true">
+        {previewSources.map((source, index) => (
+          <span
+            key={`${source.url}-${index}`}
+            className="chat-source-summary-stack-item"
+            style={{ zIndex: previewSources.length - index }}
+          >
+            <SourceFavicon source={source} />
+          </span>
+        ))}
+      </span>
+      <span className="chat-source-summary-label">{t("sourcesLabel")}</span>
+      <span className="chat-source-summary-count">{sources.length}</span>
+    </button>
+  );
+}
+
 function AssistantMessageBody({
   message,
   t,
+  onOpenInspector,
 }: {
   message: Message;
-  t: (key: string) => string;
+  t: (key: string, values?: Record<string, string | number>) => string;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
 }) {
   const sources = message.sources ?? [];
   const normalizedContent = normalizeRenderableMarkdown(message.content);
+  if (message.isStreaming && !message.content.trim()) {
+    return (
+      <span className="chat-streaming-placeholder" aria-hidden="true">
+        <span className="typing-dot" />
+        <span className="typing-dot" />
+        <span className="typing-dot" />
+      </span>
+    );
+  }
+
   if (!sources.length || message.isStreaming) {
     return (
       <AnimatedMessageText
@@ -686,6 +595,7 @@ function AssistantMessageBody({
         message={message}
         content={normalizedContent}
         sourceEntries={sourceEntries}
+        onOpenInspector={onOpenInspector}
       />
       {!hasCitationAnchors ? (
         <span className="chat-citation-inline-list">
@@ -704,6 +614,7 @@ function AssistantMessageBody({
                     resolveSourceSummary(source, citationSnippets, index + 1) ||
                     t("sourceNoSummary")
                   }
+                  onOpenInspector={onOpenInspector}
                 />
               </Fragment>
             );
@@ -711,6 +622,267 @@ function AssistantMessageBody({
         </span>
       ) : null}
     </>
+  );
+}
+
+function formatMemoryBadgeLabel(
+  item: MemoryWriteSummaryItem,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  switch (item.badgeKey) {
+    case "long_term":
+      return t("inspector.memory.badge.longTerm");
+    case "temporary":
+      return t("inspector.memory.badge.temporary");
+    case "merged":
+      return t("inspector.memory.badge.merged");
+    default:
+      return t("inspector.memory.badge.notWritten");
+  }
+}
+
+function formatMemoryActionLabel(
+  triageAction: string | null,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  switch (triageAction) {
+    case "create":
+      return t("memory.actionCreate");
+    case "append":
+      return t("memory.actionAppend");
+    case "merge":
+      return t("memory.actionMerge");
+    case "replace":
+      return t("memory.actionReplace");
+    case "discard":
+      return t("memory.actionDiscard");
+    default:
+      return t("memory.resultUnknown");
+  }
+}
+
+function buildMemoryCardSummary(
+  items: MemoryWriteSummaryItem[],
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const longTermCount = items.filter((item) => item.badgeKey === "long_term").length;
+  const temporaryCount = items.filter((item) => item.badgeKey === "temporary").length;
+  const mergedCount = items.filter((item) => item.badgeKey === "merged").length;
+  const notWrittenCount = items.filter((item) => item.badgeKey === "not_written").length;
+
+  const parts: string[] = [];
+  if (longTermCount) {
+    parts.push(t("memory.summary.longTerm", { count: longTermCount }));
+  }
+  if (temporaryCount) {
+    parts.push(t("memory.summary.temporary", { count: temporaryCount }));
+  }
+  if (mergedCount) {
+    parts.push(t("memory.summary.merged", { count: mergedCount }));
+  }
+  if (notWrittenCount) {
+    parts.push(t("memory.summary.notWritten", { count: notWrittenCount }));
+  }
+
+  return parts.join("；");
+}
+
+function InlineThinkingBlock({
+  content,
+  streaming = false,
+  t,
+}: {
+  content: string;
+  streaming?: boolean;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const [isOpen, setIsOpen] = useState(Boolean(streaming && content.trim()));
+  const normalizedContent = normalizeRenderableMarkdown(content);
+
+  return (
+    <section className={`chat-thinking-inline${isOpen ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="chat-thinking-inline-toggle"
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
+      >
+        <span className="chat-thinking-inline-icon" aria-hidden="true">
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 3a6 6 0 0 0-3.47 10.9c.51.38.97 1.03 1.1 1.72L9.75 16h4.5l.12-.38c.13-.69.59-1.34 1.1-1.72A6 6 0 0 0 12 3Z" />
+            <path d="M10 20h4" />
+            <path d="M10.5 16h3" />
+          </svg>
+        </span>
+        <span className="chat-thinking-inline-copy">
+          <span className="chat-thinking-inline-label">
+            {t("thinking.inlineLabel")}
+          </span>
+          <span className="chat-thinking-inline-hint">
+            {isOpen ? t("thinking.inlineCollapse") : t("thinking.inlineExpand")}
+          </span>
+        </span>
+        <span className="chat-thinking-inline-chevron" aria-hidden="true">
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d={isOpen ? "m18 15-6-6-6 6" : "m6 9 6 6 6-6"} />
+          </svg>
+        </span>
+      </button>
+      {isOpen ? (
+        <div className="chat-thinking-inline-body">
+          <div className="chat-thinking-inline-markdown chat-markdown">
+            {streaming ? (
+              <div className="chat-streaming-plaintext">{normalizedContent}</div>
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                components={{
+                  a: ({ href, children }) => (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--console-accent, #6366f1)",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {children}
+                    </a>
+                  ),
+                }}
+              >
+                {normalizedContent}
+              </ReactMarkdown>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MemorySummaryCard({
+  message,
+  items,
+  t,
+  onOpenInspector,
+}: {
+  message: Message;
+  items: MemoryWriteSummaryItem[];
+  t: (key: string, values?: Record<string, string | number>) => string;
+  onOpenInspector: (payload: {
+    tab: InspectorTab;
+    messageId: string;
+    section?: InspectorSection;
+  }) => void;
+}) {
+  const writtenItems = items.filter((item) => item.triageAction !== "discard");
+
+  if (!writtenItems.length) {
+    return null;
+  }
+
+  const visibleItems = writtenItems.slice(0, 3);
+  const summary = buildMemoryCardSummary(writtenItems, t);
+
+  return (
+    <section className="chat-memory-summary-card">
+      <div className="chat-memory-summary-header">
+        <div className="chat-memory-summary-headline">
+          <span className="chat-memory-summary-icon" aria-hidden="true">
+            <svg
+              width={18}
+              height={18}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 8v4l3 3" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+          </span>
+          <div className="chat-memory-summary-copy">
+            <div className="chat-memory-summary-title">{t("memory.remembered")}</div>
+            <div className="chat-memory-summary-subtitle">
+              {summary || t("inspector.memory.description")}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="chat-memory-summary-open"
+          onClick={() =>
+            onOpenInspector({
+              tab: "memory_write",
+              messageId: message.id,
+            })
+          }
+        >
+          {t("memory.openInspector")}
+        </button>
+      </div>
+
+      <div className="chat-memory-summary-list">
+        {visibleItems.map((item) => {
+          const importance = Number.isFinite(item.importance)
+            ? Math.round(item.importance * 100)
+            : null;
+
+          return (
+            <article
+              key={item.id}
+              className={`chat-memory-summary-item is-${item.badgeKey}`}
+            >
+              <div className="chat-memory-summary-item-top">
+                <div className="chat-memory-summary-item-category">
+                  {item.category || t("retrievalKindUnknown")}
+                </div>
+                <div className="chat-memory-summary-item-badges">
+                  <span
+                    className={`chat-memory-summary-badge is-${item.badgeKey}`}
+                  >
+                    {formatMemoryBadgeLabel(item, t)}
+                  </span>
+                  {importance !== null ? (
+                    <span className="chat-memory-summary-score">
+                      {t("memory.importanceValue", { score: importance })}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="chat-memory-summary-item-fact">{item.fact}</div>
+              <div className="chat-memory-summary-item-meta">
+                {t("memory.decisionPrefix")}
+                {formatMemoryActionLabel(item.triageAction, t)}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -722,6 +894,7 @@ export interface ChatMessageListProps {
   messages: Message[];
   onMessagesChange: (msgs: Message[]) => void;
   isTyping: boolean;
+  isCompactViewport?: boolean;
   conversationId?: string | null;
   noConversation: boolean;
   messageInspectorOverrides: Record<string, MessageInspectorOverride>;
@@ -767,6 +940,7 @@ export const ChatMessageList = forwardRef<
     messages,
     onMessagesChange,
     isTyping,
+    isCompactViewport = false,
     conversationId,
     noConversation,
     messageInspectorOverrides,
@@ -930,7 +1104,7 @@ export const ChatMessageList = forwardRef<
   /* ---------- scroll-to-bottom ---------- */
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages, isTyping]);
 
   /* ---------- cleanup on unmount ---------- */
@@ -1017,7 +1191,6 @@ export const ChatMessageList = forwardRef<
       role="log"
       aria-live="polite"
       aria-busy={isTyping}
-      style={{ padding: "16px 24px" }}
     >
       {messages.length === 0 && !isTyping && (
         <div className="chat-empty">
@@ -1041,6 +1214,30 @@ export const ChatMessageList = forwardRef<
           msg.role === "assistant"
             ? buildChatMetaRailItems(msg, messageInspectorOverrides, t)
             : [];
+        const memorySummary =
+          msg.role === "assistant"
+            ? buildMemoryWriteSummary(msg, messageInspectorOverrides, t)
+            : { count: 0, label: null, items: [] };
+        const thinkingSummary =
+          msg.role === "assistant"
+            ? buildThinkingSummary(msg, t)
+            : { label: null, content: null };
+        const promotedMetaRailItems =
+          msg.role === "assistant"
+            ? metaRailItems.filter(
+                (item) =>
+                  item.key !== "sources" &&
+                  item.key !== "memory_write" &&
+                  item.key !== "thinking",
+              )
+            : metaRailItems;
+        const inlineContextItem =
+          msg.role === "assistant" && isCompactViewport
+            ? promotedMetaRailItems.find((item) => item.key === "context") ?? null
+            : null;
+        const supportMetaRailItems = inlineContextItem
+          ? promotedMetaRailItems.filter((item) => item.key !== "context")
+          : promotedMetaRailItems;
 
         return (
           <div
@@ -1060,9 +1257,20 @@ export const ChatMessageList = forwardRef<
             <div className="chat-message-wrapper">
               <div className="chat-message-stack">
                 <div className="chat-message-primary">
+                  {msg.role === "assistant" && thinkingSummary.content ? (
+                    <InlineThinkingBlock
+                      content={thinkingSummary.content}
+                      streaming={Boolean(msg.isStreaming)}
+                      t={t}
+                    />
+                  ) : null}
                   <div className="chat-bubble">
                     {msg.role === "assistant" ? (
-                      <AssistantMessageBody message={msg} t={t} />
+                      <AssistantMessageBody
+                        message={msg}
+                        t={t}
+                        onOpenInspector={onOpenInspector}
+                      />
                     ) : (
                       <AnimatedMessageText
                         text={msg.content}
@@ -1071,6 +1279,25 @@ export const ChatMessageList = forwardRef<
                       />
                     )}
                   </div>
+                  {inlineContextItem ? (
+                    <div className="chat-message-inline-actions">
+                      <button
+                        type="button"
+                        className="chat-meta-chip chat-meta-chip--context chat-meta-chip--inline"
+                        onClick={() =>
+                          onOpenInspector({
+                            tab: inlineContextItem.tab,
+                            section: inlineContextItem.section,
+                            messageId: msg.id,
+                          })
+                        }
+                      >
+                        <span className="chat-meta-chip-label">
+                          {t("inspector.tabs.context")}
+                        </span>
+                      </button>
+                    </div>
+                  ) : null}
                   {showMessageActions ? (
                     <div className="chat-message-hover-actions">
                       <button
@@ -1110,40 +1337,29 @@ export const ChatMessageList = forwardRef<
                 </div>
                 {msg.role === "assistant" ? (
                   <div className="chat-message-support">
+                    {memorySummary.count > 0 ? (
+                      <MemorySummaryCard
+                        message={msg}
+                        items={memorySummary.items}
+                        t={t}
+                        onOpenInspector={onOpenInspector}
+                      />
+                    ) : null}
                     {assistantSources.length ? (
                       <div
                         className="chat-sources-compact"
                         aria-label={t("sourcesLabel")}
                       >
-                        {assistantSources.map((source, index) => {
-                          const displayIndex = getSourceDisplayIndex(
-                            source,
-                            index + 1,
-                          );
-                          return (
-                            <a
-                              key={`${source.url}-${displayIndex}`}
-                              id={getSourceCardId(msg.id, displayIndex)}
-                              className="chat-source-chip"
-                              href={source.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={source.title || source.url}
-                            >
-                              <SourceFavicon source={source} />
-                              <span className="chat-source-chip-domain">
-                                {formatSourceDomain(source)}
-                              </span>
-                              <span className="chat-source-chip-index">
-                                {displayIndex}
-                              </span>
-                            </a>
-                          );
-                        })}
+                        <SourceSummaryTrigger
+                          messageId={msg.id}
+                          sources={assistantSources}
+                          t={t}
+                          onOpenInspector={onOpenInspector}
+                        />
                       </div>
                     ) : null}
                     <ChatMessageMetaRail
-                      items={metaRailItems}
+                      items={supportMetaRailItems}
                       messageId={msg.id}
                       onOpenInspector={onOpenInspector}
                     />

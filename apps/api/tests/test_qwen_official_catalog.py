@@ -51,7 +51,16 @@ def test_generate_snapshot_only_adds_explicit_tools_and_features() -> None:
     by_id = {item["canonical_model_id"]: item for item in snapshot["items"]}
 
     plus = by_id["qwen3.5-plus"]
-    assert plus["supported_tools"] == ["function_calling", "web_search"]
+    assert plus["supported_tools"] == [
+        "code_interpreter",
+        "file_search",
+        "function_calling",
+        "image_search",
+        "mcp",
+        "web_extractor",
+        "web_search",
+        "web_search_image",
+    ]
     assert plus["supported_features"] == ["streaming"]
     assert plus["input_modalities"] == ["text", "image", "video"]
     assert plus["output_modalities"] == ["text"]

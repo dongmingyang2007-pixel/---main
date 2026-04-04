@@ -7,7 +7,7 @@
 - `apps/web`: Next.js 前端
 - `apps/api`: FastAPI + SQLAlchemy 后端 API
 - `docker`: Dockerfiles 与本地完整开发栈 compose（其中 worker 直接复用 `apps/api` 代码）
-- `scripts/dev.sh`: 一键启动本地完整环境
+- `scripts/dev.sh`: 一键启动本机快速开发环境
 
 ## 一键启动
 
@@ -41,6 +41,30 @@ cp .env.example .env
 ./scripts/dev.sh
 ```
 
+默认现在走“本机快速模式”：
+- `postgres`、`redis`、`minio`、`minio-init` 继续通过 Docker Compose 启动
+- `api`、`worker`、`web` 改为本机进程启动，避免每次改代码都重新构建镜像
+- 再次执行同一个命令时，会先停掉旧的本机进程，再用当前文件版本重启
+- `api` 用 `uvicorn --reload`，`web` 用 `next dev`，所以大多数前后端改动本身就会自动热更新
+
+如果你明确想强制重装本机依赖，再执行：
+
+```bash
+./scripts/dev.sh --rebuild
+```
+
+如果你需要把旧进程、旧容器状态一起清掉，并顺手清空本地 Playwright 产物，再执行：
+
+```bash
+./scripts/dev.sh --clean
+```
+
+如果你要回到原来的完整 Docker 构建模式，再执行：
+
+```bash
+./scripts/dev.sh --docker
+```
+
 如果你要启用 Gmail 验证码邮件，再编辑根目录 `.env`，填入：
 
 ```bash
@@ -64,10 +88,13 @@ chmod +x ./scripts/dev.sh
 ```
 
 这个脚本会自动完成：
-- 构建并启动 `web`、`api`、`worker`、`postgres`、`redis`、`minio`、`minio-init`
-- 等待 API 和 Web 都可访问，并且对应容器 healthcheck 进入稳定状态后输出访问地址
-- `web` 容器会先执行基于 webpack 的生产构建，再启动 `next start`，避免本地一键启动时出现 Turbopack 开发态 `ChunkLoadError`
-- 不需要再额外执行 `npm install`、`next dev`、`uvicorn`、`docker compose up` 之类的第二条启动命令
+- 默认启动 `postgres`、`redis`、`minio`、`minio-init` 容器，并本机启动 `api`、`worker`、`web`
+- 每次运行前先轻量清理一次 Docker 的无用残留：停止容器、悬空镜像、构建缓存
+- 自动停掉旧的本机 `api` / `worker` / `web` 进程，避免端口冲突
+- 当 `apps/api/pyproject.toml` 或 `apps/web/package*.json` 变化时，自动补装本机依赖；显式执行 `--rebuild` 时会强制重装
+- 等待 API、Web、Worker 都进入可用状态后再返回
+- 本机日志统一写入 `tmp/dev-local/logs`
+- 如果你明确指定 `--docker`，才会走原来的镜像构建和容器替换逻辑
 
 启动完成后访问：
 - Web: `http://localhost:3000`
@@ -78,9 +105,11 @@ chmod +x ./scripts/dev.sh
 所有端口默认只绑定到 `127.0.0.1`，不会对局域网公开。
 
 说明：
-- 首次启动或前端代码变更后的重建会比开发态慢一些，因为 `web` 服务会在容器内先执行一次 `next build`
-- `./scripts/dev.sh` 会等待 `API` 和 `Web` 都可访问后再返回；通常 `API` 会先就绪，`Web` 会因为 `next build` 稍慢一些
-- 启动时如果看到 `Docker Compose requires buildx plugin to be installed`，当前这套 compose 仍可继续启动；这是警告，不会阻塞本地运行
+- 默认 `./scripts/dev.sh` 不再重建 `web` / `api` / `worker` 镜像，所以本机改代码后的启动速度会明显更快
+- 默认每次运行会做一次轻量 Docker 清理；只有 `--docker` 模式命中磁盘不足时，才会进一步清理未使用的大镜像并自动重试构建
+- `./scripts/dev.sh` 会等待 `API`、`Web`、`Worker` 都可访问后再返回；首次本机依赖安装会慢一些，之后通常只需要数秒
+- `worker` 没有热更新机制；如果你改了 Celery 任务代码，可以继续直接再执行一次 `./scripts/dev.sh`
+- 启动时如果看到 `Docker Compose requires buildx plugin to be installed`，只影响 `--docker` 模式；默认本机快速模式不会构建应用镜像
 
 如果你只是想确认服务是否已经起来，执行：
 
@@ -93,12 +122,15 @@ docker compose -f docker/docker-compose.yml ps
 如果你需要停止整套服务，执行：
 
 ```bash
+pkill -F tmp/dev-local/pids/web.pid 2>/dev/null || true
+pkill -F tmp/dev-local/pids/api.pid 2>/dev/null || true
+pkill -F tmp/dev-local/pids/worker.pid 2>/dev/null || true
 docker compose -f docker/docker-compose.yml down
 ```
 
 说明：
-- 不再推荐把前端单独用 `screen` / `nohup` 常驻起来作为默认开发入口
-- 如果目标是“官网 + Demo + 登录控制台 + API + Worker + 对象存储”整套可用，统一使用 `./scripts/dev.sh`
+- 如果目标是“本机改代码后快速验证整套服务”，直接使用 `./scripts/dev.sh`
+- 如果你要验证真正的容器构建结果，再切到 `./scripts/dev.sh --docker`
 
 默认本地账号：
 - MinIO 用户名：`minioadmin`
@@ -114,10 +146,10 @@ docker compose -f docker/docker-compose.yml down
 
 ## 本地开发默认值
 
-一键启动使用 compose 内置的本地开发配置，核心值包括：
+一键启动默认会把 Docker 内网地址自动换成本机地址，核心值包括：
 - `COOKIE_DOMAIN=""`
 - `COOKIE_SECURE=false`
-- `S3_ENDPOINT=http://minio:9000`
+- `S3_ENDPOINT=http://localhost:9000`
 - `S3_PRESIGN_ENDPOINT=http://localhost:9000`
 - `S3_PRIVATE_BUCKET=qihang-private`
 - `S3_DEMO_BUCKET=qihang-demo`
@@ -126,7 +158,7 @@ docker compose -f docker/docker-compose.yml down
 
 API 启动时会自动建表，因此本地一键启动不需要再手动执行迁移。
 
-如果你想改本地非敏感默认值，可以编辑 [docker-compose.yml](/Users/dog/Desktop/铭润/docker/docker-compose.yml)。涉及密码、JWT、SMTP 这类 secret 时，改根目录 `.env`，不要直接改 compose。`apps/api/.env.example` 和 `apps/web/.env.local.example` 仍保留给非 Docker 手动运行场景。
+如果你想改本地非敏感默认值，优先改根目录 `.env`。涉及密码、JWT、SMTP 这类 secret 时，也统一改根目录 `.env`。`./scripts/dev.sh` 在默认本机快速模式下会自动读取这个文件，并把 `postgres` / `redis` / `minio` / `api` 这些 Docker 内网地址改写成对应的 `localhost` 地址。只有在 `--docker` 模式下，才直接按 compose 内部地址运行。
 
 ## Gmail SMTP 与部署
 
@@ -249,7 +281,9 @@ colima start
 docker context use colima
 ```
 
-- `./scripts/dev.sh` 卡住：先执行 `docker compose -f docker/docker-compose.yml logs -f` 看具体服务日志。
+- `./scripts/dev.sh` 卡住：先执行 `docker compose -f docker/docker-compose.yml logs -f` 看具体服务日志；如果刚改过前后端文件，脚本这次可能正在自动重建镜像。
+- `docker-web` 卡在 `RUN npm ci`：第一次构建通常最慢，`sharp` 之类的依赖会在安装阶段下载或校验原生二进制。现在 `docker/Dockerfile.web` 会对 `npm ci` 自动重试 3 次，并支持通过根目录 `.env` 里的 `NPM_CONFIG_REGISTRY` 切换 registry；如果想确认不是假卡住，可单独执行 `docker compose --progress=plain -f docker/docker-compose.yml build web` 看详细进度。
+- `docker-web` 报 `npm ERR! ECONNRESET` / `network aborted`：这是 Docker 构建期连 npm registry 被重置。优先在根目录 `.env` 里设置 `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com`，然后重新执行 `docker compose -f docker/docker-compose.yml build web`。
 - Cookie 不生效：检查 `COOKIE_DOMAIN`、`COOKIE_SECURE`、`CORS_ORIGINS` 是否仍是本地默认值。
 - 上传失败：确认 MinIO 可访问，且 bucket 名称为 `qihang-private` / `qihang-demo`。
 - 浏览器出现对象存储或跨域错误：检查 `NEXT_PUBLIC_ASSET_ORIGIN`、`S3_PRESIGN_ENDPOINT`、CSP 和本地端口是否一致。

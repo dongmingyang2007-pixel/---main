@@ -137,6 +137,8 @@ class RealtimeTranscriptionBridge:
 
                 if event_type == "input_audio_buffer.speech_started":
                     self._partial_transcript = ""
+                elif event_type == "input_audio_buffer.speech_stopped":
+                    await self._events.put({"type": "speech_stopped", "text": ""})
                 elif event_type == "conversation.item.input_audio_transcription.text":
                     confirmed = str(event.get("text", ""))
                     speculative = str(event.get("stash", ""))

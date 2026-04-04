@@ -23,6 +23,12 @@ import {
   isSummaryMemoryNode,
 } from "@/hooks/useGraphData";
 import { formatRelativeTime } from "@/lib/format-time";
+import {
+  dedupeDisplayLabels,
+  formatLocalizedCategorySegmentLabel,
+  formatLocalizedMemoryKindLabel,
+  formatLocalizedSubjectKindLabel,
+} from "@/lib/memory-labels";
 
 interface MemoryListViewProps {
   nodes: MemoryNode[];
@@ -103,18 +109,7 @@ function getMemoryKindLabel(
   kind: string | null,
   t: (key: string) => string,
 ): string {
-  const labels: Record<string, string> = {
-    profile: t("memory.kindProfile"),
-    preference: t("memory.kindPreference"),
-    goal: t("memory.kindGoal"),
-    episodic: t("memory.kindEpisodic"),
-    fact: t("memory.kindFact"),
-    summary: t("memory.kindSummary"),
-  };
-  if (!kind) {
-    return t("memory.kindUnknown");
-  }
-  return labels[kind] || kind;
+  return formatLocalizedMemoryKindLabel(kind, t, "memory");
 }
 
 function getNodeActivityAt(node: MemoryNode): number {
@@ -204,6 +199,7 @@ function buildTree(
   nodes: MemoryNode[],
   nodeMap: Map<string, MemoryNode>,
   uncategorizedLabel: string,
+  formatSegmentLabel: (segment: string) => string,
 ): TreeBranch[] {
   const root = createBranchDraft("root", [], -1);
 
@@ -218,7 +214,7 @@ function buildTree(
       const id = nextSegments.join("::");
       let branch = current.children.get(id);
       if (!branch) {
-        branch = createBranchDraft(segment, nextSegments, index);
+        branch = createBranchDraft(formatSegmentLabel(segment), nextSegments, index);
         current.children.set(id, branch);
       }
       current = branch;
@@ -263,8 +259,11 @@ function flattenTree(
   return entries;
 }
 
-function getBranchPathLabel(branch: TreeBranch): string {
-  return branch.segments.join(" / ");
+function getBranchPathLabel(
+  branch: TreeBranch,
+  formatSegmentLabel: (segment: string) => string,
+): string {
+  return branch.segments.map((segment) => formatSegmentLabel(segment)).join(" / ");
 }
 
 function getBranchIdFromNode(
@@ -280,12 +279,13 @@ function compactPathLabel(
   node: MemoryNode,
   nodeMap: Map<string, MemoryNode>,
   uncategorizedLabel: string,
+  formatSegmentLabel: (segment: string) => string,
 ): string {
   const segments = getHierarchySegments(node, nodeMap, uncategorizedLabel);
   if (segments.length === 0) {
     return uncategorizedLabel;
   }
-  return segments.join(" / ");
+  return segments.map((segment) => formatSegmentLabel(segment)).join(" / ");
 }
 
 function getHierarchySegments(
@@ -327,6 +327,10 @@ export default function MemoryListView({
 }: MemoryListViewProps) {
   const t = useTranslations("console");
   const uncategorizedLabel = t("memory.uncategorized");
+  const formatCategorySegmentLabel = useMemo(
+    () => (segment: string) => formatLocalizedCategorySegmentLabel(segment, t, "memory"),
+    [t],
+  );
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
@@ -382,8 +386,8 @@ export default function MemoryListView({
   }, [memoryNodes, activeFilter, deferredSearch]);
 
   const tree = useMemo(
-    () => buildTree(filteredNodes, nodeMap, uncategorizedLabel),
-    [filteredNodes, nodeMap, uncategorizedLabel],
+    () => buildTree(filteredNodes, nodeMap, uncategorizedLabel, formatCategorySegmentLabel),
+    [filteredNodes, formatCategorySegmentLabel, nodeMap, uncategorizedLabel],
   );
 
   const branchMap = useMemo(() => {
@@ -476,6 +480,36 @@ export default function MemoryListView({
   const selectedSummaryCount = selectedNode
     ? getSummarySourceCount(selectedNode)
     : 0;
+  const selectedSubjectKindLabel = selectedNode
+    ? formatLocalizedSubjectKindLabel(selectedNode.subject_kind, t, "memory")
+    : "";
+  const selectedNodeBadges = !selectedNode
+    ? []
+    : dedupeDisplayLabels([
+        {
+          label:
+            selectedNode.type === "permanent"
+              ? t("memory.permanentLabel")
+              : t("memory.temporaryLabel"),
+          className: "memory-detail-type-badge",
+        },
+        {
+          label: getMemoryRoleLabel(selectedRole, t),
+          className: "memory-detail-type-badge",
+        },
+        ...(selectedSubjectKindLabel
+          ? [{ label: selectedSubjectKindLabel, className: "memory-detail-type-badge" }]
+          : []),
+        ...(selectedRole !== "summary"
+          ? [{ label: getMemoryKindLabel(selectedKind, t), className: "memory-detail-type-badge" }]
+          : []),
+        ...(isSummaryMemoryNode(selectedNode)
+          ? [{ label: t("memory.summaryBadge"), className: "memory-detail-type-badge is-summary" }]
+          : []),
+        ...(isPinnedMemoryNode(selectedNode)
+          ? [{ label: t("memory.pinnedBadge"), className: "memory-detail-type-badge is-pinned" }]
+          : []),
+      ]);
 
   const filters: { key: FilterKey; labelKey: string }[] = [
     { key: "all", labelKey: "memory.filterAll" },
@@ -726,7 +760,7 @@ export default function MemoryListView({
               </span>
               <h2 className="memory-focus-title">{selectedBranch.label}</h2>
               <div className="memory-focus-meta">
-                <span>{getBranchPathLabel(selectedBranch)}</span>
+                <span>{getBranchPathLabel(selectedBranch, formatCategorySegmentLabel)}</span>
                 {selectedBranch.latestActivityAt > 0 ? (
                   <span>
                     {t("memory.lastUsed")}{" "}
@@ -740,7 +774,7 @@ export default function MemoryListView({
               <div className="memory-focus-badges">
                 {selectedBranch.segments.map((segment) => (
                   <span key={segment} className="memory-detail-type-badge">
-                    {segment}
+                    {formatCategorySegmentLabel(segment)}
                   </span>
                 ))}
               </div>
@@ -812,7 +846,7 @@ export default function MemoryListView({
                     >
                       <div className="memory-focus-list-copy">
                         <strong>{branch.label}</strong>
-                        <span>{getBranchPathLabel(branch)}</span>
+                        <span>{getBranchPathLabel(branch, formatCategorySegmentLabel)}</span>
                       </div>
                       <div className="memory-focus-list-meta">
                         <span>{branch.descendantCount}</span>
@@ -834,38 +868,20 @@ export default function MemoryListView({
                 {t("memory.listSelectedMemory")}
               </span>
               <div className="memory-focus-badges">
-                <span className="memory-detail-type-badge">
-                  {selectedNode.type === "permanent"
-                    ? t("memory.permanentLabel")
-                    : t("memory.temporaryLabel")}
-                </span>
-                <span className="memory-detail-type-badge">
-                  {getMemoryRoleLabel(selectedRole, t)}
-                </span>
-                {selectedNode.subject_kind ? (
-                  <span className="memory-detail-type-badge">
-                    {selectedNode.subject_kind}
+                {selectedNodeBadges.map((badge) => (
+                  <span key={`${badge.className}:${badge.label}`} className={badge.className}>
+                    {badge.label}
                   </span>
-                ) : null}
-                {selectedRole !== "summary" ? (
-                  <span className="memory-detail-type-badge">
-                    {getMemoryKindLabel(selectedKind, t)}
-                  </span>
-                ) : null}
-                {isSummaryMemoryNode(selectedNode) ? (
-                  <span className="memory-detail-type-badge is-summary">
-                    {t("memory.summaryBadge")}
-                  </span>
-                ) : null}
-                {isPinnedMemoryNode(selectedNode) ? (
-                  <span className="memory-detail-type-badge is-pinned">
-                    {t("memory.pinnedBadge")}
-                  </span>
-                ) : null}
+                ))}
               </div>
               <div className="memory-focus-meta">
                 <span>
-                  {compactPathLabel(selectedNode, nodeMap, uncategorizedLabel)}
+                  {compactPathLabel(
+                    selectedNode,
+                    nodeMap,
+                    uncategorizedLabel,
+                    formatCategorySegmentLabel,
+                  )}
                 </span>
                 {selectedSubjectNode && !isSubjectMemoryNode(selectedNode) ? (
                   <span>
@@ -966,7 +982,12 @@ export default function MemoryListView({
                       <div className="memory-focus-list-copy">
                         <strong>{node.content}</strong>
                         <span>
-                          {compactPathLabel(node, nodeMap, uncategorizedLabel)}
+                          {compactPathLabel(
+                            node,
+                            nodeMap,
+                            uncategorizedLabel,
+                            formatCategorySegmentLabel,
+                          )}
                         </span>
                       </div>
                       <div className="memory-focus-list-meta">
@@ -1005,7 +1026,7 @@ export default function MemoryListView({
             <div className="memory-inspector-group">
               <div className="memory-inspector-row">
                 <span>{t("memory.listBranchPath")}</span>
-                <strong>{getBranchPathLabel(selectedBranch)}</strong>
+                <strong>{getBranchPathLabel(selectedBranch, formatCategorySegmentLabel)}</strong>
               </div>
               <div className="memory-inspector-row">
                 <span>{t("memory.listStructureDepth")}</span>
@@ -1041,7 +1062,12 @@ export default function MemoryListView({
               <div className="memory-inspector-row">
                 <span>{t("memory.listBranchPath")}</span>
                 <strong>
-                  {compactPathLabel(selectedNode, nodeMap, uncategorizedLabel)}
+                  {compactPathLabel(
+                    selectedNode,
+                    nodeMap,
+                    uncategorizedLabel,
+                    formatCategorySegmentLabel,
+                  )}
                 </strong>
               </div>
               <div className="memory-inspector-row">
@@ -1088,7 +1114,7 @@ export default function MemoryListView({
               {selectedNode.subject_kind ? (
                 <div className="memory-inspector-row">
                   <span>{t("memory.listSubjectKind")}</span>
-                  <strong>{selectedNode.subject_kind}</strong>
+                  <strong>{selectedSubjectKindLabel}</strong>
                 </div>
               ) : null}
               <div className="memory-inspector-row">

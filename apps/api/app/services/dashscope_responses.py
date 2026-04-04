@@ -22,6 +22,19 @@ from app.services.dashscope_client import (
 from app.services.dashscope_http import DASHSCOPE_RESPONSES_BASE_URL, dashscope_headers, get_client
 
 
+_RESPONSES_SOURCE_TOOL_TYPES = {
+    "web_search_call": "web_search",
+    "web_search_image_call": "web_search_image",
+    "image_search_call": "image_search",
+    "web_extractor_call": "web_extractor",
+    "file_search_call": "file_search",
+    "file_search_results": "file_search",
+    "code_interpreter_call": "code_interpreter",
+    "code_interpreter_output": "code_interpreter",
+    "mcp_call": "mcp",
+}
+
+
 @dataclass(slots=True)
 class ResponsesStreamChunk:
     content: str = ""
@@ -177,7 +190,22 @@ def _extract_reasoning_text(item: dict[str, Any]) -> str:
 def _normalize_response_source(item: Any, fallback_index: int) -> SearchSource | None:
     if not isinstance(item, dict):
         return None
-    url = _coerce_nonempty_text(item.get("url"))
+    image_value = item.get("image_url")
+    if isinstance(image_value, dict):
+        image_value = image_value.get("url")
+    thumbnail_value = item.get("thumbnail_url")
+    if isinstance(thumbnail_value, dict):
+        thumbnail_value = thumbnail_value.get("url")
+    image_url = _coerce_nonempty_text(image_value)
+    thumbnail_url = _coerce_nonempty_text(thumbnail_value)
+    url = (
+        _coerce_nonempty_text(item.get("url"))
+        or _coerce_nonempty_text(item.get("source_url"))
+        or _coerce_nonempty_text(item.get("page_url"))
+        or _coerce_nonempty_text(item.get("link"))
+        or image_url
+        or thumbnail_url
+    )
     if not url:
         return None
     hostname = urlparse(url).hostname or ""
@@ -185,6 +213,7 @@ def _normalize_response_source(item: Any, fallback_index: int) -> SearchSource |
     title = (
         _coerce_nonempty_text(item.get("title"))
         or _coerce_nonempty_text(item.get("name"))
+        or _coerce_nonempty_text(item.get("label"))
         or domain
         or url
     )
@@ -193,25 +222,53 @@ def _normalize_response_source(item: Any, fallback_index: int) -> SearchSource |
         title=title,
         url=url,
         domain=domain,
-        site_name=domain or None,
-        summary=_coerce_nonempty_text(item.get("summary")) or _coerce_nonempty_text(item.get("snippet")),
+        site_name=_coerce_nonempty_text(item.get("site_name")) or domain or None,
+        summary=(
+            _coerce_nonempty_text(item.get("summary"))
+            or _coerce_nonempty_text(item.get("snippet"))
+            or _coerce_nonempty_text(item.get("description"))
+            or _coerce_nonempty_text(item.get("caption"))
+            or _coerce_nonempty_text(item.get("text"))
+        ),
         icon=_coerce_nonempty_text(item.get("icon")),
+        tool_type=_coerce_nonempty_text(item.get("tool_type")),
+        image_url=image_url,
+        thumbnail_url=thumbnail_url,
     )
 
 
 def _extract_response_search_sources(item: dict[str, Any]) -> list[SearchSource]:
     sources: list[SearchSource] = []
-    candidates = item.get("sources")
-    if not isinstance(candidates, list):
-        action = item.get("action")
-        if isinstance(action, dict):
-            candidates = action.get("sources")
-    if not isinstance(candidates, list):
-        return []
-    for index, source in enumerate(candidates, start=1):
-        normalized = _normalize_response_source(source, index)
-        if normalized:
-            sources.append(normalized)
+    item_type = str(item.get("type") or "").lower()
+    tool_type = _RESPONSES_SOURCE_TOOL_TYPES.get(item_type)
+    candidate_groups: list[list[Any]] = []
+
+    def _append_candidates(value: Any) -> None:
+        if isinstance(value, list):
+            candidate_groups.append(value)
+        elif isinstance(value, dict):
+            candidate_groups.append([value])
+
+    for key in ("sources", "results", "search_results"):
+        _append_candidates(item.get(key))
+    action = item.get("action")
+    if isinstance(action, dict):
+        for key in ("sources", "results", "search_results"):
+            _append_candidates(action.get(key))
+        if tool_type == "web_extractor":
+            _append_candidates(action)
+    if tool_type and not candidate_groups:
+        _append_candidates(item)
+    for candidates in candidate_groups:
+        for index, source in enumerate(candidates, start=1):
+            if isinstance(source, dict) and tool_type and "tool_type" not in source:
+                source = {
+                    **source,
+                    "tool_type": tool_type,
+                }
+            normalized = _normalize_response_source(source, index)
+            if normalized:
+                sources.append(normalized)
     return merge_search_sources(sources)
 
 
@@ -287,8 +344,9 @@ def _parse_responses_result(data: dict[str, Any]) -> ChatCompletionResult:
             if tool_call:
                 tool_calls.append(tool_call)
             continue
-        if item_type == "web_search_call":
+        if item_type in _RESPONSES_SOURCE_TOOL_TYPES:
             search_sources = merge_search_sources(search_sources, _extract_response_search_sources(item))
+            continue
 
     finish_reason = _coerce_nonempty_text(data.get("status"))
     return ChatCompletionResult(
@@ -432,7 +490,7 @@ async def responses_completion_stream(
                             if tool_call and tool_call.id not in seen_tool_call_ids:
                                 seen_tool_call_ids.add(tool_call.id)
                                 yield ResponsesStreamChunk(tool_calls=[tool_call])
-                        elif item_type == "web_search_call":
+                        elif item_type in _RESPONSES_SOURCE_TOOL_TYPES:
                             sources = _extract_response_search_sources(item)
                             if sources:
                                 yield ResponsesStreamChunk(search_sources=sources)

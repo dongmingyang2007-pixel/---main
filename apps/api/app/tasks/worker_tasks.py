@@ -12,21 +12,14 @@ from sqlalchemy import text as sql_text
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models import (
-    Artifact,
     Conversation,
     DataItem,
     Dataset,
-    Embedding,
     Memory,
     MemoryEdge,
-    MemoryFile,
     Message,
-    Model,
     ModelVersion,
-    PipelineConfig,
     Project,
-    TrainingJob,
-    TrainingRun,
 )
 from app.services.audit import write_audit_log
 from app.services.memory_graph_events import (
@@ -37,22 +30,23 @@ from app.services.memory_metadata import (
     ACTIVE_NODE_STATUS,
     CONCEPT_NODE_KIND,
     FACT_NODE_TYPE,
+    MEMORY_KIND_FACT,
     MEMORY_KIND_GOAL,
     MEMORY_KIND_PREFERENCE,
-    get_lineage_key,
     get_memory_kind,
     get_subject_kind,
     get_subject_memory_id,
     is_active_memory,
     is_concept_memory,
     is_fact_memory,
+    is_pinned_memory,
     is_subject_memory,
     normalize_memory_metadata,
     set_manual_parent_binding,
+    split_category_segments,
 )
 from app.services.memory_related_edges import ensure_project_prerequisite_edges, ensure_project_related_edges
 from app.services.memory_roots import (
-    ensure_project_assistant_root,
     ensure_project_subject,
     ensure_project_user_subject,
     is_assistant_root_memory,
@@ -413,24 +407,29 @@ TRIAGE_PROMPT = """你是记忆管理器。判断一条新事实与已有记忆�
 - conflict 时 merged_content 必须为 null"""
 
 _CONCEPT_PARENT_SUPPORTED_KINDS = {
+    MEMORY_KIND_FACT,
     MEMORY_KIND_PREFERENCE,
     MEMORY_KIND_GOAL,
 }
 
-CONCEPT_TOPIC_PROMPT = """你是记忆结构规划器。给定一条用户事实，判断是否值得抽出一个更泛化的父级主题节点。
+CONCEPT_TOPIC_PROMPT = """你是记忆结构规划器。给定一条事实及其所属主体，判断是否值得抽出一个更泛化的父级主题节点。
+
+主体：{subject_label}
+主体类型：{subject_kind}
 
 事实：{fact}
 分类：{category}
 记忆类型：{memory_kind}
 
 输出 JSON：
-{{"topic": "更泛化但仍紧密相关的主题词", "confidence": 0.0, "reason": "一句话说明"}}
+{{"topic": "用于去重的稳定主题词", "label": "展示给用户看的概念名", "confidence": 0.0, "reason": "一句话说明"}}
 
 规则：
 - 只有在父级主题和原事实具有明确归属关系时才输出 topic，否则返回 null
+- topic 必须稳定、短、可复用，用来避免同主题反复创建多个 concept
+- label 用于显示，可以比 topic 更自然一点，但仍需简短，不要整句
 - topic 必须比原事实更泛化，但不能跨话题
-- topic 要短，优先名词或名词短语，不要整句
-- 如果只是同义改写、无法安全泛化、或父子关系会显得牵强，返回 {{"topic": null, "confidence": 0.0, "reason": "..."}}"""
+- 如果只是同义改写、无法安全泛化、或父子关系会显得牵强，返回 {{"topic": null, "label": null, "confidence": 0.0, "reason": "..."}}"""
 
 APPEND_PARENT_VALIDATION_PROMPT = """你是记忆层级校验器。判断“候选记忆”能不能作为“新事实”的父节点。
 
@@ -569,6 +568,13 @@ _STABLE_GOAL_FACT_PATTERN = re.compile(
 )
 _QUOTED_SUBJECT_PATTERN = re.compile(r"[《“\"]([^》”\"]{2,48})[》”\"]")
 _SUBJECT_REFERENCE_HINTS = (
+    "这个角色",
+    "这个人物",
+    "这位人物",
+    "这个人",
+    "这个人设",
+    "这个设定",
+    "这个背景",
     "这本书",
     "这门课",
     "这个课程",
@@ -612,6 +618,13 @@ _CATEGORY_SUBJECT_KIND_HINTS: tuple[tuple[str, str], ...] = (
     ("领域", "domain"),
 )
 _GENERIC_SUBJECT_LABELS = {
+    "这个",
+    "这位",
+    "那个",
+    "那位",
+    "这个角色",
+    "这个人物",
+    "这个人",
     "这本书",
     "这个项目",
     "这个理论",
@@ -625,6 +638,105 @@ _GENERIC_SUBJECT_LABELS = {
     "设备",
     "系统",
 }
+_GENERIC_SUBJECT_QUERY_PATTERNS: tuple[tuple[re.Pattern[str], str | None], ...] = (
+    (
+        re.compile(
+            r"^(?:(?:最近|今天|突然|忽然|刚刚|现在|一直|我|又|还|再)\s*){0,4}(?:想聊|又想聊|还想聊|想再聊聊)\s*([A-Za-z0-9\u4e00-\u9fff·._\-]{2,48})"
+        ),
+        None,
+    ),
+    (
+        re.compile(
+            r"^(?:再)?(?:关于|聊聊|说说|讲讲|介绍(?:一下)?|科普(?:一下)?|分析(?:一下)?|讨论(?:一下)?|看看|想了解|想知道|研究(?:一下)?)\s*([A-Za-z0-9\u4e00-\u9fff·._\-]{2,48})"
+        ),
+        None,
+    ),
+    (
+        re.compile(
+            r"([A-Za-z0-9\u4e00-\u9fff·._\-]{2,48})的(?:[^，。！？,.!?]{0,24})?(?:设定|剧情|背景|技能|能力)"
+        ),
+        None,
+    ),
+    (
+        re.compile(
+            r"([A-Za-z0-9\u4e00-\u9fff·._\-]{2,48})(?:为什么|怎么样|是谁|是什么|如何)"
+        ),
+        None,
+    ),
+    (
+        re.compile(
+            r"([A-Za-z0-9\u4e00-\u9fff·._\-]{2,48})(?:这个|这位)?(角色|人物|人|作品|游戏|动漫)"
+        ),
+        None,
+    ),
+)
+_SUBJECT_SUFFIX_KIND_HINTS: dict[str, str] = {
+    "角色": "person",
+    "人物": "person",
+    "人": "person",
+    "作品": "custom",
+    "游戏": "project",
+    "动漫": "custom",
+}
+_BEHAVIORAL_INTEREST_QUERY_HINTS = (
+    "?",
+    "？",
+    "关于",
+    "聊聊",
+    "说说",
+    "讲讲",
+    "介绍",
+    "科普",
+    "分析",
+    "讨论",
+    "想了解",
+    "想知道",
+    "为什么",
+    "如何",
+    "怎么",
+    "设定",
+    "剧情",
+    "背景",
+    "技能",
+    "能力",
+    "是谁",
+    "是什么",
+)
+_BEHAVIORAL_INTEREST_CATEGORY_BY_KIND: dict[str, str] = {
+    "book": "偏好.关注.书籍",
+    "course": "偏好.关注.课程",
+    "project": "偏好.关注.项目",
+    "theory": "偏好.关注.理论",
+    "paper": "偏好.关注.论文",
+    "device": "偏好.关注.设备",
+    "person": "偏好.关注.人物",
+    "domain": "偏好.关注.领域",
+}
+_NON_USER_FACT_PREDICATE_PREFIXES = (
+    "是",
+    "有",
+    "在",
+    "很",
+    "比较",
+    "更",
+    "最",
+    "并",
+    "会",
+    "能",
+    "可",
+    "让人",
+    "令人",
+    "显得",
+    "看起来",
+    "属于",
+    "来自",
+    "位于",
+    "放在",
+    "拥有",
+    "带有",
+    "不是",
+    "并不",
+)
 
 
 def _normalize_extracted_fact_text(value: str) -> str:
@@ -634,14 +746,127 @@ def _normalize_extracted_fact_text(value: str) -> str:
     return normalized
 
 
+def _looks_like_predicate_only_fact(value: str) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    return normalized.startswith(_NON_USER_FACT_PREDICATE_PREFIXES)
+
+
+def _canonicalize_fact_text_for_storage(
+    *,
+    fact_text: str,
+    user_message: str,
+    subject_memory: Memory | None,
+    subject_resolution: str,
+) -> str:
+    normalized = _normalize_extracted_fact_text(fact_text)
+    if not normalized or _looks_like_user_fact(normalized) or subject_memory is None:
+        return normalized
+
+    subject_label = _normalize_subject_label(subject_memory.content)
+    subject_kind = get_subject_kind(subject_memory)
+    if not subject_label or subject_kind == "user" or subject_label in normalized:
+        return normalized
+
+    rewritten = normalized
+    prefix_replacements = (
+        ("她的", f"{subject_label}的"),
+        ("他的", f"{subject_label}的"),
+        ("它的", f"{subject_label}的"),
+        ("TA的", f"{subject_label}的"),
+        ("ta的", f"{subject_label}的"),
+        ("这个角色的", f"{subject_label}的"),
+        ("这个人物的", f"{subject_label}的"),
+        ("这个人的", f"{subject_label}的"),
+        ("这位人物的", f"{subject_label}的"),
+        ("这位的", f"{subject_label}的"),
+        ("该角色的", f"{subject_label}的"),
+        ("该人物的", f"{subject_label}的"),
+        ("该人的", f"{subject_label}的"),
+        ("这个人设", f"{subject_label}的人设"),
+        ("这个设定", f"{subject_label}的设定"),
+        ("这个背景", f"{subject_label}的背景"),
+        ("她", subject_label),
+        ("他", subject_label),
+        ("它", subject_label),
+        ("TA", subject_label),
+        ("ta", subject_label),
+        ("这个角色", subject_label),
+        ("这个人物", subject_label),
+        ("这个人", subject_label),
+        ("这位人物", subject_label),
+        ("这位", subject_label),
+        ("该角色", subject_label),
+        ("该人物", subject_label),
+        ("该人", subject_label),
+    )
+    for source, target in prefix_replacements:
+        if rewritten.startswith(source):
+            rewritten = f"{target}{rewritten[len(source):]}"
+            break
+
+    if rewritten == normalized:
+        inline_replacements = (
+            ("她的", f"{subject_label}的"),
+            ("他的", f"{subject_label}的"),
+            ("它的", f"{subject_label}的"),
+            ("TA的", f"{subject_label}的"),
+            ("ta的", f"{subject_label}的"),
+            ("这个角色的", f"{subject_label}的"),
+            ("这个人物的", f"{subject_label}的"),
+            ("这个人的", f"{subject_label}的"),
+            ("这位人物的", f"{subject_label}的"),
+            ("该角色的", f"{subject_label}的"),
+            ("该人物的", f"{subject_label}的"),
+            ("该人的", f"{subject_label}的"),
+        )
+        for source, target in inline_replacements:
+            rewritten = rewritten.replace(source, target)
+
+    if (
+        subject_label not in rewritten
+        and (
+            _is_deictic_subject_reference(user_message)
+            or subject_resolution in {"conversation_focus_subject", "non_user_focus_fallback"}
+        )
+        and _looks_like_predicate_only_fact(rewritten)
+    ):
+        rewritten = f"{subject_label}{rewritten}"
+
+    return _normalize_extracted_fact_text(rewritten)
+
+
 def _normalize_subject_label(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(value or "").strip())
     cleaned = cleaned.strip("，。、“”‘’\"'`()（）[]【】<>《》:：;；,.!?！？")
     if not cleaned or cleaned in _GENERIC_SUBJECT_LABELS:
         return ""
+    if re.match(r"^(?:她|他|它|TA|ta)(?:$|的)", cleaned):
+        return ""
+    if re.match(r"^(?:这个|这位|该)(?:$|角色|人物|人|人设|设定|背景)", cleaned):
+        return ""
     if len(cleaned) > 48:
         return ""
     return cleaned
+
+
+def _trim_generic_subject_candidate(value: str) -> str:
+    cleaned = str(value or "").strip()
+    cleaned = re.sub(r"^(?:还有|另外|顺便|以及|再(?:聊聊|讲讲|说说)?)", "", cleaned).strip()
+    cleaned = re.sub(
+        r"的(?:设定|剧情|背景|技能|能力)(?:和(?:设定|剧情|背景|技能|能力))*$",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?:这个|这位)?(?:角色|人物|人|作品|游戏|动漫)(?:的?(?:设定|剧情|背景|技能|能力))?$",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?:是谁|是什么|怎么样|如何|为什么|吗|呢|啊|呀|吧)$", "", cleaned)
+    cleaned = re.sub(r"(?:的设定|的剧情|的背景|的技能|的能力)$", "", cleaned)
+    return _normalize_subject_label(cleaned)
 
 
 def _looks_like_user_fact(fact_text: str) -> bool:
@@ -716,6 +941,22 @@ def _extract_subject_hint(*, text: str, category: str) -> tuple[str | None, str 
         if not label:
             continue
         kind = _infer_subject_kind(raw_text, category) or default_kind
+        return label, kind
+
+    for pattern, default_kind in _GENERIC_SUBJECT_QUERY_PATTERNS:
+        match = pattern.search(raw_text)
+        if not match:
+            continue
+        label = _trim_generic_subject_candidate(match.group(1))
+        if not label:
+            continue
+        suffix = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+        kind = (
+            _infer_subject_kind(raw_text, category)
+            or _SUBJECT_SUFFIX_KIND_HINTS.get(str(suffix or "").strip(), "")
+            or default_kind
+            or "custom"
+        )
         return label, kind
 
     return None, None
@@ -841,6 +1082,240 @@ def _load_subject_memory(
     return subject
 
 
+def _query_signals_topic_interest(text: str) -> bool:
+    haystack = str(text or "").strip().lower()
+    if not haystack:
+        return False
+    return any(token in haystack for token in _BEHAVIORAL_INTEREST_QUERY_HINTS)
+
+
+def _message_mentions_subject_label(text: str, *, label_key: str) -> bool:
+    if not label_key:
+        return False
+    return label_key in _normalize_text_key(text)
+
+
+def _count_subject_mentions_by_conversation(
+    db,
+    *,
+    workspace_id: str,
+    project_id: str,
+    owner_user_id: str | None,
+    label_key: str,
+    limit: int = 120,
+) -> dict[str, int]:
+    if not owner_user_id or not label_key:
+        return {}
+
+    rows = (
+        db.query(Message.content, Message.conversation_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .filter(
+            Conversation.workspace_id == workspace_id,
+            Conversation.project_id == project_id,
+            Conversation.created_by == owner_user_id,
+            Message.role == "user",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    counts: dict[str, int] = {}
+    for content, message_conversation_id in rows:
+        if not _message_mentions_subject_label(content, label_key=label_key):
+            continue
+        counts[message_conversation_id] = counts.get(message_conversation_id, 0) + 1
+    return counts
+
+
+def _facts_already_capture_subject_interest(
+    facts: list[dict[str, object]],
+    *,
+    label_key: str,
+) -> bool:
+    if not label_key:
+        return False
+    for fact in facts:
+        fact_text = _normalize_text_key(str(fact.get("fact") or ""))
+        if not fact_text or label_key not in fact_text:
+            continue
+        category = str(fact.get("category") or "")
+        if any(token in fact_text for token in ("喜欢", "偏好", "热爱", "感兴趣")) or "偏好" in category:
+            return True
+    return False
+
+
+def _build_behavioral_interest_fact_text(subject_label: str) -> str:
+    normalized_label = _normalize_subject_label(subject_label)
+    if not normalized_label:
+        return ""
+    return f"用户对{normalized_label}感兴趣。"
+
+
+def _build_behavioral_interest_category(subject_kind: str | None) -> str:
+    normalized_kind = str(subject_kind or "").strip().lower()
+    return _BEHAVIORAL_INTEREST_CATEGORY_BY_KIND.get(normalized_kind, "偏好.关注")
+
+
+def _build_behavioral_interest_reason(
+    *,
+    subject_label: str,
+    same_conversation_turns: int,
+    distinct_conversations: int,
+) -> str:
+    if distinct_conversations >= 2:
+        return (
+            f"基于用户在 {distinct_conversations} 个对话里反复围绕「{subject_label}」提问，"
+            "推断这是稳定关注主题。"
+        )
+    return f"基于用户在当前对话中连续 {same_conversation_turns} 轮围绕「{subject_label}」提问，推断这是持续关注主题。"
+
+
+def _infer_behavioral_interest_fact(
+    db,
+    *,
+    project: Project,
+    conversation: Conversation,
+    workspace_id: str,
+    project_id: str,
+    user_message: str,
+    extracted_facts: list[dict[str, object]],
+) -> tuple[dict[str, object] | None, bool]:
+    if not _query_signals_topic_interest(user_message):
+        return None, False
+
+    conversation_meta = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+    primary_subject_id = str(conversation_meta.get("primary_subject_id") or "").strip() or None
+    primary_subject = _load_subject_memory(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        owner_user_id=conversation.created_by,
+        subject_id=primary_subject_id,
+    )
+    if primary_subject is not None and get_subject_kind(primary_subject) == "user":
+        primary_subject = None
+
+    subject = None
+    subject_label = ""
+    subject_kind: str | None = None
+    current_message_is_lexical_hit = False
+
+    if primary_subject is not None:
+        subject = primary_subject
+        subject_label = primary_subject.content.strip()
+        subject_kind = get_subject_kind(primary_subject)
+        label_key = _normalize_text_key(subject_label)
+        current_message_is_lexical_hit = _message_mentions_subject_label(user_message, label_key=label_key)
+        if not current_message_is_lexical_hit and not _is_deictic_subject_reference(user_message):
+            subject = None
+            subject_label = ""
+            subject_kind = None
+
+    if subject is None:
+        subject_label, subject_kind = _extract_subject_hint(text=user_message, category="偏好.关注")
+        if not subject_label:
+            return None, False
+
+    label_key = _normalize_text_key(subject_label)
+    if not label_key or _facts_already_capture_subject_interest(extracted_facts, label_key=label_key):
+        return None, False
+
+    mention_counts = _count_subject_mentions_by_conversation(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        owner_user_id=conversation.created_by,
+        label_key=label_key,
+    )
+    same_conversation_turns = mention_counts.get(conversation.id, 0)
+    distinct_conversations = len(mention_counts)
+    if subject is not None and not current_message_is_lexical_hit and _is_deictic_subject_reference(user_message):
+        same_conversation_turns += 1
+        if conversation.id not in mention_counts:
+            distinct_conversations += 1
+
+    if distinct_conversations >= 2 or same_conversation_turns >= 3:
+        importance = 0.92
+    elif same_conversation_turns >= 2:
+        importance = 0.82
+    else:
+        return None, False
+
+    subject_changed = False
+    if subject is None:
+        subject, subject_changed = ensure_project_subject(
+            db,
+            project,
+            subject_kind=subject_kind or _infer_subject_kind(user_message, subject_label, "偏好.关注") or "custom",
+            label=subject_label,
+            owner_user_id=conversation.created_by,
+        )
+        subject_label = subject.content.strip()
+        subject_kind = get_subject_kind(subject)
+
+    fact_text = _build_behavioral_interest_fact_text(subject_label)
+    if not fact_text:
+        return None, subject_changed
+
+    return (
+        {
+            "fact": fact_text,
+            "category": _build_behavioral_interest_category(subject_kind),
+            "importance": importance,
+            "source": "behavioral_interest",
+            "triage_reason": _build_behavioral_interest_reason(
+                subject_label=subject_label,
+                same_conversation_turns=same_conversation_turns,
+                distinct_conversations=distinct_conversations,
+            ),
+        },
+        subject_changed,
+    )
+
+
+def _promote_temporary_duplicate_to_permanent(
+    duplicate_memory: Memory,
+    *,
+    fact_text: str,
+    fact_category: str,
+    importance: float,
+    fact_source: str,
+    conversation: Conversation,
+    subject_memory: Memory,
+) -> None:
+    metadata = build_private_memory_metadata(
+        {
+            **(duplicate_memory.metadata_json or {}),
+            "importance": importance,
+            "source": fact_source,
+            "node_type": FACT_NODE_TYPE,
+            "node_status": ACTIVE_NODE_STATUS,
+            "subject_memory_id": subject_memory.id,
+        },
+        owner_user_id=conversation.created_by,
+    )
+    duplicate_memory.content = fact_text
+    duplicate_memory.category = fact_category
+    duplicate_memory.type = "permanent"
+    duplicate_memory.node_type = duplicate_memory.node_type or FACT_NODE_TYPE
+    duplicate_memory.subject_memory_id = subject_memory.id
+    duplicate_memory.parent_memory_id = duplicate_memory.parent_memory_id or subject_memory.id
+    duplicate_memory.node_status = ACTIVE_NODE_STATUS
+    duplicate_memory.source_conversation_id = None
+    duplicate_memory.metadata_json = normalize_memory_metadata(
+        content=fact_text,
+        category=fact_category,
+        memory_type="permanent",
+        metadata=metadata,
+    )
+    duplicate_memory.canonical_key = (
+        str((duplicate_memory.metadata_json or {}).get("canonical_key") or "").strip() or duplicate_memory.canonical_key
+    )
+    ensure_fact_lineage(duplicate_memory)
+
+
 def _looks_like_aggregate_fact(
     fact_text: str,
     *,
@@ -878,13 +1353,292 @@ def _sanitize_concept_topic(topic: str) -> str:
     return cleaned
 
 
-def _build_concept_parent_text(*, topic: str, memory_kind: str) -> str | None:
+_FACT_CONCEPT_TOPIC_HINTS: tuple[tuple[str, str], ...] = (
+    ("人设", "设定"),
+    ("设定", "设定"),
+    ("世界观", "设定"),
+    ("定位", "设定"),
+    ("背景", "背景"),
+    ("来历", "背景"),
+    ("出身", "背景"),
+    ("历史", "背景"),
+    ("经历", "经历"),
+    ("剧情", "经历"),
+    ("故事", "经历"),
+    ("事件", "经历"),
+    ("过去", "经历"),
+    ("能力", "能力"),
+    ("技能", "能力"),
+    ("招式", "能力"),
+    ("术式", "能力"),
+    ("武器", "能力"),
+    ("关系", "关系"),
+    ("互动", "关系"),
+    ("对手", "关系"),
+    ("朋友", "关系"),
+    ("搭档", "关系"),
+    ("身份", "身份"),
+    ("种族", "身份"),
+    ("职业", "身份"),
+    ("头衔", "身份"),
+    ("称号", "身份"),
+    ("职位", "身份"),
+    ("性格", "特征"),
+    ("特点", "特征"),
+    ("辨识度", "特征"),
+    ("风格", "特征"),
+    ("外观", "特征"),
+    ("形象", "特征"),
+    ("气质", "特征"),
+    ("特征", "特征"),
+)
+
+_USER_FACT_CONCEPT_TOPIC_HINTS: tuple[tuple[str, str], ...] = (
+    ("education", "教育"),
+    ("study", "教育"),
+    ("school", "教育"),
+    ("学业", "教育"),
+    ("教育", "教育"),
+    ("identity", "身份"),
+    ("身份", "身份"),
+    ("profile", "个人"),
+    ("personal", "个人"),
+    ("个人", "个人"),
+    ("work", "工作"),
+    ("job", "工作"),
+    ("career", "工作"),
+    ("profession", "工作"),
+    ("职业", "工作"),
+    ("工作", "工作"),
+    ("travel", "旅行"),
+    ("trip", "旅行"),
+    ("旅行", "旅行"),
+    ("location", "地点"),
+    ("place", "地点"),
+    ("residence", "地点"),
+    ("居住", "地点"),
+    ("地点", "地点"),
+    ("relationship", "关系"),
+    ("关系", "关系"),
+    ("food", "饮食"),
+    ("drink", "饮食"),
+    ("diet", "饮食"),
+    ("饮食", "饮食"),
+    ("学习", "学习"),
+    ("learning", "学习"),
+    ("health", "健康"),
+    ("健康", "健康"),
+)
+
+_USER_FACT_CONCEPT_TOPIC_SKIP_KEYS = {
+    "user",
+    "custom",
+    "fact",
+    "事实",
+    "记忆",
+    "memory",
+}
+
+_USER_FACT_CONCEPT_LABELS: dict[str, str] = {
+    "教育": "教育背景",
+    "身份": "身份信息",
+    "个人": "个人信息",
+    "工作": "工作经历",
+    "地点": "地点经历",
+    "关系": "关系网络",
+    "饮食": "饮食习惯",
+    "学习": "学习轨迹",
+    "健康": "健康情况",
+    "旅行": "旅行经历",
+}
+
+_PERSON_FACT_CONCEPT_LABELS: dict[str, str] = {
+    "设定": "角色设定",
+    "背景": "角色背景",
+    "经历": "经历事件",
+    "能力": "能力体系",
+    "关系": "关系网络",
+    "身份": "身份定位",
+    "特征": "形象特征",
+}
+
+_GENERIC_FACT_CONCEPT_LABELS: dict[str, str] = {
+    "设定": "核心设定",
+    "背景": "背景信息",
+    "经历": "相关经历",
+    "能力": "能力体系",
+    "关系": "关联关系",
+    "身份": "身份定位",
+    "特征": "关键特征",
+}
+
+_PERSON_LIKE_CATEGORY_HINTS = {
+    "人物",
+    "角色",
+    "角色设定",
+    "人物设定",
+}
+
+
+def _normalize_fact_concept_topic(topic: str) -> str:
+    cleaned = _sanitize_concept_topic(topic)
+    if not cleaned:
+        return ""
+    normalized_key = _normalize_text_key(cleaned)
+    for hint, canonical in _FACT_CONCEPT_TOPIC_HINTS:
+        if _normalize_text_key(hint) in normalized_key:
+            return canonical
+    return cleaned
+
+
+def _normalize_user_fact_concept_topic(topic: str) -> str:
+    cleaned = _sanitize_concept_topic(topic)
+    if not cleaned:
+        return ""
+    normalized_key = _normalize_text_key(cleaned)
+    if normalized_key in _USER_FACT_CONCEPT_TOPIC_SKIP_KEYS:
+        return ""
+    for hint, canonical in _USER_FACT_CONCEPT_TOPIC_HINTS:
+        hint_key = _normalize_text_key(hint)
+        if hint_key and (hint_key == normalized_key or hint_key in normalized_key):
+            return canonical
+    return cleaned
+
+
+def _normalize_concept_label(label: str) -> str:
+    cleaned = _sanitize_concept_topic(label)
+    if not cleaned:
+        return ""
+    if len(cleaned) > 24:
+        return ""
+    return cleaned
+
+
+def _is_person_like_fact_subject(*, subject_memory: Memory, fact_category: str) -> bool:
+    subject_kind = get_subject_kind(subject_memory)
+    if subject_kind == "person":
+        return True
+    segments = split_category_segments(fact_category)
+    if segments and segments[0] in _PERSON_LIKE_CATEGORY_HINTS:
+        return True
+    return False
+
+
+def _build_fact_concept_label(
+    *,
+    subject_memory: Memory,
+    topic: str,
+    fact_category: str,
+) -> str:
+    canonical_topic = _normalize_fact_concept_topic(topic) or _normalize_user_fact_concept_topic(topic) or topic
+    subject_kind = get_subject_kind(subject_memory)
+    if subject_kind == "user":
+        return _USER_FACT_CONCEPT_LABELS.get(canonical_topic, f"{canonical_topic}信息")
+    if _is_person_like_fact_subject(subject_memory=subject_memory, fact_category=fact_category):
+        return _PERSON_FACT_CONCEPT_LABELS.get(canonical_topic, f"{canonical_topic}信息")
+    return _GENERIC_FACT_CONCEPT_LABELS.get(canonical_topic, canonical_topic)
+
+
+def _is_auto_generated_concept(memory: Memory | None) -> bool:
+    if memory is None or not is_concept_memory(memory):
+        return False
+    metadata = memory.metadata_json or {}
+    return bool(
+        metadata.get("auto_generated")
+        or metadata.get("source") in {"auto_concept_parent", "repair_concept_backfill"}
+    )
+
+
+def _get_concept_topic_for_matching(memory: Memory | None) -> str:
+    if memory is None or not is_concept_memory(memory):
+        return ""
+    metadata = memory.metadata_json or {}
+    explicit_topic = str(metadata.get("concept_topic") or "").strip()
+    if explicit_topic:
+        normalized_explicit = (
+            _normalize_fact_concept_topic(explicit_topic)
+            or _normalize_user_fact_concept_topic(explicit_topic)
+            or _sanitize_concept_topic(explicit_topic)
+        )
+        if normalized_explicit:
+            return normalized_explicit
+
+    for segment in split_category_segments(memory.category):
+        normalized_segment = (
+            _normalize_user_fact_concept_topic(segment)
+            or _normalize_fact_concept_topic(segment)
+        )
+        if normalized_segment:
+            return normalized_segment
+
+    return (
+        _normalize_user_fact_concept_topic(memory.content)
+        or _normalize_fact_concept_topic(memory.content)
+        or _sanitize_concept_topic(memory.content)
+    )
+
+
+def _infer_user_fact_concept_topic(*, fact_category: str, fact_text: str) -> str | None:
+    raw_segments = [
+        segment.strip()
+        for segment in str(fact_category or "").split(".")
+        if segment and segment.strip()
+    ]
+    for segment in raw_segments:
+        topic = _normalize_user_fact_concept_topic(segment)
+        if topic:
+            return topic
+
+    normalized_fact = re.sub(r"\s+", "", str(fact_text or "").strip())
+    if not normalized_fact:
+        return None
+    for hint, canonical in _USER_FACT_CONCEPT_TOPIC_HINTS:
+        if hint in normalized_fact:
+            return canonical
+    return None
+
+
+def _infer_fact_concept_topic(
+    *,
+    subject_memory: Memory,
+    fact_text: str,
+    fact_category: str,
+) -> str | None:
+    if get_subject_kind(subject_memory) == "user":
+        return _infer_user_fact_concept_topic(
+            fact_category=fact_category,
+            fact_text=fact_text,
+        )
+
+    for segment in reversed(_normalize_category_segments(fact_category)):
+        topic = _normalize_fact_concept_topic(segment)
+        if topic:
+            return topic
+
+    normalized_fact = re.sub(r"\s+", "", str(fact_text or "").strip())
+    if not normalized_fact:
+        return None
+
+    for hint, canonical in _FACT_CONCEPT_TOPIC_HINTS:
+        if hint in normalized_fact:
+            return canonical
+    return None
+
+
+def _build_concept_parent_text(
+    *,
+    topic: str,
+    memory_kind: str,
+    subject_memory: Memory | None = None,
+) -> str | None:
     if not topic:
         return None
     if memory_kind == MEMORY_KIND_PREFERENCE:
         return f"用户对{topic}感兴趣"
     if memory_kind == MEMORY_KIND_GOAL:
         return f"用户有{topic}相关目标"
+    if memory_kind == MEMORY_KIND_FACT and subject_memory is not None:
+        return topic
     return None
 
 
@@ -894,13 +1648,16 @@ def _build_concept_category(*, fact_category: str, topic: str) -> str:
         return ".".join(segments)
     if not segments:
         return topic
-    if _normalize_text_key(segments[-1]) == _normalize_text_key(topic):
-        return ".".join(segments)
+    topic_key = _normalize_text_key(topic)
+    for index, segment in enumerate(segments):
+        if _normalize_text_key(segment) == topic_key:
+            return ".".join(segments[: index + 1])
     return ".".join([*segments, topic])
 
 
 async def _plan_concept_parent(
     *,
+    subject_memory: Memory,
     fact_text: str,
     fact_category: str,
     fact_memory_kind: str,
@@ -908,7 +1665,28 @@ async def _plan_concept_parent(
     if fact_memory_kind not in _CONCEPT_PARENT_SUPPORTED_KINDS:
         return None
 
+    if fact_memory_kind == MEMORY_KIND_FACT:
+        heuristic_topic = _infer_fact_concept_topic(
+            subject_memory=subject_memory,
+            fact_text=fact_text,
+            fact_category=fact_category,
+        )
+        if heuristic_topic:
+            concept_label = _build_fact_concept_label(
+                subject_memory=subject_memory,
+                topic=heuristic_topic,
+                fact_category=fact_category,
+            )
+            return {
+                "topic": heuristic_topic,
+                "parent_text": concept_label,
+                "parent_category": _build_concept_category(fact_category=fact_category, topic=heuristic_topic),
+                "reason": f"根据分类和事实内容归入「{concept_label}」主题。",
+            }
+
     prompt = CONCEPT_TOPIC_PROMPT.format(
+        subject_label=subject_memory.content.strip() or "未命名主体",
+        subject_kind=get_subject_kind(subject_memory) or "custom",
         fact=fact_text,
         category=fact_category or "未分类",
         memory_kind=fact_memory_kind,
@@ -933,7 +1711,18 @@ async def _plan_concept_parent(
     except (json.JSONDecodeError, ValueError):
         return None
 
-    topic = _sanitize_concept_topic(str(payload.get("topic") or ""))
+    topic = str(payload.get("topic") or "")
+    label = str(payload.get("label") or "")
+    if fact_memory_kind == MEMORY_KIND_FACT:
+        topic = _normalize_fact_concept_topic(topic)
+        label = _normalize_concept_label(label) or _build_fact_concept_label(
+            subject_memory=subject_memory,
+            topic=topic,
+            fact_category=fact_category,
+        )
+    else:
+        topic = _sanitize_concept_topic(topic)
+        label = _normalize_concept_label(label)
     confidence = 0.0
     try:
         confidence = float(payload.get("confidence") or 0.0)
@@ -942,10 +1731,16 @@ async def _plan_concept_parent(
     if not topic or confidence < 0.78:
         return None
 
-    parent_text = _build_concept_parent_text(topic=topic, memory_kind=fact_memory_kind)
+    parent_text = _build_concept_parent_text(
+        topic=label or topic,
+        memory_kind=fact_memory_kind,
+        subject_memory=subject_memory,
+    )
     if not parent_text:
         return None
     if _normalize_text_key(parent_text) == _normalize_text_key(fact_text):
+        return None
+    if _normalize_text_key(parent_text) == _normalize_text_key(subject_memory.content):
         return None
 
     return {
@@ -996,9 +1791,9 @@ def _find_existing_concept_parent(
         score = 0
         if _normalize_text_key(memory.content) == target_key:
             score += 3
-        existing_topic = _normalize_text_key((memory.metadata_json or {}).get("concept_topic"))
+        existing_topic = _normalize_text_key(_get_concept_topic_for_matching(memory))
         if topic_key and existing_topic == topic_key:
-            score += 3
+            score += 4
         elif topic_key and existing_topic and (topic_key in existing_topic or existing_topic in topic_key):
             if _shared_category_prefix_length(parent_category, memory.category) >= 1:
                 score += 2
@@ -1006,7 +1801,88 @@ def _find_existing_concept_parent(
             best_match = memory
             best_score = score
 
-    return best_match if best_score >= 3 else None
+    return best_match if best_score >= 4 else None
+
+
+async def _refresh_existing_concept_parent(
+    db,
+    existing: Memory,
+    *,
+    workspace_id: str,
+    project_id: str,
+    owner_user_id: str | None,
+    subject_memory: Memory,
+    topic: str,
+    label: str,
+    parent_category: str,
+) -> None:
+    if not _is_auto_generated_concept(existing) or is_pinned_memory(existing):
+        return
+
+    normalized_label = _normalize_concept_label(label)
+    if not normalized_label:
+        return
+
+    current_topic = _get_concept_topic_for_matching(existing)
+    should_relabel = (
+        _normalize_text_key(existing.content) in {
+            _normalize_text_key(topic),
+            _normalize_text_key(current_topic),
+        }
+        and _normalize_text_key(existing.content) != _normalize_text_key(normalized_label)
+    )
+
+    next_content = normalized_label if should_relabel else existing.content
+    if (
+        _normalize_text_key(next_content) == _normalize_text_key(existing.content)
+        and _normalize_text_key(existing.category) == _normalize_text_key(parent_category)
+        and _normalize_text_key(str((existing.metadata_json or {}).get("concept_topic") or "")) == _normalize_text_key(topic)
+        and _normalize_text_key(str((existing.metadata_json or {}).get("concept_label") or "")) == _normalize_text_key(normalized_label)
+    ):
+        return
+
+    metadata: dict[str, object] = {
+        **(existing.metadata_json or {}),
+        "node_kind": CONCEPT_NODE_KIND,
+        "node_type": CONCEPT_NODE_KIND,
+        "node_status": ACTIVE_NODE_STATUS,
+        "subject_kind": None,
+        "subject_memory_id": subject_memory.id,
+        "concept_topic": topic,
+        "concept_label": normalized_label,
+        "auto_generated": True,
+        "source": str((existing.metadata_json or {}).get("source") or "auto_concept_parent"),
+        "salience": float((existing.metadata_json or {}).get("salience") or 0.72),
+    }
+    if owner_user_id:
+        metadata = build_private_memory_metadata(metadata, owner_user_id=owner_user_id)
+    metadata = normalize_memory_metadata(
+        content=next_content,
+        category=parent_category,
+        memory_type=existing.type,
+        metadata=metadata,
+    )
+    existing.content = next_content
+    existing.category = parent_category
+    existing.subject_memory_id = subject_memory.id
+    existing.parent_memory_id = subject_memory.id
+    existing.metadata_json = metadata
+    existing.canonical_key = str(metadata.get("canonical_key") or "").strip() or existing.canonical_key
+
+    if should_relabel:
+        try:
+            from app.services.embedding import embed_and_store
+
+            await embed_and_store(
+                db,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                memory_id=existing.id,
+                chunk_text=existing.content,
+                auto_commit=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def _resolve_concept_parent(
@@ -1020,8 +1896,10 @@ async def _resolve_concept_parent(
     fact_text: str,
     fact_category: str,
     fact_memory_kind: str,
+    query_vector: list[float] | None = None,
 ) -> tuple[Memory | None, bool, str | None]:
     plan = await _plan_concept_parent(
+        subject_memory=subject_memory,
         fact_text=fact_text,
         fact_category=fact_category,
         fact_memory_kind=fact_memory_kind,
@@ -1031,7 +1909,11 @@ async def _resolve_concept_parent(
 
     normalized_topic = _sanitize_concept_topic(plan.get("topic", ""))
     if normalized_topic and normalized_topic != plan["topic"]:
-        normalized_parent_text = _build_concept_parent_text(topic=normalized_topic, memory_kind=fact_memory_kind)
+        normalized_parent_text = _build_concept_parent_text(
+            topic=normalized_topic,
+            memory_kind=fact_memory_kind,
+            subject_memory=subject_memory,
+        )
         if normalized_parent_text:
             plan = {
                 **plan,
@@ -1055,7 +1937,49 @@ async def _resolve_concept_parent(
         fact_memory_kind=fact_memory_kind,
     )
     if existing:
+        await _refresh_existing_concept_parent(
+            db,
+            existing,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            owner_user_id=owner_user_id,
+            subject_memory=subject_memory,
+            topic=plan["topic"],
+            label=plan["parent_text"],
+            parent_category=plan["parent_category"],
+        )
         return existing, False, plan.get("reason") or None
+
+    semantic_existing: Memory | None = None
+    semantic_score = 0.0
+    if query_vector:
+        semantic_existing, semantic_score = await _select_parent_memory_anchor(
+            db,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            query_vector=query_vector,
+            fact_category=plan["parent_category"],
+            fact_memory_kind=fact_memory_kind,
+        )
+    if semantic_existing is not None and semantic_existing.subject_memory_id == subject_memory.id and semantic_score >= 0.78:
+        await _refresh_existing_concept_parent(
+            db,
+            semantic_existing,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            owner_user_id=owner_user_id,
+            subject_memory=subject_memory,
+            topic=plan["topic"],
+            label=plan["parent_text"],
+            parent_category=plan["parent_category"],
+        )
+        semantic_reason = plan.get("reason") or None
+        if semantic_reason:
+            semantic_reason = f"{semantic_reason}；复用语义相近的既有主题节点。"
+        else:
+            semantic_reason = "复用语义相近的既有主题节点。"
+        return semantic_existing, False, semantic_reason
 
     metadata: dict[str, object] = {
         "node_kind": CONCEPT_NODE_KIND,
@@ -1064,6 +1988,7 @@ async def _resolve_concept_parent(
         "subject_kind": None,
         "subject_memory_id": subject_memory.id,
         "concept_topic": plan["topic"],
+        "concept_label": plan["parent_text"],
         "auto_generated": True,
         "source": "auto_concept_parent",
         "salience": 0.72,
@@ -1635,6 +2560,7 @@ def run_memory_extraction(
 - 如果一句话里包含多个并列偏好或事实，必须拆成多条叶子事实
 - 禁止输出“用户偏好A和B”这类聚合句
 - 如果事实属于非用户主体，要在 fact 文本里保留主体名称，不要偷偷改写成“用户……”
+- 如果用户对非用户主体使用“他/她/它/TA/这个角色/这个人/这位/这个设定”等指代，输出时要改写为明确主体名，不要把代词直接写进 fact
 - 每个事实用一句话表达
 - importance: 0-1，其中 >=0.7 创建为临时记忆，>=0.9 直接升级为永久记忆
 - category: 用中文，层级用点分隔（如"工作.计划"、"健康.用药"）
@@ -1654,6 +2580,7 @@ def run_memory_extraction(
 - 优先提取：身份、偏好、计划、经历、关系、限制条件，以及当前明确谈论的书、课程、项目、理论等主体事实
 - 如果一句话里包含多个并列偏好或事实，要拆成多条
 - 对非用户主体的事实，保留主体名称
+- 如果用户用“他/她/它/TA/这个角色/这个人/这位/这个设定”等指代非用户主体，输出时改写为明确主体名
 - importance: 0-1，明确且稳定的偏好/身份/计划通常 >=0.9
 - category: 用中文，层级用点分隔
 - 输出必须是 JSON 数组，不要输出解释文字或 markdown
@@ -1791,6 +2718,25 @@ def run_memory_extraction(
 
                 if not facts:
                     facts = _extract_facts_heuristically(user_message)
+                if facts:
+                    facts = list(facts)
+                inferred_interest_fact, inferred_subject_changed = _infer_behavioral_interest_fact(
+                    db,
+                    project=project,
+                    conversation=conversation,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    user_message=user_message,
+                    extracted_facts=facts or [],
+                )
+                if inferred_subject_changed:
+                    db.flush()
+                if inferred_interest_fact:
+                    inferred_key = _normalize_text_key(str(inferred_interest_fact.get("fact") or ""))
+                    if inferred_key and all(
+                        _normalize_text_key(str(item.get("fact") or "")) != inferred_key for item in (facts or [])
+                    ):
+                        facts = [*(facts or []), inferred_interest_fact]
                 if not facts:
                     _persist_memory_extraction_metadata(
                         ai_msg,
@@ -1806,6 +2752,8 @@ def run_memory_extraction(
                 for fact in facts:
                     fact_text = _normalize_extracted_fact_text(fact.get("fact", ""))
                     category = str(fact.get("category", "")).strip()
+                    fact_source = str(fact.get("source") or "auto_extraction").strip() or "auto_extraction"
+                    initial_triage_reason = str(fact.get("triage_reason") or "").strip() or None
                     if not fact_text:
                         continue
 
@@ -1819,13 +2767,21 @@ def run_memory_extraction(
                     )
                     if subject_changed:
                         db.flush()
+                    fact_text = _canonicalize_fact_text_for_storage(
+                        fact_text=fact_text,
+                        user_message=user_message,
+                        subject_memory=subject_memory,
+                        subject_resolution=subject_resolution,
+                    )
+                    if not fact_text:
+                        continue
 
                     preview_metadata = normalize_memory_metadata(
                         content=fact_text,
                         category=category,
                         memory_type="temporary",
                         metadata={
-                            "source": "auto_extraction",
+                            "source": fact_source,
                             "node_type": FACT_NODE_TYPE,
                             "node_status": ACTIVE_NODE_STATUS,
                             "subject_memory_id": subject_memory.id,
@@ -1846,7 +2802,10 @@ def run_memory_extraction(
                         "subject_label": subject_memory.content,
                         "subject_kind": get_subject_kind(subject_memory),
                         "subject_resolution": subject_resolution,
+                        "source": fact_source,
                     }
+                    if initial_triage_reason:
+                        fact_display["triage_reason"] = initial_triage_reason
 
                     if importance < 0.7:
                         fact_display["status"] = "ignored"
@@ -1854,6 +2813,7 @@ def run_memory_extraction(
                         continue
 
                     memory_type = "permanent" if importance >= 0.9 and conversation.created_by else "temporary"
+                    triage_reason = initial_triage_reason
 
                     if _looks_like_aggregate_fact(
                         fact_text,
@@ -1876,6 +2836,32 @@ def run_memory_extraction(
                             threshold=settings.memory_triage_similarity_high,
                         )
                         if duplicate:
+                            duplicate_memory = db.get(Memory, duplicate["memory_id"])
+                            if (
+                                duplicate_memory is not None
+                                and duplicate_memory.type == "temporary"
+                                and memory_type == "permanent"
+                                and conversation.created_by
+                            ):
+                                _promote_temporary_duplicate_to_permanent(
+                                    duplicate_memory,
+                                    fact_text=fact_text,
+                                    fact_category=category,
+                                    importance=importance,
+                                    fact_source=fact_source,
+                                    conversation=conversation,
+                                    subject_memory=subject_memory,
+                                )
+                                fact_display["status"] = "permanent"
+                                fact_display["target_memory_id"] = duplicate_memory.id
+                                fact_display["triage_action"] = "promote"
+                                fact_display["triage_reason"] = (
+                                    f"{triage_reason}；已有临时记忆因更强信号升级为永久记忆。"
+                                    if triage_reason
+                                    else "已有临时记忆因更强信号升级为永久记忆。"
+                                )
+                                processed_facts.append(fact_display)
+                                continue
                             fact_display["status"] = "duplicate"
                             fact_display["target_memory_id"] = duplicate["memory_id"]
                             processed_facts.append(fact_display)
@@ -1889,7 +2875,7 @@ def run_memory_extraction(
                     anchor_strength = 0.0
                     append_candidate_memory: Memory | None = None
                     triage_action = "create"
-                    triage_reason = None
+                    triage_reason = initial_triage_reason
                     triage_target_memory_id = None
                     if query_vector:
                         try:
@@ -2048,7 +3034,7 @@ def run_memory_extraction(
 
                     metadata = {
                         "importance": importance,
-                        "source": "auto_extraction",
+                        "source": fact_source,
                         "node_type": FACT_NODE_TYPE,
                         "node_status": ACTIVE_NODE_STATUS,
                         "subject_memory_id": subject_memory.id,
@@ -2075,6 +3061,7 @@ def run_memory_extraction(
                             fact_text=fact_text,
                             fact_category=category,
                             fact_memory_kind=memory_kind,
+                            query_vector=query_vector,
                         )
                         if concept_parent:
                             concept_parent_created = concept_created

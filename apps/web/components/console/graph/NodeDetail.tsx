@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { apiGet } from "@/lib/api";
 import {
+  dedupeDisplayLabels,
+  formatLocalizedCategorySegmentLabel,
+  formatLocalizedMemoryKindLabel,
+  formatLocalizedSubjectKindLabel,
+} from "@/lib/memory-labels";
+import {
   canPrimaryParentChildren,
   type MemoryNode,
   getGraphNodeDisplayType,
@@ -94,21 +100,6 @@ interface NodeDetailProps {
 
 function isFileNode(node: MemoryNode): boolean {
   return node.category === "file" || node.category === "文件" || node.metadata_json?.node_kind === "file";
-}
-
-function formatMemoryKindLabel(kind: string | null, t: (key: string) => string): string {
-  const labels: Record<string, string> = {
-    profile: t("graph.kindProfile"),
-    preference: t("graph.kindPreference"),
-    goal: t("graph.kindGoal"),
-    episodic: t("graph.kindEpisodic"),
-    fact: t("graph.kindFact"),
-    summary: t("graph.kindSummary"),
-  };
-  if (!kind) {
-    return t("graph.kindUnknown");
-  }
-  return labels[kind] || kind;
 }
 
 function formatMemoryRoleLabel(
@@ -233,6 +224,18 @@ export default function NodeDetail({
   const syntheticGraphNode = isSyntheticGraphNode(node);
   const pinned = isPinnedMemoryNode(node);
   const categorySegments = getMemoryCategorySegments(node);
+  const categoryBadgeLabels = useMemo(
+    () => categorySegments.map((segment) => formatLocalizedCategorySegmentLabel(segment, t, "graph")),
+    [categorySegments, t],
+  );
+  const subjectKindLabel = useMemo(
+    () => formatLocalizedSubjectKindLabel(node.subject_kind, t, "graph"),
+    [node.subject_kind, t],
+  );
+  const memoryKindLabel = useMemo(
+    () => formatLocalizedMemoryKindLabel(memoryKind, t, "graph"),
+    [memoryKind, t],
+  );
   const canOwnChildren = canPrimaryParentChildren(node) && !syntheticGraphNode;
   const canEditMemory = !fileNode && !syntheticGraphNode && !structureNode;
   const canManageStructure = !fileNode && !syntheticGraphNode;
@@ -365,6 +368,44 @@ export default function NodeDetail({
     : displayedParentNode
       ? `${t("graph.parentNode")} · ${formatNodeLabel(displayedParentNode)}`
       : t("graph.parentUnavailable");
+  const detailBadges = useMemo(() => {
+    const badges: Array<{ label: string; className: string }> = [];
+    categoryBadgeLabels.forEach((label) => badges.push({ label, className: "graph-detail-badge is-category" }));
+    if (!fileNode) {
+      badges.push({
+        label: formatMemoryRoleLabel(memoryRole, t),
+        className: "graph-detail-badge is-neutral",
+      });
+    }
+    if (!fileNode && subjectKindLabel) {
+      badges.push({ label: subjectKindLabel, className: "graph-detail-badge is-neutral" });
+    }
+    if (!fileNode && !summaryNode) {
+      badges.push({ label: memoryKindLabel, className: "graph-detail-badge is-neutral" });
+    }
+    if (summaryNode) {
+      badges.push({
+        label: formatMemoryRoleLabel(memoryRole, t),
+        className: "graph-detail-badge is-summary",
+      });
+    }
+    if (pinned) {
+      badges.push({ label: t("graph.pinned"), className: "graph-detail-badge is-pinned" });
+    }
+    if (fileNode) {
+      badges.push({ label: t("graph.attachment"), className: "graph-detail-badge is-neutral" });
+    }
+    return dedupeDisplayLabels(badges);
+  }, [
+    categoryBadgeLabels,
+    fileNode,
+    memoryKindLabel,
+    memoryRole,
+    pinned,
+    subjectKindLabel,
+    summaryNode,
+    t,
+  ]);
   const selectionPreviewItems = useMemo(() => {
     if (!editMode) {
       return [];
@@ -741,33 +782,11 @@ export default function NodeDetail({
                   : node.content}
               </div>
               <div className="graph-detail-badges">
-                {categorySegments.map((segment) => (
-                  <span key={segment} className="graph-detail-badge is-category">
-                    {segment}
+                {detailBadges.map((badge) => (
+                  <span key={`${badge.className}:${badge.label}`} className={badge.className}>
+                    {badge.label}
                   </span>
                 ))}
-                {!fileNode ? (
-                  <span className="graph-detail-badge is-neutral">
-                    {formatMemoryRoleLabel(memoryRole, t)}
-                  </span>
-                ) : null}
-                {!fileNode && node.subject_kind ? (
-                  <span className="graph-detail-badge is-neutral">{node.subject_kind}</span>
-                ) : null}
-                {!fileNode && !summaryNode ? (
-                  <span className="graph-detail-badge is-neutral">
-                    {formatMemoryKindLabel(memoryKind, t)}
-                  </span>
-                ) : null}
-                {summaryNode ? (
-                  <span className="graph-detail-badge is-summary">{formatMemoryRoleLabel(memoryRole, t)}</span>
-                ) : null}
-                {pinned ? (
-                  <span className="graph-detail-badge is-pinned">{t("graph.pinned")}</span>
-                ) : null}
-                {fileNode ? (
-                  <span className="graph-detail-badge is-neutral">{t("graph.attachment")}</span>
-                ) : null}
               </div>
             </section>
 
@@ -898,7 +917,7 @@ export default function NodeDetail({
                     {node.subject_kind ? (
                       <div className="graph-detail-meta">
                         <span className="graph-detail-label">{t("graph.subjectKind")}</span>
-                        <span className="graph-detail-value">{node.subject_kind}</span>
+                        <span className="graph-detail-value">{subjectKindLabel}</span>
                       </div>
                     ) : null}
                     {summaryNode ? (

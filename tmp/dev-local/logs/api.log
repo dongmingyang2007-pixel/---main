@@ -1,0 +1,7 @@
+INFO:     Will watch for changes in these directories: ['/Users/dog/Desktop/铭润/apps/api']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [61303] using WatchFiles
+INFO:     Started server process [61306]
+INFO:     Waiting for application startup.
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.

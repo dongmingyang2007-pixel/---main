@@ -39,6 +39,9 @@ import GraphContextMenu from "./GraphContextMenu";
 import NodeDetail from "./NodeDetail";
 import GraphControls from "./GraphControls";
 import GraphFilters, { type GraphFilterState } from "./GraphFilters";
+import MemoryGraphOrbitScene, {
+  type MemoryGraphOrbitSceneHandle,
+} from "./MemoryGraphOrbitScene";
 
 /* ── Types ─────────────────────────────────────── */
 
@@ -62,6 +65,52 @@ interface TreeLayoutTarget {
   y: number;
   angle: number;
   depth: number;
+}
+
+interface OrbitRotation {
+  yaw: number;
+  pitch: number;
+}
+
+interface OrbitProjectedNode {
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  radius: number;
+  opacity: number;
+  labelOpacity: number;
+}
+
+interface OrbitVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface OrbitWorldNode extends OrbitVector3 {
+  depth: number;
+}
+
+interface OrbitSceneLink {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  edgeType: string;
+  strength: number;
+}
+
+interface OrbitSceneRig {
+  centerX: number;
+  centerY: number;
+  centerScale: number;
+  floorY: number;
+  keyLightX: number;
+  keyLightY: number;
+  fillLightX: number;
+  fillLightY: number;
+  rimLightX: number;
+  rimLightY: number;
 }
 
 type GraphSelectionMode = "parent" | "children" | "related" | null;
@@ -98,6 +147,31 @@ const FILE_LINK_DISTANCE = 58;
 const PARENT_LINK_DISTANCE = 112;
 const CENTER_LINK_DISTANCE = 164;
 const GRAPH_TOP_LEVEL_TARGET_ID = "__graph_top_level__";
+const ORBIT_CAMERA_DISTANCE = 1240;
+const ORBIT_INITIAL_ROTATION: OrbitRotation = {
+  yaw: -0.96,
+  pitch: 0.48,
+};
+const ORBIT_PITCH_RANGE = {
+  min: 0.14,
+  max: 0.92,
+};
+const ORBIT_VIEWPORT_OPTIONS = {
+  fill: 0.9,
+  maxScale: 2.65,
+  minScale: 0.68,
+  padding: 42,
+  xBias: 0.5,
+  yBias: 0.47,
+};
+const ORBIT_FOCUS_VIEWPORT_OPTIONS = {
+  fill: 0.94,
+  maxScale: 2.9,
+  minScale: 0.86,
+  padding: 48,
+  xBias: 0.5,
+  yBias: 0.46,
+};
 const COLORS = {
   permanent: "#c8734a",
   temporary: "#4a8ac8",
@@ -400,6 +474,16 @@ function buildEdgeKey(sourceId: string, targetId: string): string {
   return sourceId < targetId ? `${sourceId}::${targetId}` : `${targetId}::${sourceId}`;
 }
 
+function getSimLinkEndpointId(endpoint: SimLink["source"] | SimLink["target"]): string {
+  if (typeof endpoint === "string") {
+    return endpoint;
+  }
+  if (typeof endpoint === "number") {
+    return String(endpoint);
+  }
+  return endpoint?.id ?? "";
+}
+
 function getGraphParentId(
   node: Pick<MemoryNode, "parent_memory_id" | "metadata_json">,
   nodeById?: Map<string, Pick<MemoryNode, "id">>,
@@ -624,6 +708,509 @@ function createTreeScaffoldForce(centerNodeId: string): d3.Force<SimNode, SimLin
   return force;
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function addOrbitVector(left: OrbitVector3, right: OrbitVector3): OrbitVector3 {
+  return {
+    x: left.x + right.x,
+    y: left.y + right.y,
+    z: left.z + right.z,
+  };
+}
+
+function scaleOrbitVector(vector: OrbitVector3, scalar: number): OrbitVector3 {
+  return {
+    x: vector.x * scalar,
+    y: vector.y * scalar,
+    z: vector.z * scalar,
+  };
+}
+
+function orbitVectorLength(vector: OrbitVector3): number {
+  return Math.hypot(vector.x, vector.y, vector.z);
+}
+
+function normalizeOrbitVector(
+  vector: OrbitVector3,
+  fallback: OrbitVector3 = { x: 1, y: 0, z: 0 },
+): OrbitVector3 {
+  const length = orbitVectorLength(vector);
+  if (length < 1e-4) {
+    return fallback;
+  }
+  return scaleOrbitVector(vector, 1 / length);
+}
+
+function crossOrbitVector(left: OrbitVector3, right: OrbitVector3): OrbitVector3 {
+  return {
+    x: left.y * right.z - left.z * right.y,
+    y: left.z * right.x - left.x * right.z,
+    z: left.x * right.y - left.y * right.x,
+  };
+}
+
+function getOrbitBasis(forward: OrbitVector3): { right: OrbitVector3; up: OrbitVector3 } {
+  const reference =
+    Math.abs(forward.y) > 0.88
+      ? { x: 0, y: 0, z: 1 }
+      : { x: 0, y: 1, z: 0 };
+  const right = normalizeOrbitVector(
+    crossOrbitVector(reference, forward),
+    { x: 1, y: 0, z: 0 },
+  );
+  const up = normalizeOrbitVector(
+    crossOrbitVector(forward, right),
+    { x: 0, y: 1, z: 0 },
+  );
+  return { right, up };
+}
+
+function getOrbitRootRadius(node: SimNode): number {
+  const role = getMemoryNodeRole(node);
+  if (role === "subject") return 342;
+  if (role === "concept") return 320;
+  if (role === "summary") return 304;
+  if (role === "structure") return 286;
+  return 312;
+}
+
+function getOrbitChildDistance(node: SimNode, depth: number): number {
+  if (isFileMemoryNode(node)) {
+    return 54;
+  }
+  const role = getMemoryNodeRole(node);
+  const baseDistance =
+    depth <= 2
+      ? 184
+      : depth === 3
+        ? 164
+        : 144;
+  const roleOffset =
+    role === "subject"
+      ? 16
+      : role === "concept"
+        ? 10
+        : role === "structure"
+          ? -10
+          : role === "summary"
+            ? 2
+            : 0;
+  const tempOffset = node.type === "temporary" ? -8 : 0;
+  return baseDistance + roleOffset + tempOffset;
+}
+
+function getOrbitVerticalBias(node: SimNode): number {
+  const role = getMemoryNodeRole(node);
+  const roleBias =
+    role === "subject"
+      ? 0.24
+      : role === "concept"
+        ? 0.16
+        : role === "structure"
+          ? -0.14
+          : role === "summary"
+            ? 0.08
+            : 0;
+  const stateBias =
+    (isPinnedMemoryNode(node) ? 0.06 : 0) +
+    (node.type === "temporary" ? -0.1 : 0);
+  return roleBias + stateBias;
+}
+
+function getOrbitRootDirection(
+  node: SimNode,
+  branchIndex: number,
+  branchCount: number,
+): OrbitVector3 {
+  const baseAngle =
+    branchCount <= 1
+      ? -Math.PI * 0.12
+      : -Math.PI / 2 + (branchIndex / branchCount) * Math.PI * 2;
+  const seedAngle = getFallbackAngle(node.id);
+  const azimuth = baseAngle + Math.sin(seedAngle) * 0.3;
+  const pitch = clampNumber(
+    getOrbitVerticalBias(node) + Math.sin(branchIndex * 1.7) * 0.12,
+    -0.3,
+    0.36,
+  );
+  return normalizeOrbitVector(
+    {
+      x: Math.cos(azimuth) * Math.cos(pitch),
+      y: Math.sin(pitch),
+      z: Math.sin(azimuth) * Math.cos(pitch),
+    },
+    { x: 1, y: 0, z: 0 },
+  );
+}
+
+function getOrbitChildDirection(
+  node: SimNode,
+  parentForward: OrbitVector3,
+  depth: number,
+  siblingIndex: number,
+  siblingCount: number,
+): OrbitVector3 {
+  const { right, up } = getOrbitBasis(parentForward);
+  const normalizedIndex =
+    siblingCount <= 1
+      ? 0
+      : (siblingIndex - (siblingCount - 1) / 2) /
+        (((siblingCount - 1) / 2) || 1);
+  const lateralSpread =
+    depth <= 2
+      ? 1.2
+      : depth === 3
+        ? 0.94
+        : 0.72;
+  const verticalSpread =
+    depth <= 2
+      ? 0.42
+      : depth === 3
+        ? 0.28
+        : 0.18;
+  const seedAngle = getFallbackAngle(node.id);
+  const lateralBias =
+    Math.sin(normalizedIndex * (Math.PI / 2)) * lateralSpread +
+    Math.cos(seedAngle) * 0.06;
+  const verticalBias =
+    getOrbitVerticalBias(node) +
+    (siblingIndex % 2 === 0 ? 1 : -1) * (0.05 + Math.abs(normalizedIndex) * verticalSpread) +
+    Math.sin(seedAngle) * 0.04;
+
+  return normalizeOrbitVector(
+    addOrbitVector(
+      addOrbitVector(
+        scaleOrbitVector(parentForward, 1.08),
+        scaleOrbitVector(right, lateralBias),
+      ),
+      scaleOrbitVector(up, verticalBias),
+    ),
+    parentForward,
+  );
+}
+
+function buildViewportTransform(
+  width: number,
+  height: number,
+  nodes: SimNode[],
+  centerNodeId: string,
+  visibleNodeIds: Set<string>,
+  orbitProjectedNodes: Map<string, OrbitProjectedNode> | null,
+  options?: {
+    fill?: number;
+    maxScale?: number;
+    minScale?: number;
+    padding?: number;
+    xBias?: number;
+    yBias?: number;
+  },
+): d3.ZoomTransform | null {
+  const fill = options?.fill ?? 0.85;
+  const maxScale = options?.maxScale ?? 5;
+  const minScale = options?.minScale ?? 0.1;
+  const padding = options?.padding ?? 20;
+  const xBias = options?.xBias ?? 0.5;
+  const yBias = options?.yBias ?? 0.5;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  nodes.forEach((node) => {
+    if (!visibleNodeIds.has(node.id)) {
+      return;
+    }
+    const projected = orbitProjectedNodes?.get(node.id) ?? null;
+    const radius =
+      (projected?.radius ?? nodeRadius(node, node.id === centerNodeId)) + padding;
+    const nodeX = projected?.x ?? node.x;
+    const nodeY = projected?.y ?? node.y;
+    minX = Math.min(minX, nodeX - radius);
+    minY = Math.min(minY, nodeY - radius);
+    maxX = Math.max(maxX, nodeX + radius);
+    maxY = Math.max(maxY, nodeY + radius);
+  });
+
+  if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+    return null;
+  }
+
+  const boundsWidth = Math.max(1, maxX - minX);
+  const boundsHeight = Math.max(1, maxY - minY);
+  const scale = clampNumber(
+    Math.min(width / boundsWidth, height / boundsHeight) * fill,
+    minScale,
+    maxScale,
+  );
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+
+  return d3.zoomIdentity
+    .translate(width * xBias - centerX * scale, height * yBias - centerY * scale)
+    .scale(scale);
+}
+
+function buildOrbitWorldMap(
+  nodes: SimNode[],
+  centerNodeId: string,
+  nodeById: Map<string, SimNode>,
+  maxRetrievalCount: number,
+): Map<string, OrbitWorldNode> {
+  const worldById = new Map<string, OrbitWorldNode>([
+    [centerNodeId, { x: 0, y: 0, z: 0, depth: 0 }],
+  ]);
+  const directionById = new Map<string, OrbitVector3>([
+    [centerNodeId, { x: 0, y: 0, z: 1 }],
+  ]);
+
+  const treeNodes = nodes.filter((node) => !isFileMemoryNode(node));
+  const treeNodeById = new Map(treeNodes.map((node) => [node.id, node] as const));
+  const childrenByParent = new Map<string, SimNode[]>();
+  const fileNodesByParent = new Map<string, SimNode[]>();
+
+  nodes.forEach((node) => {
+    if (node.id === centerNodeId) {
+      return;
+    }
+    if (isFileMemoryNode(node)) {
+      const parentId = node.parent_memory_id;
+      if (!parentId || !nodeById.has(parentId)) {
+        return;
+      }
+      const siblings = fileNodesByParent.get(parentId) ?? [];
+      siblings.push(node);
+      fileNodesByParent.set(parentId, siblings);
+      return;
+    }
+
+    const graphParentId = getGraphParentId(node, treeNodeById);
+    const parentId =
+      graphParentId && graphParentId !== node.id && treeNodeById.has(graphParentId)
+        ? graphParentId
+        : centerNodeId;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(node);
+    childrenByParent.set(parentId, siblings);
+  });
+
+  childrenByParent.forEach((siblings) => siblings.sort(sortTreeChildren));
+  fileNodesByParent.forEach((siblings) =>
+    siblings.sort((left, right) =>
+      getStableNodeSortKey(left).localeCompare(getStableNodeSortKey(right)),
+    ),
+  );
+
+  const rootChildren = childrenByParent.get(centerNodeId) ?? [];
+
+  const placeNode = (
+    node: SimNode,
+    parentId: string,
+    parentPosition: OrbitWorldNode,
+    parentForward: OrbitVector3,
+    depth: number,
+    siblingIndex: number,
+    siblingCount: number,
+  ) => {
+    const forward =
+      parentId === centerNodeId
+        ? getOrbitRootDirection(node, siblingIndex, Math.max(siblingCount, 1))
+        : getOrbitChildDirection(node, parentForward, depth, siblingIndex, siblingCount);
+    const distance =
+      parentId === centerNodeId
+        ? getOrbitRootRadius(node)
+        : getOrbitChildDistance(node, depth);
+    let position = addOrbitVector(
+      parentPosition,
+      scaleOrbitVector(forward, distance),
+    );
+    const outwardBias = normalizeOrbitVector(position, forward);
+    const retrievalCount = getMemoryRetrievalCount(node);
+    const retrievalLift =
+      maxRetrievalCount > 0
+        ? (Math.log(retrievalCount + 1) / Math.log(maxRetrievalCount + 1)) * 12
+        : 0;
+    position = addOrbitVector(
+      position,
+      scaleOrbitVector(outwardBias, 10 + retrievalLift),
+    );
+
+    const worldNode: OrbitWorldNode = {
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      depth,
+    };
+    worldById.set(node.id, worldNode);
+    directionById.set(node.id, forward);
+
+    const children = childrenByParent.get(node.id) ?? [];
+    children.forEach((child, childIndex) => {
+      placeNode(
+        child,
+        node.id,
+        worldNode,
+        forward,
+        depth + 1,
+        childIndex,
+        children.length,
+      );
+    });
+  };
+
+  rootChildren.forEach((child, index) => {
+    placeNode(
+      child,
+      centerNodeId,
+      worldById.get(centerNodeId)!,
+      directionById.get(centerNodeId)!,
+      1,
+      index,
+      rootChildren.length,
+    );
+  });
+
+  fileNodesByParent.forEach((files, parentId) => {
+    const parentPosition = worldById.get(parentId);
+    if (!parentPosition) {
+      return;
+    }
+    const parentForward =
+      directionById.get(parentId) ??
+      normalizeOrbitVector(parentPosition, { x: 1, y: 0, z: 0 });
+    const { right, up } = getOrbitBasis(parentForward);
+    files.forEach((fileNode, index) => {
+      const normalizedIndex =
+        files.length <= 1
+          ? 0
+          : (index - (files.length - 1) / 2) / (((files.length - 1) / 2) || 1);
+      const tangentOffset = normalizedIndex * 28;
+      const stackOffset =
+        (index % 2 === 0 ? 1 : -1) * (9 + Math.abs(normalizedIndex) * 8);
+      const anchor = addOrbitVector(
+        parentPosition,
+        scaleOrbitVector(parentForward, 44),
+      );
+      const position = addOrbitVector(
+        addOrbitVector(anchor, scaleOrbitVector(right, tangentOffset)),
+        scaleOrbitVector(up, stackOffset),
+      );
+      worldById.set(fileNode.id, {
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        depth: parentPosition.depth + 1,
+      });
+    });
+  });
+
+  return worldById;
+}
+
+function rotateOrbitPoint(
+  x: number,
+  y: number,
+  z: number,
+  rotation: OrbitRotation,
+): { x: number; y: number; z: number } {
+  const yawCos = Math.cos(rotation.yaw);
+  const yawSin = Math.sin(rotation.yaw);
+  const pitchCos = Math.cos(rotation.pitch);
+  const pitchSin = Math.sin(rotation.pitch);
+
+  const yawX = x * yawCos - z * yawSin;
+  const yawZ = x * yawSin + z * yawCos;
+
+  return {
+    x: yawX,
+    y: y * pitchCos - yawZ * pitchSin,
+    z: y * pitchSin + yawZ * pitchCos,
+  };
+}
+
+function buildOrbitProjectionMap(
+  nodes: SimNode[],
+  centerNodeId: string,
+  worldById: Map<string, OrbitWorldNode>,
+  rotation: OrbitRotation,
+): Map<string, OrbitProjectedNode> {
+  const projections = new Map<string, OrbitProjectedNode>();
+
+  nodes.forEach((node) => {
+    const worldNode = worldById.get(node.id) ?? {
+      x: node.x,
+      y: node.y,
+      z: 0,
+      depth: node.id === centerNodeId ? 0 : 1,
+    };
+    const rotated = rotateOrbitPoint(
+      worldNode.x,
+      worldNode.y,
+      worldNode.z,
+      rotation,
+    );
+    const perspective = clampNumber(
+      ORBIT_CAMERA_DISTANCE / (ORBIT_CAMERA_DISTANCE - rotated.z + 320),
+      0.76,
+      1.42,
+    );
+    const fade = clampNumber(
+      (rotated.z + ORBIT_CAMERA_DISTANCE * 0.62) / (ORBIT_CAMERA_DISTANCE * 1.22),
+      0.74,
+      1,
+    );
+    const opacity = clampNumber((0.56 + perspective * 0.34) * fade, 0.72, 1);
+    const labelOpacity = clampNumber((0.62 + perspective * 0.28) * fade, 0.74, 1);
+
+    projections.set(node.id, {
+      x: rotated.x * perspective,
+      y: rotated.y * perspective * 0.92,
+      z: rotated.z,
+      scale: perspective,
+      radius:
+        nodeRadius(node, node.id === centerNodeId) *
+        clampNumber(perspective, 0.82, 1.24),
+      opacity,
+      labelOpacity,
+    });
+  });
+
+  return projections;
+}
+
+function getOrbitLabelText(node: SimNode, label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return label;
+  }
+  const maxLength = isFileMemoryNode(node) ? 13 : 10;
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}…` : trimmed;
+}
+
+function traceRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const resolvedRadius = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + resolvedRadius, y);
+  ctx.lineTo(x + width - resolvedRadius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + resolvedRadius);
+  ctx.lineTo(x + width, y + height - resolvedRadius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - resolvedRadius, y + height);
+  ctx.lineTo(x + resolvedRadius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - resolvedRadius);
+  ctx.lineTo(x, y + resolvedRadius);
+  ctx.quadraticCurveTo(x, y, x + resolvedRadius, y);
+  ctx.closePath();
+}
+
 /* ── Component ─────────────────────────────────── */
 
 export default function MemoryGraph(props: MemoryGraphProps) {
@@ -649,10 +1236,15 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const isOrbitMode = renderMode === "orbit";
   /* refs */
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const orbitSceneRef = useRef<MemoryGraphOrbitSceneHandle | null>(null);
   const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
   const transformRef = useRef(d3.zoomIdentity);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
   const animFrameRef = useRef<number>(0);
+  const drawRef = useRef<() => void>(() => {});
+  const orbitRotationRef = useRef<OrbitRotation>(ORBIT_INITIAL_ROTATION);
+  const orbitAutoFrameKeyRef = useRef<string | null>(null);
+  const projectedNodeCacheRef = useRef<Map<string, OrbitProjectedNode>>(new Map());
   const connectStartRef = useRef<SimNode | null>(null);
   const connectModeRef = useRef<"parent" | "manual" | null>(null);
   const connectPointerRef = useRef<{ x: number; y: number } | null>(null);
@@ -660,6 +1252,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const editModeRef = useRef<GraphSelectionMode>(null);
   const selectedNodeRef = useRef<MemoryNode | null>(null);
   const selectableNodeIdsRef = useRef<Set<string>>(new Set());
+  const visibleNodeIdsRef = useRef<Set<string>>(new Set());
 
   /* state */
   const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
@@ -685,6 +1278,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
   const [editMode, setEditMode] = useState<GraphSelectionMode>(null);
   const [editSelectionIds, setEditSelectionIds] = useState<string[]>([]);
   const [editPending, setEditPending] = useState(false);
+  const [orbitWebglUnavailable, setOrbitWebglUnavailable] = useState(false);
 
   const modal = useModal();
 
@@ -1357,6 +1951,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     return ids;
   }, [activeCategories, activeSources, activeTimeRange, activeTypes, centerNodeId, simNodes]);
 
+  useEffect(() => {
+    visibleNodeIdsRef.current = visibleNodeIds;
+  }, [visibleNodeIds]);
+
   const localSearchMatchIds = useMemo(() => {
     if (!searchQuery) return null;
     const q = searchQuery.toLowerCase();
@@ -1386,9 +1984,34 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ...simNodes
           .filter((node) => isFactMemoryNode(node))
           .map((node) => getMemoryRetrievalCount(node)),
-      ),
+        ),
     [simNodes],
   );
+  const orbitSceneLinks = useMemo<OrbitSceneLink[]>(
+    () =>
+      simLinks.map((link) => ({
+        id: link.id,
+        sourceId: getSimLinkEndpointId(link.source),
+        targetId: getSimLinkEndpointId(link.target),
+        edgeType: link.edge_type,
+        strength: link.strength,
+      })),
+    [simLinks],
+  );
+  const orbitWorldById = useMemo(
+    () => buildOrbitWorldMap(simNodes, centerNodeId, simNodeById, maxRetrievalCount),
+    [centerNodeId, maxRetrievalCount, simNodeById, simNodes],
+  );
+  const getOrbitProjectedNodes = useCallback(() => {
+    const projections = buildOrbitProjectionMap(
+      simNodes,
+      centerNodeId,
+      orbitWorldById,
+      orbitRotationRef.current,
+    );
+    projectedNodeCacheRef.current = projections;
+    return projections;
+  }, [centerNodeId, orbitWorldById, simNodes]);
 
   /* ── Canvas draw ────────────────────────────── */
 
@@ -1421,34 +2044,226 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const isEditActive = Boolean(editMode && selectedNode);
     const activeNodeId = selectedNode?.id || null;
     const centerNode = simNodeById.get(centerNodeId) ?? null;
+    const orbitProjectedNodes = isOrbitMode ? getOrbitProjectedNodes() : null;
+    const getProjectedNode = (nodeId: string) =>
+      orbitProjectedNodes?.get(nodeId) ?? null;
+    const getRenderedX = (node: SimNode) => getProjectedNode(node.id)?.x ?? node.x;
+    const getRenderedY = (node: SimNode) => getProjectedNode(node.id)?.y ?? node.y;
+    const getRenderedScale = (node: SimNode) => getProjectedNode(node.id)?.scale ?? 1;
+    const getRenderedOpacity = (node: SimNode) => getProjectedNode(node.id)?.opacity ?? 1;
+    const getRenderedLabelOpacity = (node: SimNode) =>
+      getProjectedNode(node.id)?.labelOpacity ?? 1;
+    const getRenderedRadius = (node: SimNode) =>
+      getProjectedNode(node.id)?.radius ?? nodeRadius(node, node.id === centerNodeId);
+    const visibleSimNodes = simNodes.filter((node) => visibleNodeIds.has(node.id));
+    const orderedNodes = isOrbitMode
+      ? [...visibleSimNodes].sort(
+          (left, right) =>
+            (getProjectedNode(left.id)?.z ?? 0) - (getProjectedNode(right.id)?.z ?? 0),
+        )
+      : visibleSimNodes;
+    const orderedLinks = isOrbitMode
+      ? [...simLinks].sort((left, right) => {
+          const leftSource = getProjectedNode(
+            typeof left.source === "object" ? left.source.id : String(left.source),
+          );
+          const leftTarget = getProjectedNode(
+            typeof left.target === "object" ? left.target.id : String(left.target),
+          );
+          const rightSource = getProjectedNode(
+            typeof right.source === "object" ? right.source.id : String(right.source),
+          );
+          const rightTarget = getProjectedNode(
+            typeof right.target === "object" ? right.target.id : String(right.target),
+          );
+          return (
+            ((leftSource?.z ?? 0) + (leftTarget?.z ?? 0)) / 2 -
+            ((rightSource?.z ?? 0) + (rightTarget?.z ?? 0)) / 2
+          );
+        })
+      : simLinks;
+    let orbitScene: OrbitSceneRig | null = null;
+    const orbitLabelCandidates: Array<{
+      text: string;
+      x: number;
+      y: number;
+      fontSize: number;
+      opacity: number;
+      color: string;
+      priority: number;
+      z: number;
+      backdrop: boolean;
+      forceShow: boolean;
+    }> = [];
 
     if (isOrbitMode && centerNode) {
-      const orbitBands = [220, 360, 520];
+      const projectedCenter = getProjectedNode(centerNode.id);
+      const centerX = projectedCenter?.x ?? centerNode.x;
+      const centerY = projectedCenter?.y ?? centerNode.y;
+      const centerScale = projectedCenter?.scale ?? 1;
+      const floorY = centerY + 178 * centerScale;
+      const keyLightX = centerX - 392 * centerScale;
+      const keyLightY = centerY - 338 * centerScale;
+      const fillLightX = centerX + 486 * centerScale;
+      const fillLightY = centerY - 58 * centerScale;
+      const rimLightX = centerX + 214 * centerScale;
+      const rimLightY = centerY - 382 * centerScale;
+      orbitScene = {
+        centerX,
+        centerY,
+        centerScale,
+        floorY,
+        keyLightX,
+        keyLightY,
+        fillLightX,
+        fillLightY,
+        rimLightX,
+        rimLightY,
+      };
+
+      const keySpotlight = ctx.createRadialGradient(
+        keyLightX,
+        keyLightY,
+        0,
+        keyLightX,
+        keyLightY,
+        720 * centerScale,
+      );
+      keySpotlight.addColorStop(0, "rgba(255, 236, 214, 0.32)");
+      keySpotlight.addColorStop(0.32, "rgba(255, 226, 196, 0.14)");
+      keySpotlight.addColorStop(1, "rgba(255, 226, 196, 0)");
+      ctx.beginPath();
+      ctx.arc(keyLightX, keyLightY, 720 * centerScale, 0, Math.PI * 2);
+      ctx.fillStyle = keySpotlight;
+      ctx.fill();
+
+      const fillSpotlight = ctx.createRadialGradient(
+        fillLightX,
+        fillLightY,
+        0,
+        fillLightX,
+        fillLightY,
+        660 * centerScale,
+      );
+      fillSpotlight.addColorStop(0, "rgba(188, 206, 255, 0.18)");
+      fillSpotlight.addColorStop(0.34, "rgba(188, 206, 255, 0.08)");
+      fillSpotlight.addColorStop(1, "rgba(188, 206, 255, 0)");
+      ctx.beginPath();
+      ctx.arc(fillLightX, fillLightY, 660 * centerScale, 0, Math.PI * 2);
+      ctx.fillStyle = fillSpotlight;
+      ctx.fill();
+
+      const stageGlow = ctx.createRadialGradient(
+        centerX,
+        floorY - 34 * centerScale,
+        0,
+        centerX,
+        floorY - 34 * centerScale,
+        486 * centerScale,
+      );
+      stageGlow.addColorStop(0, "rgba(255, 255, 255, 0.28)");
+      stageGlow.addColorStop(0.24, "rgba(252, 244, 236, 0.18)");
+      stageGlow.addColorStop(0.68, "rgba(228, 219, 236, 0.05)");
+      stageGlow.addColorStop(1, "rgba(228, 219, 236, 0)");
+      ctx.beginPath();
+      ctx.ellipse(
+        centerX,
+        floorY,
+        468 * centerScale,
+        124 * centerScale,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = stageGlow;
+      ctx.fill();
+
+      const stageEdge = ctx.createLinearGradient(
+        centerX,
+        floorY - 84 * centerScale,
+        centerX,
+        floorY + 90 * centerScale,
+      );
+      stageEdge.addColorStop(0, "rgba(255, 255, 255, 0.18)");
+      stageEdge.addColorStop(0.48, "rgba(227, 210, 194, 0.12)");
+      stageEdge.addColorStop(1, "rgba(142, 110, 84, 0.08)");
+      ctx.beginPath();
+      ctx.ellipse(
+        centerX,
+        floorY,
+        452 * centerScale,
+        108 * centerScale,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.strokeStyle = stageEdge;
+      ctx.lineWidth = 1.2 * centerScale;
+      ctx.stroke();
+
+      const orbitBands = [210, 318];
       orbitBands.forEach((band, index) => {
         ctx.beginPath();
         ctx.ellipse(
-          centerNode.x,
-          centerNode.y,
-          band,
-          band * 0.72,
+          centerX,
+          centerY,
+          band * centerScale,
+          band * (0.14 + index * 0.04) * centerScale,
           0,
           0,
           Math.PI * 2,
         );
         ctx.strokeStyle =
           index === 0
-            ? "rgba(222, 181, 142, 0.26)"
-            : index === 1
-              ? "rgba(144, 139, 255, 0.14)"
-              : "rgba(214, 196, 244, 0.12)";
-        ctx.lineWidth = 1;
+            ? "rgba(219, 168, 127, 0.18)"
+            : "rgba(144, 139, 255, 0.12)";
+        ctx.lineWidth = 0.9;
         ctx.stroke();
       });
 
-      simNodes.forEach((node) => {
+      const groundShadow = ctx.createRadialGradient(
+        centerX,
+        floorY - 12 * centerScale,
+        0,
+        centerX,
+        floorY - 12 * centerScale,
+        426 * centerScale,
+      );
+      groundShadow.addColorStop(0, "rgba(118, 88, 64, 0.16)");
+      groundShadow.addColorStop(0.28, "rgba(118, 88, 64, 0.07)");
+      groundShadow.addColorStop(1, "rgba(118, 88, 64, 0)");
+      ctx.beginPath();
+      ctx.ellipse(
+        centerX,
+        floorY - 8 * centerScale,
+        426 * centerScale,
+        96 * centerScale,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = groundShadow;
+      ctx.fill();
+
+      const centerHalo = ctx.createRadialGradient(
+        centerX,
+        centerY,
+        0,
+        centerX,
+        centerY,
+        260 * centerScale,
+      );
+      centerHalo.addColorStop(0, "rgba(255, 220, 190, 0.1)");
+      centerHalo.addColorStop(0.35, "rgba(255, 220, 190, 0.03)");
+      centerHalo.addColorStop(1, "rgba(255, 220, 190, 0)");
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 260 * centerScale, 0, Math.PI * 2);
+      ctx.fillStyle = centerHalo;
+      ctx.fill();
+
+      orderedNodes.forEach((node) => {
         if (
           node.id === centerNodeId ||
-          !visibleNodeIds.has(node.id) ||
           isFileMemoryNode(node)
         ) {
           return;
@@ -1458,22 +2273,126 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         if (!isRootBranch) {
           return;
         }
-        const halo = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, 84);
-        halo.addColorStop(0, "rgba(235, 173, 132, 0.18)");
-        halo.addColorStop(0.45, "rgba(235, 173, 132, 0.08)");
+        const projectedNode = getProjectedNode(node.id);
+        if (!projectedNode) {
+          return;
+        }
+        const haloRadius = 52 * projectedNode.scale;
+        const halo = ctx.createRadialGradient(
+          projectedNode.x,
+          projectedNode.y,
+          0,
+          projectedNode.x,
+          projectedNode.y,
+          haloRadius,
+        );
+        halo.addColorStop(0, "rgba(235, 173, 132, 0.05)");
+        halo.addColorStop(0.45, "rgba(235, 173, 132, 0.015)");
         halo.addColorStop(1, "rgba(235, 173, 132, 0)");
         ctx.beginPath();
-        ctx.arc(node.x, node.y, 84, 0, Math.PI * 2);
+        ctx.arc(projectedNode.x, projectedNode.y, haloRadius, 0, Math.PI * 2);
         ctx.fillStyle = halo;
         ctx.fill();
       });
     }
 
+    if (isOrbitMode && orbitScene) {
+      orderedNodes.forEach((node) => {
+        if (!visibleNodeIds.has(node.id)) {
+          return;
+        }
+
+        const projectedNode = getProjectedNode(node.id);
+        if (!projectedNode) {
+          return;
+        }
+
+        const nodeX = projectedNode.x;
+        const nodeY = projectedNode.y;
+        const radius = projectedNode.radius;
+        const lightVectorX = nodeX - orbitScene.keyLightX;
+        const lightVectorY = nodeY - orbitScene.keyLightY;
+        const lightLength = Math.hypot(lightVectorX, lightVectorY) || 1;
+        const shadowDirX = lightVectorX / lightLength;
+        const shadowDirY = lightVectorY / lightLength;
+        const depthLift = clampNumber((projectedNode.z + 360) / 1080, 0.24, 1.12);
+        const planeY =
+          orbitScene.floorY + (nodeY - orbitScene.centerY) * 0.14 + depthLift * 4;
+        const shadowCenterX =
+          nodeX + shadowDirX * radius * (1.35 + depthLift * 0.42);
+        const shadowCenterY =
+          planeY + shadowDirY * radius * (0.42 + depthLift * 0.12);
+        const shadowRotation = Math.atan2(shadowDirY, shadowDirX);
+        const shadowRadiusX = radius * (1.5 + depthLift * 1.1);
+        const shadowRadiusY = Math.max(6, radius * (0.24 + depthLift * 0.08));
+        const shadowOpacity =
+          isFileMemoryNode(node)
+            ? 0.1 * projectedNode.opacity
+            : clampNumber(0.1 + depthLift * 0.08, 0.12, 0.22) * projectedNode.opacity;
+        const castShadow = ctx.createRadialGradient(
+          shadowCenterX,
+          shadowCenterY,
+          0,
+          shadowCenterX,
+          shadowCenterY,
+          shadowRadiusX,
+        );
+        castShadow.addColorStop(0, `rgba(71, 46, 31, ${shadowOpacity})`);
+        castShadow.addColorStop(0.44, `rgba(71, 46, 31, ${shadowOpacity * 0.44})`);
+        castShadow.addColorStop(1, "rgba(71, 46, 31, 0)");
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.ellipse(
+          shadowCenterX,
+          shadowCenterY,
+          shadowRadiusX,
+          shadowRadiusY,
+          shadowRotation,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fillStyle = castShadow;
+        ctx.fill();
+
+        const contactShadow = ctx.createRadialGradient(
+          nodeX + shadowDirX * radius * 0.2,
+          planeY,
+          0,
+          nodeX + shadowDirX * radius * 0.2,
+          planeY,
+          radius * 1.1,
+        );
+        contactShadow.addColorStop(0, `rgba(56, 36, 24, ${shadowOpacity * 0.9})`);
+        contactShadow.addColorStop(0.58, `rgba(56, 36, 24, ${shadowOpacity * 0.36})`);
+        contactShadow.addColorStop(1, "rgba(56, 36, 24, 0)");
+        ctx.beginPath();
+        ctx.ellipse(
+          nodeX + shadowDirX * radius * 0.18,
+          planeY,
+          radius * 1.08,
+          Math.max(4, radius * 0.28),
+          0,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fillStyle = contactShadow;
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
     /* ── Draw edges ── */
-    simLinks.forEach((link) => {
+    orderedLinks.forEach((link) => {
       const src = link.source as SimNode;
       const tgt = link.target as SimNode;
       if (!visibleNodeIds.has(src.id) || !visibleNodeIds.has(tgt.id)) return;
+      const srcProjection = getProjectedNode(src.id);
+      const tgtProjection = getProjectedNode(tgt.id);
+      const srcX = srcProjection?.x ?? src.x;
+      const srcY = srcProjection?.y ?? src.y;
+      const tgtX = tgtProjection?.x ?? tgt.x;
+      const tgtY = tgtProjection?.y ?? tgt.y;
 
       const isFileEdge = link.edge_type === "file";
       const isSummaryEdge = link.edge_type === "summary";
@@ -1495,7 +2414,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         isCenterStructuralTreeEdgePair(simNodeById, src.id, tgt.id, centerNodeId);
       const isParentEdge =
         link.edge_type === "parent" || (isStructuralEdge && !isCenterEdge);
-      const lineWidth = isFileEdge
+      const baseLineWidth = isFileEdge
         ? 1
         : isEvidenceEdge
           ? isOrbitMode ? 1.35 : 1.15
@@ -1513,9 +2432,14 @@ export default function MemoryGraph(props: MemoryGraphProps) {
                 ? isOrbitMode ? 1.4 : 1.2
               : isSystemRelatedEdge
                 ? isOrbitMode ? 1.65 : 1.4
-                : isSummaryEdge
-                  ? isOrbitMode ? 1.45 : 1.2
-                  : 0.85 + link.strength * 1.2;
+              : isSummaryEdge
+                ? isOrbitMode ? 1.45 : 1.2
+                : 0.85 + link.strength * 1.2;
+      const lineWidth =
+        isOrbitMode && srcProjection && tgtProjection
+          ? baseLineWidth *
+            clampNumber((srcProjection.scale + tgtProjection.scale) / 2, 0.78, 1.52)
+          : baseLineWidth;
       const edgeTouchesActiveNode = Boolean(activeNodeId && (src.id === activeNodeId || tgt.id === activeNodeId));
       const edgeTouchesSelection =
         edgeTouchesActiveNode ||
@@ -1524,67 +2448,76 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         (editSelectionSet.has(GRAPH_TOP_LEVEL_TARGET_ID) &&
           (src.id === centerNodeId || tgt.id === centerNodeId));
 
+      ctx.save();
+      if (isOrbitMode) {
+        ctx.globalAlpha = clampNumber(
+          ((srcProjection?.opacity ?? 1) + (tgtProjection?.opacity ?? 1)) / 2,
+          0.44,
+          0.92,
+        );
+      }
+
       if (isFileEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([]);
         ctx.strokeStyle = "rgba(138, 122, 106, 0.45)";
       } else if (isEvidenceEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([3, 5]);
         ctx.strokeStyle = isOrbitMode ? "rgba(123, 104, 238, 0.62)" : "rgba(111, 92, 214, 0.46)";
       } else if (isParentEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([]);
         ctx.strokeStyle = isOrbitMode ? "rgba(209, 132, 91, 0.5)" : "rgba(200, 115, 74, 0.34)";
       } else if (isSummaryEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([]);
         ctx.strokeStyle = isOrbitMode ? "rgba(191, 155, 63, 0.58)" : "rgba(182, 138, 47, 0.45)";
       } else if (isSystemRelatedEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([6, 6]);
         ctx.strokeStyle = isOrbitMode ? "rgba(91, 118, 255, 0.66)" : "rgba(89, 102, 241, 0.52)";
       } else if (isPrerequisiteEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([8, 5]);
         ctx.strokeStyle = isOrbitMode ? "rgba(37, 99, 235, 0.72)" : "rgba(37, 99, 235, 0.58)";
       } else if (isConflictEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([4, 6]);
         ctx.strokeStyle = isOrbitMode ? "rgba(196, 78, 54, 0.82)" : "rgba(184, 65, 41, 0.66)";
       } else if (isVersionEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([2, 8]);
         ctx.strokeStyle = isOrbitMode ? "rgba(130, 120, 108, 0.72)" : "rgba(120, 109, 97, 0.56)";
       } else if (isManualRelatedEdge) {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([10, 6]);
         ctx.strokeStyle = isOrbitMode ? "rgba(89, 111, 255, 0.9)" : "rgba(79, 93, 232, 0.82)";
       } else if (isCenterEdge) {
-        const glowGradient = ctx.createLinearGradient(src.x, src.y, tgt.x, tgt.y);
+        const glowGradient = ctx.createLinearGradient(srcX, srcY, tgtX, tgtY);
         glowGradient.addColorStop(0, "rgba(255, 236, 221, 0.4)");
         glowGradient.addColorStop(1, "rgba(200, 115, 74, 0.16)");
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([]);
         ctx.strokeStyle = glowGradient;
         ctx.lineWidth = lineWidth + 2.6;
@@ -1592,24 +2525,24 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           const srcMatch = searchMatchIds.has(src.id);
           const tgtMatch = searchMatchIds.has(tgt.id);
           if (!srcMatch && !tgtMatch) {
-            ctx.globalAlpha = 0.12;
+            ctx.globalAlpha = 0.28;
           }
         }
         ctx.stroke();
         ctx.globalAlpha = 1;
 
-        const centerGradient = ctx.createLinearGradient(src.x, src.y, tgt.x, tgt.y);
+        const centerGradient = ctx.createLinearGradient(srcX, srcY, tgtX, tgtY);
         centerGradient.addColorStop(0, "rgba(242, 214, 188, 0.9)");
         centerGradient.addColorStop(0.55, "rgba(210, 142, 95, 0.62)");
         centerGradient.addColorStop(1, "rgba(200, 115, 74, 0.26)");
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.strokeStyle = centerGradient;
       } else {
         ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
+        ctx.moveTo(srcX, srcY);
+        ctx.lineTo(tgtX, tgtY);
         ctx.setLineDash([4, 5]);
         ctx.strokeStyle = "rgba(200, 115, 74, 0.22)";
       }
@@ -1617,11 +2550,11 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
       if (isEditActive) {
         if (!edgeTouchesSelection) {
-          ctx.globalAlpha = 0.08;
+          ctx.globalAlpha = 0.18;
         } else if (isLateralEdge) {
-          ctx.globalAlpha = 0.72;
+          ctx.globalAlpha = 0.82;
         } else {
-          ctx.globalAlpha = 0.56;
+          ctx.globalAlpha = 0.68;
         }
       }
 
@@ -1629,16 +2562,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         const srcMatch = searchMatchIds.has(src.id);
         const tgtMatch = searchMatchIds.has(tgt.id);
         if (!srcMatch && !tgtMatch) {
-          ctx.globalAlpha = 0.15;
+          ctx.globalAlpha = 0.32;
         }
       }
 
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
+      ctx.restore();
     });
 
-    if (connectStartRef.current && connectPointerRef.current) {
+    if (!isOrbitMode && connectStartRef.current && connectPointerRef.current) {
       ctx.beginPath();
       ctx.moveTo(connectStartRef.current.x, connectStartRef.current.y);
       ctx.lineTo(connectPointerRef.current.x, connectPointerRef.current.y);
@@ -1655,8 +2588,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     }
 
       /* ── Draw nodes ── */
-    simNodes.forEach((node) => {
-      if (!visibleNodeIds.has(node.id)) return;
+    orderedNodes.forEach((node) => {
+      const nodeX = getRenderedX(node);
+      const nodeY = getRenderedY(node);
+      const depthScale = getRenderedScale(node);
+      const depthOpacity = getRenderedOpacity(node);
+      const labelOpacity = getRenderedLabelOpacity(node);
 
       const isCenter = node.id === centerNodeId;
       const isSearched = hasSearch && searchMatchIds.has(node.id);
@@ -1669,11 +2606,33 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const isFaded =
         (hasSearch && !isSearched && !isCenter) ||
         (isEditActive && !isEditAnchor && !isEditSelected && !isEditSelectable);
+      const renderedRadius = getRenderedRadius(node);
+      const keyLightVectorX = orbitScene ? orbitScene.keyLightX - nodeX : -1;
+      const keyLightVectorY = orbitScene ? orbitScene.keyLightY - nodeY : -1;
+      const keyLightLength =
+        orbitScene ? Math.hypot(keyLightVectorX, keyLightVectorY) || 1 : 1;
+      const keyLightDirX = keyLightVectorX / keyLightLength;
+      const keyLightDirY = keyLightVectorY / keyLightLength;
+      const fillLightVectorX = orbitScene ? orbitScene.fillLightX - nodeX : 1;
+      const fillLightVectorY = orbitScene ? orbitScene.fillLightY - nodeY : -0.2;
+      const fillLightLength =
+        orbitScene ? Math.hypot(fillLightVectorX, fillLightVectorY) || 1 : 1;
+      const fillLightDirX = fillLightVectorX / fillLightLength;
+      const fillLightDirY = fillLightVectorY / fillLightLength;
+      const rimLightVectorX = orbitScene ? orbitScene.rimLightX - nodeX : 1;
+      const rimLightVectorY = orbitScene ? orbitScene.rimLightY - nodeY : -1;
+      const rimLightLength =
+        orbitScene ? Math.hypot(rimLightVectorX, rimLightVectorY) || 1 : 1;
+      const rimLightDirX = rimLightVectorX / rimLightLength;
+      const rimLightDirY = rimLightVectorY / rimLightLength;
+      const orbitDepthLift = orbitScene
+        ? clampNumber(((getProjectedNode(node.id)?.z ?? 0) + 360) / 1080, 0.24, 1.18)
+        : 0.6;
 
-      if (isFaded) ctx.globalAlpha = 0.3;
+      ctx.save();
+      ctx.globalAlpha = clampNumber(depthOpacity * (isFaded ? 0.42 : 1), 0.58, 1);
 
       if (isSearched || isEditSelected || isEditAnchor) {
-        ctx.save();
         ctx.shadowColor = isEditAnchor
           ? "rgba(255, 146, 90, 0.92)"
           : isEditSelected
@@ -1681,185 +2640,444 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             : isCenter
               ? COLORS.centerGradStart
               : getMemoryNodeColor(node, maxRetrievalCount);
-        ctx.shadowBlur = isEditAnchor ? 24 : 18;
+        ctx.shadowBlur = (isEditAnchor ? 24 : 18) * depthScale;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
+      } else if (isOrbitMode && !isFileMemoryNode(node)) {
+        ctx.shadowColor = "rgba(82, 53, 35, 0.22)";
+        ctx.shadowBlur = 14 * depthScale;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 7 * depthScale;
       }
 
       if (isCenter) {
         /* center node gradient */
         const grad = ctx.createRadialGradient(
-          node.x,
-          node.y,
-          0,
-          node.x,
-          node.y,
-          CENTER_NODE_RADIUS
+          nodeX + keyLightDirX * renderedRadius * 0.22,
+          nodeY + keyLightDirY * renderedRadius * 0.2,
+          Math.max(1, renderedRadius * 0.14),
+          nodeX,
+          nodeY,
+          renderedRadius
         );
-        grad.addColorStop(0, COLORS.centerGradEnd);
-        grad.addColorStop(1, COLORS.centerGradStart);
+        grad.addColorStop(0, "#fff8f0");
+        grad.addColorStop(0.24, d3.interpolateRgb(COLORS.centerGradEnd, "#fff4e8")(0.42));
+        grad.addColorStop(0.68, COLORS.centerGradEnd);
+        grad.addColorStop(1, d3.interpolateRgb(COLORS.centerGradStart, "#5d2f19")(0.28));
         ctx.beginPath();
-        ctx.arc(node.x, node.y, CENTER_NODE_RADIUS, 0, Math.PI * 2);
+        ctx.arc(nodeX, nodeY, renderedRadius, 0, Math.PI * 2);
         ctx.fillStyle = grad;
         ctx.fill();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        if (isOrbitMode) {
+          const centerShade = ctx.createLinearGradient(
+            nodeX + keyLightDirX * renderedRadius,
+            nodeY + keyLightDirY * renderedRadius,
+            nodeX - keyLightDirX * renderedRadius * 1.12,
+            nodeY - keyLightDirY * renderedRadius * 1.12,
+          );
+          centerShade.addColorStop(0, "rgba(255, 255, 255, 0)");
+          centerShade.addColorStop(0.54, "rgba(255, 255, 255, 0.04)");
+          centerShade.addColorStop(1, "rgba(95, 48, 23, 0.32)");
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, renderedRadius, 0, Math.PI * 2);
+          ctx.fillStyle = centerShade;
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, renderedRadius, 0, Math.PI * 2);
+          const centerHighlight = ctx.createRadialGradient(
+            nodeX + keyLightDirX * renderedRadius * 0.46,
+            nodeY + keyLightDirY * renderedRadius * 0.46,
+            Math.max(1, renderedRadius * 0.08),
+            nodeX + keyLightDirX * renderedRadius * 0.26,
+            nodeY + keyLightDirY * renderedRadius * 0.24,
+            renderedRadius * 0.92,
+          );
+          centerHighlight.addColorStop(0, "rgba(255, 255, 255, 0.86)");
+          centerHighlight.addColorStop(0.22, "rgba(255, 255, 255, 0.34)");
+          centerHighlight.addColorStop(1, "rgba(255, 255, 255, 0)");
+          ctx.fillStyle = centerHighlight;
+          ctx.fill();
+
+          const centerRim = ctx.createRadialGradient(
+            nodeX + rimLightDirX * renderedRadius * 0.82,
+            nodeY + rimLightDirY * renderedRadius * 0.82,
+            0,
+            nodeX + rimLightDirX * renderedRadius * 0.82,
+            nodeY + rimLightDirY * renderedRadius * 0.82,
+            renderedRadius * 0.96,
+          );
+          centerRim.addColorStop(0, "rgba(199, 214, 255, 0.22)");
+          centerRim.addColorStop(0.34, "rgba(199, 214, 255, 0.08)");
+          centerRim.addColorStop(1, "rgba(199, 214, 255, 0)");
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, renderedRadius, 0, Math.PI * 2);
+          ctx.fillStyle = centerRim;
+          ctx.fill();
+
+          ctx.shadowColor = "transparent";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.strokeStyle = "rgba(137, 78, 42, 0.38)";
+          ctx.lineWidth = Math.max(2.2, 2.8 * depthScale);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, renderedRadius - 1.4 * depthScale, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 250, 245, 0.92)";
+          ctx.lineWidth = Math.max(1, 1.15 * depthScale);
+          ctx.stroke();
+        } else {
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = Math.max(1.5, 2 * depthScale);
+          ctx.stroke();
+        }
 
         if (isOrbitMode) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, CENTER_NODE_RADIUS + 14, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(232, 185, 140, 0.28)";
-          ctx.lineWidth = 1.2;
+          ctx.arc(nodeX, nodeY, renderedRadius + 14 * depthScale, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(232, 185, 140, 0.2)";
+          ctx.lineWidth = Math.max(1, 1.2 * depthScale);
           ctx.stroke();
         }
 
         if (isEditSelectable || isEditSelected || isEditAnchor) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, CENTER_NODE_RADIUS + 9, 0, Math.PI * 2);
+          ctx.arc(nodeX, nodeY, renderedRadius + 9 * depthScale, 0, Math.PI * 2);
           ctx.strokeStyle = isEditAnchor
             ? "rgba(255, 255, 255, 0.96)"
             : isEditSelected
               ? "rgba(99, 102, 241, 0.82)"
               : "rgba(99, 102, 241, 0.34)";
-          ctx.lineWidth = isEditAnchor ? 2.4 : 1.8;
+          ctx.lineWidth = (isEditAnchor ? 2.4 : 1.8) * depthScale;
           ctx.stroke();
         }
 
         /* center label (inside) */
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 13px sans-serif";
+        ctx.font = `bold ${Math.max(11, 13 * depthScale)}px sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(centerNodeShortLabel, node.x, node.y);
+        ctx.fillText(centerNodeShortLabel, nodeX, nodeY);
       } else if (isFileMemoryNode(node)) {
         /* file node: rounded rect */
-        const rx = node.x - FILE_NODE_W / 2;
-        const ry = node.y - FILE_NODE_H / 2;
-        const cornerR = 3;
+        const fileWidth = FILE_NODE_W * depthScale;
+        const fileHeight = FILE_NODE_H * depthScale;
+        const rx = nodeX - fileWidth / 2;
+        const ry = nodeY - fileHeight / 2;
+        const cornerR = Math.max(2, 3 * depthScale);
         ctx.beginPath();
         ctx.moveTo(rx + cornerR, ry);
-        ctx.lineTo(rx + FILE_NODE_W - cornerR, ry);
-        ctx.quadraticCurveTo(rx + FILE_NODE_W, ry, rx + FILE_NODE_W, ry + cornerR);
-        ctx.lineTo(rx + FILE_NODE_W, ry + FILE_NODE_H - cornerR);
+        ctx.lineTo(rx + fileWidth - cornerR, ry);
+        ctx.quadraticCurveTo(rx + fileWidth, ry, rx + fileWidth, ry + cornerR);
+        ctx.lineTo(rx + fileWidth, ry + fileHeight - cornerR);
         ctx.quadraticCurveTo(
-          rx + FILE_NODE_W,
-          ry + FILE_NODE_H,
-          rx + FILE_NODE_W - cornerR,
-          ry + FILE_NODE_H
+          rx + fileWidth,
+          ry + fileHeight,
+          rx + fileWidth - cornerR,
+          ry + fileHeight
         );
-        ctx.lineTo(rx + cornerR, ry + FILE_NODE_H);
-        ctx.quadraticCurveTo(rx, ry + FILE_NODE_H, rx, ry + FILE_NODE_H - cornerR);
+        ctx.lineTo(rx + cornerR, ry + fileHeight);
+        ctx.quadraticCurveTo(rx, ry + fileHeight, rx, ry + fileHeight - cornerR);
         ctx.lineTo(rx, ry + cornerR);
         ctx.quadraticCurveTo(rx, ry, rx + cornerR, ry);
         ctx.closePath();
         ctx.fillStyle = COLORS.file;
         ctx.fill();
         ctx.strokeStyle = "#b0a090";
-        ctx.lineWidth = 1;
+        ctx.lineWidth = Math.max(0.9, depthScale);
         ctx.stroke();
       } else {
         /* memory node circle */
-        const radius = nodeRadius(node, false);
+        const radius = renderedRadius;
         const color = getMemoryNodeColor(node, maxRetrievalCount);
         if (isOrbitMode) {
           ctx.beginPath();
           ctx.ellipse(
-            node.x,
-            node.y + radius * 0.95,
-            Math.max(5, radius * 0.92),
-            Math.max(3, radius * 0.32),
+            nodeX,
+            nodeY + radius * 0.98,
+            Math.max(4, radius * 0.68),
+            Math.max(2.5, radius * 0.18),
             0,
             0,
             Math.PI * 2,
           );
-          ctx.fillStyle = "rgba(73, 48, 30, 0.12)";
+          ctx.fillStyle = "rgba(73, 48, 30, 0.14)";
           ctx.fill();
         }
         ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+        ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
         if (isOrbitMode) {
-          const fillGradient = ctx.createRadialGradient(
-            node.x - radius * 0.35,
-            node.y - radius * 0.45,
-            Math.max(1, radius * 0.15),
-            node.x,
-            node.y,
+          const litBase = ctx.createRadialGradient(
+            nodeX + keyLightDirX * radius * 0.18,
+            nodeY + keyLightDirY * radius * 0.18,
+            Math.max(1, radius * 0.1),
+            nodeX,
+            nodeY,
             radius,
           );
-          fillGradient.addColorStop(0, d3.interpolateRgb(color, "#fff4eb")(0.34));
-          fillGradient.addColorStop(0.58, color);
-          fillGradient.addColorStop(1, d3.interpolateRgb(color, "#6a3921")(0.18));
-          ctx.fillStyle = fillGradient;
+          litBase.addColorStop(0, d3.interpolateRgb(color, "#fff4ec")(0.54));
+          litBase.addColorStop(0.3, d3.interpolateRgb(color, "#f8ebe2")(0.2));
+          litBase.addColorStop(0.76, color);
+          litBase.addColorStop(1, d3.interpolateRgb(color, "#5a3120")(0.26));
+          ctx.fillStyle = litBase;
         } else {
           ctx.fillStyle = color;
         }
         ctx.fill();
 
+        if (isOrbitMode) {
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
+          const bodyShade = ctx.createLinearGradient(
+            nodeX + keyLightDirX * radius,
+            nodeY + keyLightDirY * radius,
+            nodeX - keyLightDirX * radius * 1.08,
+            nodeY - keyLightDirY * radius * 1.08,
+          );
+          bodyShade.addColorStop(0, "rgba(255, 255, 255, 0)");
+          bodyShade.addColorStop(0.52, "rgba(255, 255, 255, 0.04)");
+          bodyShade.addColorStop(1, `rgba(64, 33, 19, ${0.26 + orbitDepthLift * 0.04})`);
+          ctx.fillStyle = bodyShade;
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
+          const highlight = ctx.createRadialGradient(
+            nodeX + keyLightDirX * radius * 0.48,
+            nodeY + keyLightDirY * radius * 0.48,
+            Math.max(1, radius * 0.08),
+            nodeX + keyLightDirX * radius * 0.26,
+            nodeY + keyLightDirY * radius * 0.28,
+            radius * 0.78,
+          );
+          highlight.addColorStop(0, `rgba(255, 255, 255, ${0.72 + orbitDepthLift * 0.08})`);
+          highlight.addColorStop(0.22, "rgba(255, 255, 255, 0.28)");
+          highlight.addColorStop(1, "rgba(255, 255, 255, 0)");
+          ctx.fillStyle = highlight;
+          ctx.fill();
+
+          const fillBloom = ctx.createRadialGradient(
+            nodeX + fillLightDirX * radius * 0.44,
+            nodeY + fillLightDirY * radius * 0.28,
+            0,
+            nodeX + fillLightDirX * radius * 0.44,
+            nodeY + fillLightDirY * radius * 0.28,
+            radius * 0.92,
+          );
+          fillBloom.addColorStop(0, "rgba(210, 223, 255, 0.16)");
+          fillBloom.addColorStop(0.34, "rgba(210, 223, 255, 0.06)");
+          fillBloom.addColorStop(1, "rgba(210, 223, 255, 0)");
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
+          ctx.fillStyle = fillBloom;
+          ctx.fill();
+
+          const rimLight = ctx.createRadialGradient(
+            nodeX + rimLightDirX * radius * 0.8,
+            nodeY + rimLightDirY * radius * 0.8,
+            0,
+            nodeX + rimLightDirX * radius * 0.8,
+            nodeY + rimLightDirY * radius * 0.8,
+            radius * 0.94,
+          );
+          rimLight.addColorStop(0, "rgba(198, 214, 255, 0.24)");
+          rimLight.addColorStop(0.28, "rgba(198, 214, 255, 0.08)");
+          rimLight.addColorStop(1, "rgba(198, 214, 255, 0)");
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
+          ctx.fillStyle = rimLight;
+          ctx.fill();
+
+          ctx.shadowColor = "transparent";
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius, 0, Math.PI * 2);
+          ctx.strokeStyle = d3.interpolateRgb(color, "#5a3120")(0.34);
+          ctx.lineWidth = Math.max(1.6, 2 * depthScale);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(nodeX, nodeY, radius - 1.2 * depthScale, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 250, 244, 0.88)";
+          ctx.lineWidth = Math.max(0.8, 0.95 * depthScale);
+          ctx.stroke();
+        }
+
         if (node.type === "temporary") {
           ctx.setLineDash([4, 3]);
         }
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = getMemoryNodeRole(node) === "summary" ? 2.4 : 1.5;
-        ctx.stroke();
+        if (!isOrbitMode) {
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = (getMemoryNodeRole(node) === "summary" ? 2.5 : 1.75) * depthScale;
+          ctx.stroke();
+        }
         ctx.setLineDash([]);
 
         if (isEditSelectable && !isEditSelected && !isEditAnchor) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, radius + 7, 0, Math.PI * 2);
+          ctx.arc(nodeX, nodeY, radius + 7 * depthScale, 0, Math.PI * 2);
           ctx.strokeStyle = "rgba(99, 102, 241, 0.34)";
-          ctx.lineWidth = 1.4;
+          ctx.lineWidth = 1.4 * depthScale;
           ctx.stroke();
         }
 
         if (isEditSelected || isEditAnchor) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2);
+          ctx.arc(nodeX, nodeY, radius + 8 * depthScale, 0, Math.PI * 2);
           ctx.strokeStyle = isEditAnchor ? "rgba(255, 255, 255, 0.96)" : "rgba(99, 102, 241, 0.82)";
-          ctx.lineWidth = isEditAnchor ? 2.2 : 1.8;
+          ctx.lineWidth = (isEditAnchor ? 2.2 : 1.8) * depthScale;
           ctx.stroke();
         }
 
         if (getMemoryNodeRole(node) === "summary") {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, Math.max(radius - 6, 6), 0, Math.PI * 2);
+          ctx.arc(nodeX, nodeY, Math.max(radius - 6 * depthScale, 6 * depthScale), 0, Math.PI * 2);
           ctx.strokeStyle = "rgba(255, 246, 221, 0.95)";
-          ctx.lineWidth = 1;
+          ctx.lineWidth = Math.max(0.9, depthScale);
           ctx.stroke();
         }
 
         if (isPinnedMemoryNode(node)) {
           ctx.beginPath();
-          ctx.arc(node.x + radius - 3, node.y - radius + 3, 4, 0, Math.PI * 2);
+          ctx.arc(nodeX + radius - 3 * depthScale, nodeY - radius + 3 * depthScale, 4 * depthScale, 0, Math.PI * 2);
           ctx.fillStyle = "#fff8e6";
           ctx.fill();
         }
       }
 
-      if (isSearched || isEditSelected || isEditAnchor) {
-        ctx.restore();
+      /* label below node */
+      const baseLabel = isCenter ? truncateCenterLabel(centerNodeLabel) : getLabel(node);
+      const label = isOrbitMode
+        ? getOrbitLabelText(node, baseLabel)
+        : baseLabel;
+      const labelY = isCenter
+        ? nodeY + renderedRadius + 14 * depthScale
+        : isFileMemoryNode(node)
+          ? nodeY + (FILE_NODE_H * depthScale) / 2 + 12 * depthScale
+          : nodeY + renderedRadius + 14 * depthScale;
+      const labelColor = isFaded
+        ? "rgba(42, 32, 24, 0.42)"
+        : isOrbitMode
+          ? "rgba(36, 22, 16, 0.96)"
+          : "#2a2018";
+
+      if (isOrbitMode) {
+        const orbitDepth = orbitWorldById.get(node.id)?.depth ?? (isCenter ? 0 : 1);
+        const role = getMemoryNodeRole(node);
+        const forceShow = Boolean(isCenter || isEditAnchor || isEditSelected || isSearched);
+        const priority =
+          (forceShow ? 220 : 0) +
+          (isCenter ? 160 : 0) +
+          (orbitDepth <= 1 ? 90 : orbitDepth === 2 ? 42 : 0) +
+          (role === "subject"
+            ? 28
+            : role === "concept"
+              ? 20
+              : role === "summary"
+                ? 14
+                : 0) +
+          depthScale * 18 +
+          (getProjectedNode(node.id)?.z ?? 0) * 0.02;
+        const shouldQueueLabel =
+          forceShow ||
+          (!isFileMemoryNode(node) && orbitDepth <= 2 && depthScale >= 0.84) ||
+          (isFileMemoryNode(node) && depthScale >= 1.04);
+
+        if (shouldQueueLabel) {
+          orbitLabelCandidates.push({
+            text: label,
+            x: nodeX,
+            y: labelY,
+            fontSize: 11.5 * clampNumber(depthScale, 0.84, 1.18),
+            opacity: labelOpacity * (isFaded ? 0.48 : 1),
+            color: labelColor,
+            priority,
+            z: getProjectedNode(node.id)?.z ?? 0,
+            backdrop: forceShow || orbitDepth <= 1 || depthScale > 1.04,
+            forceShow,
+          });
+        }
+      } else {
+        ctx.globalAlpha = labelOpacity * (isFaded ? 0.34 : 1);
+        ctx.fillStyle = labelColor;
+        ctx.font = "11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText(label, nodeX, labelY);
       }
 
-      /* label below node */
-      const label = isCenter ? truncateCenterLabel(centerNodeLabel) : getLabel(node);
-      const labelY = isCenter
-        ? node.y + CENTER_NODE_RADIUS + 14
-        : isFileMemoryNode(node)
-        ? node.y + FILE_NODE_H / 2 + 12
-        : node.y + nodeRadius(node, false) + 14;
-
-      ctx.fillStyle = isFaded
-        ? "rgba(42, 32, 24, 0.3)"
-        : isOrbitMode
-          ? "rgba(49, 30, 20, 0.92)"
-          : "#2a2018";
-      ctx.font = isOrbitMode ? "600 11.5px sans-serif" : "11px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillText(label, node.x, labelY);
-
-      ctx.globalAlpha = 1;
+      ctx.restore();
     });
+
+    if (isOrbitMode) {
+      const placedLabelBoxes: Array<{
+        left: number;
+        top: number;
+        right: number;
+        bottom: number;
+      }> = [];
+
+      orbitLabelCandidates
+        .sort((left, right) => right.priority - left.priority || right.z - left.z)
+        .forEach((candidate) => {
+          if (!candidate.forceShow && candidate.opacity < 0.34) {
+            return;
+          }
+          ctx.save();
+          ctx.globalAlpha = candidate.opacity;
+          ctx.font = `600 ${candidate.fontSize}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+
+          const textWidth = ctx.measureText(candidate.text).width;
+          const paddingX = candidate.backdrop ? 8 : 2;
+          const paddingY = candidate.backdrop ? 5 : 0;
+          const height = candidate.fontSize + paddingY * 2;
+          const box = {
+            left: candidate.x - textWidth / 2 - paddingX,
+            top: candidate.y - paddingY,
+            right: candidate.x + textWidth / 2 + paddingX,
+            bottom: candidate.y + candidate.fontSize + paddingY,
+          };
+          const collides = placedLabelBoxes.some(
+            (placed) =>
+              box.left < placed.right &&
+              box.right > placed.left &&
+              box.top < placed.bottom &&
+              box.bottom > placed.top,
+          );
+          if (collides && !candidate.forceShow) {
+            ctx.restore();
+            return;
+          }
+
+          if (candidate.backdrop) {
+            traceRoundedRect(
+              ctx,
+              box.left,
+              box.top,
+              box.right - box.left,
+              height,
+              999,
+            );
+            ctx.fillStyle = "rgba(255, 252, 249, 0.9)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(238, 228, 221, 0.96)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+
+          ctx.fillStyle = candidate.color;
+          ctx.fillText(
+            candidate.text,
+            candidate.x,
+            candidate.backdrop ? candidate.y + 1 : candidate.y,
+          );
+          placedLabelBoxes.push(box);
+          ctx.restore();
+        });
+    }
 
     ctx.restore();
   }, [
@@ -1868,8 +3086,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     centerNodeShortLabel,
     editMode,
     editSelectionSet,
+    getOrbitProjectedNodes,
     isOrbitMode,
     maxRetrievalCount,
+    orbitWorldById,
     searchMatchIds,
     selectableNodeIds,
     selectedNode,
@@ -1878,6 +3098,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     simNodes,
     visibleNodeIds,
   ]);
+
+  useEffect(() => {
+    drawRef.current = draw;
+  }, [draw]);
 
   /* ── Simulation setup ───────────────────────── */
 
@@ -1894,10 +3118,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           .forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
           .distance((link) => {
-            const sourceId =
-              typeof link.source === "object" ? link.source.id : String(link.source);
-            const targetId =
-              typeof link.target === "object" ? link.target.id : String(link.target);
+            const sourceId = getSimLinkEndpointId(link.source);
+            const targetId = getSimLinkEndpointId(link.target);
             const isStructuralCenterEdge =
               link.edge_type === "center" ||
               isCenterStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId);
@@ -1935,10 +3157,8 @@ export default function MemoryGraph(props: MemoryGraphProps) {
             return 100;
           })
           .strength((link) => {
-            const sourceId =
-              typeof link.source === "object" ? link.source.id : String(link.source);
-            const targetId =
-              typeof link.target === "object" ? link.target.id : String(link.target);
+            const sourceId = getSimLinkEndpointId(link.source);
+            const targetId = getSimLinkEndpointId(link.target);
             const isStructuralCenterEdge =
               link.edge_type === "center" ||
               isCenterStructuralTreeEdgePair(simNodeById, sourceId, targetId, centerNodeId);
@@ -2000,7 +3220,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       .alphaDecay(isOrbitMode ? 0.018 : 0.02)
       .on("tick", () => {
         cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = requestAnimationFrame(draw);
+        animFrameRef.current = requestAnimationFrame(() => drawRef.current());
       });
 
     simRef.current = sim;
@@ -2009,9 +3229,15 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     const zoomBehavior = d3
       .zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([0.1, 5])
+      .filter((event) => {
+        if (!isOrbitMode) {
+          return !event.button;
+        }
+        return event.type === "wheel";
+      })
       .on("zoom", (event: d3.D3ZoomEvent<HTMLCanvasElement, unknown>) => {
         transformRef.current = event.transform;
-        draw();
+        drawRef.current();
       });
 
     zoomBehaviorRef.current = zoomBehavior;
@@ -2021,9 +3247,21 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     // Disable D3's built-in dblclick zoom so our onDblClick handler fires instead
     sel.on("dblclick.zoom", null);
 
-    /* ── Initial transform: center in canvas ── */
+    /* ── Initial transform ── */
     const rect = canvas.getBoundingClientRect();
-    const initialTransform = d3.zoomIdentity.translate(rect.width / 2, rect.height / 2);
+    const initialTransform =
+      isOrbitMode
+        ? buildViewportTransform(
+            rect.width,
+            rect.height,
+            simNodes,
+            centerNodeId,
+            visibleNodeIdsRef.current,
+            getOrbitProjectedNodes(),
+            ORBIT_VIEWPORT_OPTIONS,
+          ) ??
+          d3.zoomIdentity.translate(rect.width / 2, rect.height / 2)
+        : d3.zoomIdentity.translate(rect.width / 2, rect.height / 2);
     sel.call(zoomBehavior.transform, initialTransform);
     transformRef.current = initialTransform;
 
@@ -2070,12 +3308,22 @@ export default function MemoryGraph(props: MemoryGraphProps) {
       const t = transformRef.current;
       const x = (mx - t.x) / t.k;
       const y = (my - t.y) / t.k;
-      for (let i = simNodes.length - 1; i >= 0; i--) {
-        const n = simNodes[i];
-        const isC = n.id === centerNodeId;
-        const r = nodeRadius(n, isC);
-        const dx = x - n.x;
-        const dy = y - n.y;
+      const projectedNodes = projectedNodeCacheRef.current;
+      const orderedNodes = isOrbitMode
+        ? [...simNodes].sort(
+            (left, right) =>
+              (projectedNodes.get(right.id)?.z ?? 0) - (projectedNodes.get(left.id)?.z ?? 0),
+          )
+        : [...simNodes].reverse();
+      for (let i = 0; i < orderedNodes.length; i += 1) {
+        const n = orderedNodes[i];
+        if (!visibleNodeIdsRef.current.has(n.id)) {
+          continue;
+        }
+        const projected = isOrbitMode ? projectedNodes.get(n.id) : null;
+        const r = projected?.radius ?? nodeRadius(n, n.id === centerNodeId);
+        const dx = x - (projected?.x ?? n.x);
+        const dy = y - (projected?.y ?? n.y);
         if (dx * dx + dy * dy <= r * r) return n;
       }
       return null;
@@ -2083,7 +3331,10 @@ export default function MemoryGraph(props: MemoryGraphProps) {
 
     /* ── Mouse events (directly, not through D3 drag to avoid zoom conflict) ── */
     let isDragging = false;
+    let isOrbitRotating = false;
     let dragStartPos = { x: 0, y: 0 };
+    let orbitDragOrigin = { x: 0, y: 0 };
+    let orbitStartRotation = orbitRotationRef.current;
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return; // left click only
@@ -2103,7 +3354,12 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         }
         return;
       }
-      if ((e.shiftKey || e.altKey) && node && canGraphRepositionNode(node, centerNodeId)) {
+      if (
+        !isOrbitMode &&
+        (e.shiftKey || e.altKey) &&
+        node &&
+        canGraphRepositionNode(node, centerNodeId)
+      ) {
         const t = transformRef.current;
         connectStartRef.current = node;
         connectModeRef.current = e.altKey ? "manual" : "parent";
@@ -2113,6 +3369,16 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         };
         suppressClickRef.current = true;
         draw();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (isOrbitMode) {
+        isOrbitRotating = true;
+        dragStartPos = { x: e.clientX, y: e.clientY };
+        orbitDragOrigin = { x: e.clientX, y: e.clientY };
+        orbitStartRotation = orbitRotationRef.current;
+        suppressClickRef.current = true;
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -2141,7 +3407,19 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           x: (mx - t.x) / t.k,
           y: (my - t.y) / t.k,
         };
-        draw();
+        drawRef.current();
+        return;
+      }
+      if (isOrbitRotating) {
+        orbitRotationRef.current = {
+          yaw: orbitStartRotation.yaw + (e.clientX - orbitDragOrigin.x) * 0.0055,
+          pitch: clampNumber(
+            orbitStartRotation.pitch + (e.clientY - orbitDragOrigin.y) * 0.0045,
+            ORBIT_PITCH_RANGE.min,
+            ORBIT_PITCH_RANGE.max,
+          ),
+        };
+        drawRef.current();
         return;
       }
       if (!isDragging) return;
@@ -2186,7 +3464,34 @@ export default function MemoryGraph(props: MemoryGraphProps) {
         ) {
           onCreateEdge(sourceNode.id, targetNode.id).catch(() => {});
         }
-        draw();
+        drawRef.current();
+        return;
+      }
+      if (isOrbitRotating) {
+        isOrbitRotating = false;
+        const dist = Math.hypot(
+          e.clientX - dragStartPos.x,
+          e.clientY - dragStartPos.y,
+        );
+        if (dist < 4) {
+          const rect = canvas.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const node = hitTestDirect(mx, my);
+          if (!node) {
+            setSelectedNode(null);
+            onNodeSelect(null);
+            return;
+          }
+          if (node.id === centerNodeId) {
+            setSelectedNode(null);
+            onNodeSelect(null);
+            onCenterNodeClick?.();
+            return;
+          }
+          setSelectedNode(node);
+          onNodeSelect(node);
+        }
         return;
       }
       if (!isDragging) {
@@ -2319,6 +3624,7 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     centerNodeId,
+    getOrbitProjectedNodes,
     isOrbitMode,
     onCenterNodeClick,
     onCreateEdge,
@@ -2336,58 +3642,108 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     draw();
   }, [draw]);
 
+  useEffect(() => {
+    if (!isOrbitMode) {
+      orbitAutoFrameKeyRef.current = null;
+      return;
+    }
+    const canvas = canvasRef.current;
+    const zb = zoomBehaviorRef.current;
+    if (!canvas || !zb || simNodes.length === 0) {
+      return;
+    }
+
+    const visibleSignature = [...visibleNodeIds].sort().join("|");
+    const nextKey = `${centerNodeId}:${visibleSignature}`;
+    if (orbitAutoFrameKeyRef.current === nextKey) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const nextTransform = buildViewportTransform(
+      rect.width,
+      rect.height,
+      simNodes,
+      centerNodeId,
+      visibleNodeIds,
+      getOrbitProjectedNodes(),
+      ORBIT_VIEWPORT_OPTIONS,
+    );
+
+    if (!nextTransform) {
+      return;
+    }
+
+    orbitAutoFrameKeyRef.current = nextKey;
+    d3.select(canvas).transition().duration(460).call(zb.transform, nextTransform);
+  }, [centerNodeId, getOrbitProjectedNodes, isOrbitMode, simNodes, visibleNodeIds]);
+
   /* ── Zoom controls ──────────────────────────── */
 
   const handleZoomIn = useCallback(() => {
+    if (isOrbitMode && !orbitWebglUnavailable) {
+      orbitSceneRef.current?.zoomIn();
+      return;
+    }
     const canvas = canvasRef.current;
     const zb = zoomBehaviorRef.current;
     if (!canvas || !zb) return;
     const sel = d3.select(canvas);
     sel.transition().duration(300).call(zb.scaleBy, 1.3);
-  }, []);
+  }, [isOrbitMode, orbitWebglUnavailable]);
 
   const handleZoomOut = useCallback(() => {
+    if (isOrbitMode && !orbitWebglUnavailable) {
+      orbitSceneRef.current?.zoomOut();
+      return;
+    }
     const canvas = canvasRef.current;
     const zb = zoomBehaviorRef.current;
     if (!canvas || !zb) return;
     const sel = d3.select(canvas);
     sel.transition().duration(300).call(zb.scaleBy, 0.7);
-  }, []);
+  }, [isOrbitMode, orbitWebglUnavailable]);
 
   const handleFitView = useCallback(() => {
+    if (isOrbitMode && !orbitWebglUnavailable) {
+      orbitSceneRef.current?.fitView();
+      return;
+    }
     const canvas = canvasRef.current;
     const zb = zoomBehaviorRef.current;
     if (!canvas || !zb || simNodes.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    simNodes.forEach((n) => {
-      if (!visibleNodeIds.has(n.id)) return;
-      const r = nodeRadius(n, n.id === centerNodeId) + 20;
-      if (n.x - r < minX) minX = n.x - r;
-      if (n.y - r < minY) minY = n.y - r;
-      if (n.x + r > maxX) maxX = n.x + r;
-      if (n.y + r > maxY) maxY = n.y + r;
-    });
-
-    if (!isFinite(minX)) return;
-
-    const bw = maxX - minX || 1;
-    const bh = maxY - minY || 1;
-    const scale = Math.min(rect.width / bw, rect.height / bh) * 0.85;
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-
-    const t = d3.zoomIdentity
-      .translate(rect.width / 2 - cx * scale, rect.height / 2 - cy * scale)
-      .scale(scale);
+    const orbitProjectedNodes = isOrbitMode ? getOrbitProjectedNodes() : null;
+    const t = buildViewportTransform(
+      rect.width,
+      rect.height,
+      simNodes,
+      centerNodeId,
+      visibleNodeIds,
+      orbitProjectedNodes,
+      isOrbitMode
+        ? ORBIT_VIEWPORT_OPTIONS
+        : {
+            fill: 0.85,
+            maxScale: 5,
+            minScale: 0.1,
+            padding: 20,
+            xBias: 0.5,
+            yBias: 0.5,
+          },
+    );
+    if (!t) return;
 
     const sel = d3.select(canvas);
     sel.transition().duration(500).call(zb.transform, t);
-  }, [simNodes, centerNodeId, visibleNodeIds]);
+  }, [
+    centerNodeId,
+    getOrbitProjectedNodes,
+    isOrbitMode,
+    orbitWebglUnavailable,
+    simNodes,
+    visibleNodeIds,
+  ]);
 
   useEffect(() => {
     if (!searchMatchIds || searchMatchIds.size === 0) {
@@ -2398,34 +3754,35 @@ export default function MemoryGraph(props: MemoryGraphProps) {
     if (!canvas || !zb) return;
 
     const rect = canvas.getBoundingClientRect();
+    const orbitProjectedNodes = isOrbitMode ? getOrbitProjectedNodes() : null;
     const matchedNodes = simNodes.filter(
       (node) => visibleNodeIds.has(node.id) && searchMatchIds.has(node.id),
     );
     if (matchedNodes.length === 0) return;
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    matchedNodes.forEach((node) => {
-      const r = nodeRadius(node, node.id === centerNodeId) + 24;
-      minX = Math.min(minX, node.x - r);
-      minY = Math.min(minY, node.y - r);
-      maxX = Math.max(maxX, node.x + r);
-      maxY = Math.max(maxY, node.y + r);
-    });
-
-    const bw = maxX - minX || 1;
-    const bh = maxY - minY || 1;
-    const scale = Math.min(rect.width / bw, rect.height / bh, 2.2) * 0.9;
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const t = d3.zoomIdentity
-      .translate(rect.width / 2 - cx * scale, rect.height / 2 - cy * scale)
-      .scale(scale);
+    const matchedNodeIds = new Set(matchedNodes.map((node) => node.id));
+    const t = buildViewportTransform(
+      rect.width,
+      rect.height,
+      matchedNodes,
+      centerNodeId,
+      matchedNodeIds,
+      orbitProjectedNodes,
+      isOrbitMode
+        ? ORBIT_FOCUS_VIEWPORT_OPTIONS
+        : {
+            fill: 0.9,
+            maxScale: 2.2,
+            minScale: 0.1,
+            padding: 24,
+            xBias: 0.5,
+            yBias: 0.5,
+          },
+    );
+    if (!t) return;
 
     d3.select(canvas).transition().duration(360).call(zb.transform, t);
-  }, [centerNodeId, searchMatchIds, simNodes, visibleNodeIds]);
+  }, [centerNodeId, getOrbitProjectedNodes, isOrbitMode, searchMatchIds, simNodes, visibleNodeIds]);
 
   /* ── Stats ──────────────────────────────────── */
 
@@ -2544,10 +3901,34 @@ export default function MemoryGraph(props: MemoryGraphProps) {
           </span>
         </div>
 
-        <canvas
-          ref={canvasRef}
-          className="graph-canvas"
-        />
+        {isOrbitMode && !orbitWebglUnavailable ? (
+          <MemoryGraphOrbitScene
+            ref={orbitSceneRef}
+            nodes={simNodes}
+            links={orbitSceneLinks}
+            centerNodeId={centerNodeId}
+            centerNodeLabel={centerNodeLabel}
+            centerNodeShortLabel={centerNodeShortLabel}
+            worldById={orbitWorldById}
+            visibleNodeIds={visibleNodeIds}
+            searchMatchIds={searchMatchIds}
+            selectedNodeId={selectedNode?.id ?? null}
+            maxRetrievalCount={maxRetrievalCount}
+            onSelectNode={(node) => {
+              setSelectedNode(node);
+              onNodeSelect(node);
+            }}
+            onCenterNodeClick={onCenterNodeClick}
+            onRendererUnavailable={() => {
+              setOrbitWebglUnavailable(true);
+            }}
+          />
+        ) : (
+          <canvas
+            ref={canvasRef}
+            className="graph-canvas"
+          />
+        )}
 
         {selectedNode && editMode ? (
           <div className="graph-edit-banner">

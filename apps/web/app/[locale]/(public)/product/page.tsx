@@ -1,16 +1,18 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { gsap } from "@/lib/gsap-register";
+import { useRef } from "react";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 import { MagneticButton } from "@/components/MagneticButton";
 import { useTranslations } from "next-intl";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 import { PRODUCT_SCENES } from "@/lib/product-data";
 
 export default function ProductPage() {
   const t = useTranslations("product");
   const tc = useTranslations("common");
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useScrollReveal(containerRef);
 
   const scenes = PRODUCT_SCENES.map((scene) => ({
     ...scene,
@@ -25,34 +27,6 @@ export default function ProductPage() {
       body: t(`scenes.${scene.id}.detail${i}.body`),
     })),
   }));
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const sections = el.querySelectorAll(".product-section");
-    const tweens: gsap.core.Tween[] = [];
-    sections.forEach((section) => {
-      tweens.push(
-        gsap.from(section, {
-          opacity: 0,
-          y: 40,
-          duration: 0.7,
-          ease: "power2.out",
-          scrollTrigger: {
-            trigger: section,
-            start: "top 80%",
-            once: true,
-          },
-        }),
-      );
-    });
-    return () => {
-      tweens.forEach((tw) => {
-        tw.scrollTrigger?.kill();
-        tw.kill();
-      });
-    };
-  }, []);
 
   return (
     <div ref={containerRef}>
@@ -74,6 +48,7 @@ export default function ProductPage() {
         <section
           key={scene.id}
           id={scene.id === "engineering" ? "specs" : scene.id === "geometry" ? "craftsmanship" : scene.id}
+          data-reveal
           className="product-section mx-auto max-w-5xl px-6 py-20"
         >
           <div className="grid gap-10 md:grid-cols-2">

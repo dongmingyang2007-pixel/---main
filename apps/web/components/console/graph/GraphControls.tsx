@@ -35,6 +35,7 @@ export default function GraphControls({
   const modeTitle = renderMode === "orbit" ? t("graph.modeOrbit") : t("graph.modeWorkbench");
   const modeCaption =
     renderMode === "orbit" ? t("graph.modeOrbitCaption") : t("graph.modeWorkbenchCaption");
+  const modeHint = renderMode === "orbit" ? t("graph.orbitInteractionHint") : null;
 
   return (
     <div className={`graph-controls graph-controls--${renderMode}`}>
@@ -44,6 +45,7 @@ export default function GraphControls({
           <div className="graph-controls-mode-copy">
             <strong>{t("graph.stats", { count: nodeCount })}</strong>
             <span>{modeCaption}</span>
+            {modeHint ? <span className="graph-controls-mode-hint">{modeHint}</span> : null}
           </div>
         </div>
         <input

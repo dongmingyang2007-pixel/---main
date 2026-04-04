@@ -1,7 +1,5 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { gsap } from "@/lib/gsap-register";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 import { MagneticButton } from "@/components/MagneticButton";
 
@@ -22,28 +20,8 @@ export function EcosystemPreview({
   learnMoreLabel,
   imageAlt,
 }: EcosystemPreviewProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const tl = gsap.timeline({
-      scrollTrigger: {
-        trigger: el,
-        start: "top 70%",
-        once: true,
-      },
-    });
-    tl.from(el.querySelector(".eco-text"), { opacity: 0, x: -30, duration: 0.7 });
-    tl.from(el.querySelector(".eco-visual"), { opacity: 0, x: 30, duration: 0.7 }, "<0.15");
-    return () => { tl.kill(); };
-  }, []);
-
   return (
-    <div
-      ref={containerRef}
-      className="flex min-h-screen items-center justify-center bg-[var(--bg-surface)] px-6"
-    >
+    <div className="flex min-h-screen items-center justify-center bg-[var(--bg-surface)] px-6">
       <div className="grid w-full max-w-5xl gap-12 md:grid-cols-2">
         <div className="eco-text flex flex-col justify-center">
           <p className="text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">

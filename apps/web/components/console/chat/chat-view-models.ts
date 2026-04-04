@@ -164,9 +164,19 @@ export function buildMemoryWriteSummary(
     };
   });
 
-  const items = baseItems
-    .filter((item) => !item.hidden)
-    .map(({ hidden: _hidden, ...item }) => item);
+  const items = baseItems.filter((item) => !item.hidden).map((item) => ({
+    id: item.id,
+    fact: item.fact,
+    category: item.category,
+    importance: item.importance,
+    triageAction: item.triageAction,
+    triageReason: item.triageReason,
+    status: item.status,
+    targetMemoryId: item.targetMemoryId,
+    memoryType: item.memoryType,
+    badgeKey: item.badgeKey,
+    isActionable: item.isActionable,
+  }));
   const count = items.filter((item) => item.triageAction !== "discard").length;
 
   return {

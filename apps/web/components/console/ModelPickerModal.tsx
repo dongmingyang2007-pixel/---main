@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { apiGet } from "@/lib/api";
+import { DISCOVER_ENABLED } from "@/lib/feature-flags";
 import { MODEL_PICKER_SELECTION_KEY } from "@/lib/discover-labels";
 
 interface CatalogModel {
@@ -164,7 +165,9 @@ export function ModelPickerModal({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rawPending = window.sessionStorage.getItem(MODEL_PICKER_SELECTION_KEY);
+    const rawPending = window.sessionStorage.getItem(
+      MODEL_PICKER_SELECTION_KEY,
+    );
     if (!rawPending) return;
 
     let pending: PendingModelSelection | null = null;
@@ -195,9 +198,14 @@ export function ModelPickerModal({
       <div className="model-picker-card" onClick={(e) => e.stopPropagation()}>
         <div className="model-picker-header">
           <h2 className="model-picker-title">
-            {t("pickerTitle")} &mdash; {t(CATEGORY_LABEL_KEYS[category] || category)}
+            {t("pickerTitle")} &mdash;{" "}
+            {t(CATEGORY_LABEL_KEYS[category] || category)}
           </h2>
-          <button className="model-picker-close" onClick={onClose} aria-label="Close">
+          <button
+            className="model-picker-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
             &times;
           </button>
         </div>
@@ -219,13 +227,19 @@ export function ModelPickerModal({
                     <div className="model-picker-item-head">
                       <div
                         className="marketplace-card-icon"
-                        style={{ background: getProviderGradient(model.provider) }}
+                        style={{
+                          background: getProviderGradient(model.provider),
+                        }}
                       >
                         {model.provider.charAt(0).toUpperCase()}
                       </div>
                       <div className="model-picker-item-info">
-                        <div className="marketplace-card-name">{model.display_name}</div>
-                        <div className="marketplace-card-provider">{model.provider}</div>
+                        <div className="marketplace-card-name">
+                          {model.display_name}
+                        </div>
+                        <div className="marketplace-card-provider">
+                          {model.provider}
+                        </div>
                       </div>
                     </div>
                     <div className="model-picker-item-desc">
@@ -239,7 +253,9 @@ export function ModelPickerModal({
                       </span>
                       <button
                         className="marketplace-card-btn"
-                        onClick={() => onSelect(model.model_id, model.display_name)}
+                        onClick={() =>
+                          onSelect(model.model_id, model.display_name)
+                        }
                       >
                         {isSelected ? t("selected") : t("select")}
                       </button>
@@ -251,11 +267,17 @@ export function ModelPickerModal({
           )}
         </div>
 
-        <div className="model-picker-footer">
-          <Link href={marketplaceHref} className="model-picker-link" onClick={onClose}>
-            {t("pickerViewAll")}
-          </Link>
-        </div>
+        {DISCOVER_ENABLED ? (
+          <div className="model-picker-footer">
+            <Link
+              href={marketplaceHref}
+              className="model-picker-link"
+              onClick={onClose}
+            >
+              {t("pickerViewAll")}
+            </Link>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -118,6 +118,79 @@ POSITIVE_X_OPENING_STRIP_X_RANGE_MM = (-0.5, 36.0)
 POSITIVE_X_OPENING_STRIP_Y_RANGE_MM = (-1.1, 9.5)
 POSITIVE_X_OPENING_STRIP_ABS_Z_RANGE_MM = (13.0, 17.05)
 POSITIVE_X_OPENING_STRIP_LOCAL_EDGE_TOLERANCE_MM = 0.5
+POSITIVE_X_OPENING_STRIP_TILT_START_X_MM = 6.35
+POSITIVE_X_OPENING_STRIP_TILT_FULL_X_MM = 8.38
+POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM = (-0.01, 6.35)
+POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Y_RANGE_MM = (-0.47, -0.44)
+POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Z_RANGE_MM = (-16.25, -16.15)
+EXPECTED_POSITIVE_X_FRONT_CENTER_TILT_VERTEX_COUNT = 4
+NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM = (-35.0, 0.01)
+NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Y_RANGE_MM = (-0.47, -0.44)
+NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Z_RANGE_MM = (-17.05, -14.2)
+NEGATIVE_X_FRONT_STRIP_TILT_CLUSTER_GAP_MM = 0.5
+EXPECTED_NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_COUNT = 20
+FRONT_EDGE_UNIFORM_COARSE_X_RANGE_MM = (-34.9, 34.9)
+FRONT_EDGE_UNIFORM_COARSE_Y_RANGE_MM = (-1.1, -0.1)
+FRONT_EDGE_UNIFORM_COARSE_Z_RANGE_MM = (-17.1, -13.0)
+FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_X_RANGE_MM = (-35.0, 35.0)
+FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Y_RANGE_MM = (-1.15, -0.04)
+FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Z_RANGE_MM = (-17.2, -12.9)
+EXPECTED_FRONT_EDGE_UNIFORM_COARSE_TRIANGLE_COUNT = 67
+EXPECTED_FRONT_EDGE_UNIFORM_COARSE_HOLE_VERTEX_COUNT = 69
+EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT = 35
+EXPECTED_FRONT_EDGE_UNIFORM_COARSE_REBUILT_TRIANGLE_COUNT = 67
+FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_X_RANGE_MM = (-25.0, 25.7)
+FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Y_RANGE_MM = (-1.05, -0.05)
+FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Z_RANGE_MM = (-17.1, -14.45)
+FRONT_EDGE_UNIFORM_REBUILD_CENTER_X_RANGE_MM = (-2.2, 2.2)
+FRONT_EDGE_UNIFORM_REBUILD_CENTER_Y_RANGE_MM = (-4.8, -0.05)
+FRONT_EDGE_UNIFORM_REBUILD_CENTER_Z_RANGE_MM = (-17.1, -14.4)
+FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_X_RANGE_MM = (-25.2, 25.9)
+FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Y_RANGE_MM = (-4.9, -0.04)
+FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Z_RANGE_MM = (-17.2, -14.3)
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_TRIANGLE_COUNT = 50
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CENTER_TRIANGLE_COUNT = 8
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_TRIANGLE_COUNT = 58
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_HOLE_VERTEX_COUNT = 56
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CHAIN_POINT_COUNT = 28
+EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_REBUILT_TRIANGLE_COUNT = 54
+NEGATIVE_X_PAIRING_REPAIR_X_NEG_RANGE_MM = (-25.8, 0.2)
+NEGATIVE_X_PAIRING_REPAIR_X_POS_RANGE_MM = (0.0, 25.8)
+NEGATIVE_X_PAIRING_REPAIR_Z_RANGE_MM = (-16.3, -14.45)
+NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_NEG_X_RANGE_MM = (-26.0, 0.3)
+NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_POS_X_RANGE_MM = (-0.1, 26.0)
+NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM = (-5.0, -0.03)
+NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM = (-16.35, -14.4)
+NEGATIVE_X_PAIRING_REPAIR_TOP_Y_MIN_MM = -1.2
+NEGATIVE_X_PAIRING_REPAIR_BOTTOM_Y_RANGE_MM = (-5.0, -4.2)
+EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REFERENCE_TRIANGLE_COUNT = 50
+EXPECTED_NEGATIVE_X_PAIRING_REPAIR_TARGET_TRIANGLE_COUNT = 50
+EXPECTED_NEGATIVE_X_PAIRING_REPAIR_HOLE_VERTEX_COUNT = 52
+EXPECTED_NEGATIVE_X_PAIRING_REPAIR_CHAIN_POINT_COUNT = 13
+EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REBUILT_TRIANGLE_COUNT = 52
+EXPECTED_NEGATIVE_X_ENDPOINT_ANCHOR_AFFECTED_TRIANGLE_COUNT = 8
+POSITIVE_X_CORNER_THICKNESS_B_X_RANGE_MM = (25.4, 35.2)
+POSITIVE_X_CORNER_THICKNESS_B_Y_RANGE_MM = (-0.6, -0.35)
+POSITIVE_X_CORNER_THICKNESS_B_Z_RANGE_MM = (-17.2, -14.7)
+EXPECTED_POSITIVE_X_CORNER_THICKNESS_B_POINT_COUNT = 7
+NEGATIVE_X_CORNER_STYLE_REFERENCE_X_RANGE_MM = (24.0, 36.0)
+NEGATIVE_X_CORNER_STYLE_TARGET_X_RANGE_MM = (-36.0, -24.0)
+NEGATIVE_X_CORNER_STYLE_Y_RANGE_MM = (-5.5, 10.0)
+NEGATIVE_X_CORNER_STYLE_Z_RANGE_MM = (-16.4, -14.0)
+NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM = (-37.0, -23.0)
+NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM = (-5.6, 10.1)
+NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM = (-16.5, -13.9)
+NEGATIVE_X_CORNER_STYLE_VISIBLE_UPPER_Y_RANGE_MM = (-0.6, -0.3)
+NEGATIVE_X_CORNER_STYLE_VISIBLE_LOWER_Y_RANGE_MM = (-1.05, -0.6)
+NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_X_RANGE_MM = (-27.0, -22.0)
+NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Y_RANGE_MM = (-1.2, -0.4)
+NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Z_RANGE_MM = (-16.3, -14.0)
+EXPECTED_NEGATIVE_X_CORNER_STYLE_REFERENCE_TRIANGLE_COUNT = 28
+EXPECTED_NEGATIVE_X_CORNER_STYLE_TARGET_TRIANGLE_COUNT = 34
+EXPECTED_NEGATIVE_X_CORNER_STYLE_STAGE1_LOOP_VERTEX_COUNT = 26
+EXPECTED_NEGATIVE_X_CORNER_STYLE_STAGE2_LOOP_VERTEX_COUNT = 6
+EXPECTED_NEGATIVE_X_CORNER_STYLE_FILL_TRIANGLE_COUNT = 4
+EXPECTED_NEGATIVE_X_CORNER_STYLE_OPEN_BOUNDARY_EDGE_COUNTS = (24, 26, 32)
 POSITIVE_X_FRONT_CENTER_SEAM_X_RANGE_MM = (-0.1, 6.35)
 POSITIVE_X_FRONT_CENTER_SEAM_Y_RANGE_MM = (-1.1, -0.45)
 POSITIVE_X_FRONT_CENTER_SEAM_Z_RANGE_MM = (-17.1, -15.5)
@@ -632,6 +705,53 @@ def orient_triangle_away_from_center(
     return triangle
 
 
+def remap_triangle_points(
+    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    point_map: dict[tuple[float, float, float], np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return tuple(np.array(point_map.get(point_key(point), point), dtype=float) for point in triangle)
+
+
+def interpolate_point_by_x(
+    curve_points: list[np.ndarray],
+    x_value: float,
+) -> np.ndarray:
+    if not curve_points:
+        raise ValueError("Expected at least one curve point for interpolation.")
+    ordered_points = sorted(curve_points, key=lambda point: (float(point[0]), float(point[1]), float(point[2])))
+    if x_value <= float(ordered_points[0][0]):
+        return ordered_points[0].copy()
+    if x_value >= float(ordered_points[-1][0]):
+        return ordered_points[-1].copy()
+
+    for index in range(len(ordered_points) - 1):
+        point_a = ordered_points[index]
+        point_b = ordered_points[index + 1]
+        if float(point_a[0]) <= x_value <= float(point_b[0]):
+            span = float(point_b[0] - point_a[0])
+            if abs(span) <= 1e-12:
+                return point_a.copy()
+            ratio = (x_value - float(point_a[0])) / span
+            return point_a + ((point_b - point_a) * ratio)
+
+    return ordered_points[-1].copy()
+
+
+def orient_triangle_to_match_neighbor_normals(
+    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    neighbor_normals: list[np.ndarray],
+    reference_center: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    valid_neighbor_normals = [normal for normal in neighbor_normals if float(np.linalg.norm(normal)) > 1e-9]
+    if valid_neighbor_normals:
+        average_normal = np.mean(np.stack(valid_neighbor_normals, axis=0), axis=0)
+        if float(np.linalg.norm(average_normal)) > 1e-9:
+            if float(np.dot(triangle_normal(triangle), average_normal)) < 0.0:
+                return (triangle[0], triangle[2], triangle[1])
+            return triangle
+    return orient_triangle_away_from_center(triangle, reference_center)
+
+
 def bridge_opening_loop(loop_points: list[np.ndarray]) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     if not loop_points:
         return []
@@ -1044,10 +1164,16 @@ def build_guided_front_fill_patch(
 def build_structured_front_window_patch(
     loop_points: list[np.ndarray],
     rim_reference: dict[str, object],
+    *,
+    corner_apex_override: np.ndarray | None = None,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray, np.ndarray]], dict[str, object]]:
-    if len(loop_points) != EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT:
+    if len(loop_points) not in (
+        EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT,
+        EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT + 1,
+    ):
         raise ValueError(
-            f"Expected {EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT} boundary vertices for front-window fill, "
+            f"Expected {EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT} or "
+            f"{EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT + 1} boundary vertices for front-window fill, "
             f"found {len(loop_points)}."
         )
 
@@ -1060,8 +1186,10 @@ def build_structured_front_window_patch(
     inner_strip = [point.copy() for point in reversed(loop_points[inner_start:inner_stop])]
     strip_triangles = build_equal_strip_between_chains(outer_strip, inner_strip, reference_center)
 
-    top_lower_right = loop_points[40].copy()
-    top_upper_left = loop_points[41].copy()
+    has_explicit_top_lower_left = len(loop_points) == EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT + 1
+    top_lower_left_boundary = loop_points[40].copy() if has_explicit_top_lower_left else None
+    top_lower_right = loop_points[41].copy() if has_explicit_top_lower_left else loop_points[40].copy()
+    top_upper_left = loop_points[42].copy() if has_explicit_top_lower_left else loop_points[41].copy()
     upper_match_index = min(
         range(len(upper_chain)),
         key=lambda index: abs(float(upper_chain[index][0] - top_upper_left[0])),
@@ -1075,23 +1203,47 @@ def build_structured_front_window_patch(
     if lower_match_index - 1 < 0:
         raise ValueError("Lower rim reference chain does not extend before the front-window upper-right match point.")
 
-    top_upper_right = upper_chain[upper_match_index + 1].copy()
-    top_lower_left = lower_chain[lower_match_index - 1].copy()
+    top_lower_left = (
+        top_lower_left_boundary.copy()
+        if top_lower_left_boundary is not None
+        else lower_chain[lower_match_index - 1].copy()
+    )
+    if has_explicit_top_lower_left:
+        explicit_corner_apex_index = min(lower_match_index + 2, len(lower_chain) - 1)
+        top_upper_right = (
+            corner_apex_override.copy()
+            if corner_apex_override is not None
+            else lower_chain[explicit_corner_apex_index].copy()
+        )
+    else:
+        explicit_corner_apex_index = None
+        top_upper_right = upper_chain[upper_match_index + 1].copy()
 
     lower_outer_left = loop_points[0].copy()
     lower_outer_next = loop_points[1].copy()
     lower_inner_next = loop_points[38].copy()
     lower_inner_left = loop_points[39].copy()
-    local_patch_triangles = [
-        (lower_outer_left, lower_outer_next, top_upper_right),
-        (lower_outer_next, lower_inner_next, top_upper_right),
-        (lower_inner_next, lower_inner_left, top_lower_left),
-        (lower_inner_left, top_lower_right, top_lower_left),
-        (top_lower_right, top_upper_right, top_lower_left),
-        (top_lower_right, top_upper_left, top_upper_right),
-        (top_upper_left, lower_outer_left, top_upper_right),
-        (lower_inner_next, top_lower_left, top_upper_right),
-    ]
+    if has_explicit_top_lower_left:
+        local_patch_triangles = [
+            (lower_outer_left, lower_outer_next, top_upper_right),
+            (lower_outer_next, lower_inner_next, top_upper_right),
+            (lower_inner_next, lower_inner_left, top_upper_right),
+            (lower_inner_left, top_lower_left, top_upper_right),
+            (top_lower_left, top_lower_right, top_upper_right),
+            (top_lower_right, top_upper_left, top_upper_right),
+            (top_upper_left, lower_outer_left, top_upper_right),
+        ]
+    else:
+        local_patch_triangles = [
+            (lower_outer_left, lower_outer_next, top_upper_right),
+            (lower_outer_next, lower_inner_next, top_upper_right),
+            # Fallback for the older 42-point boundary loop when the lower-left
+            # corner cap triangle has not been peeled into the rebuild hole.
+            (lower_inner_next, lower_inner_left, top_upper_right),
+            (lower_inner_left, top_lower_right, top_upper_right),
+            (top_lower_right, top_upper_left, top_upper_right),
+            (top_upper_left, lower_outer_left, top_upper_right),
+        ]
     local_patch_triangles = [
         orient_triangle_away_from_center(triangle, reference_center) for triangle in local_patch_triangles
     ]
@@ -1112,6 +1264,9 @@ def build_structured_front_window_patch(
         "localPatchTriangleCount": len(local_patch_triangles),
         "outerStripSlice": list(FRONT_WINDOW_REBUILD_OUTER_CHAIN_SLICE),
         "innerStripSlice": list(FRONT_WINDOW_REBUILD_INNER_CHAIN_SLICE),
+        "hasExplicitTopLowerLeftBoundaryPoint": has_explicit_top_lower_left,
+        "explicitCornerApexIndex": explicit_corner_apex_index,
+        "usedCornerApexOverride": corner_apex_override is not None,
         "rimReferenceUpperChainCount": len(upper_chain),
         "rimReferenceLowerChainCount": len(lower_chain),
         "rimUpperMatchIndex": upper_match_index,
@@ -1127,6 +1282,98 @@ def build_structured_front_window_patch(
         "localPatchBboxMinProductMm": vector_to_mm_list(local_mins),
         "localPatchBboxMaxProductMm": vector_to_mm_list(local_maxs),
         "localPatchBboxSizeProductMm": vector_to_mm_list(local_maxs - local_mins),
+    }
+
+
+def remove_front_window_corner_cap_triangle(
+    gltf: dict,
+    bin_chunk: bytearray,
+    rim_reference: dict[str, object],
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    boundary_loop = ordered_boundary_loop(shell_triangles)
+    if len(boundary_loop) != EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT:
+        return {
+            "skipped": True,
+            "reason": (
+                f"Expected {EXPECTED_FRONT_WINDOW_REBUILD_BOUNDARY_VERTEX_COUNT}-vertex boundary before corner-cap "
+                f"removal, found {len(boundary_loop)}."
+            ),
+        }
+
+    lower_chain = [point.copy() for point in rim_reference["lowerChain"]]
+    top_lower_right = boundary_loop[40].copy()
+    lower_match_index = min(
+        range(len(lower_chain)),
+        key=lambda index: abs(float(lower_chain[index][0] - top_lower_right[0])),
+    )
+    if lower_match_index - 1 < 0:
+        return {
+            "skipped": True,
+            "reason": "Lower rim reference chain does not extend before the corner-cap match point.",
+        }
+
+    lower_inner_left = boundary_loop[39].copy()
+    top_lower_left = lower_chain[lower_match_index - 1].copy()
+    target_key = tuple(
+        sorted(
+            tuple(round(float(value), 6) for value in point)
+            for point in (lower_inner_left, top_lower_left, top_lower_right)
+        )
+    )
+
+    triangle_indices_to_remove: set[int] = set()
+    for triangle_index, triangle in enumerate(shell_triangles):
+        triangle_key = tuple(
+            sorted(tuple(round(float(value), 6) for value in point) for point in triangle)
+        )
+        if triangle_key == target_key:
+            triangle_indices_to_remove.add(int(triangle_index))
+
+    if not triangle_indices_to_remove:
+        return {
+            "skipped": True,
+            "reason": "No stale front-window corner cap triangle matched the expected D-H-E geometry.",
+            "targetTriangleKey": [list(point) for point in target_key],
+        }
+
+    remove_triangle_indices_from_shell(gltf, bin_chunk, triangle_indices_to_remove)
+    updated_boundary_loop = ordered_boundary_loop(build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"])
+    return {
+        "removedTriangleCount": len(triangle_indices_to_remove),
+        "removedTriangleIndices": sorted(triangle_indices_to_remove),
+        "boundaryVertexCountAfterRemoval": len(updated_boundary_loop),
+        "targetTriangleKey": [list(point) for point in target_key],
+    }
+
+
+def extract_front_window_corner_ramp_contact_point(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> tuple[np.ndarray | None, dict[str, object]]:
+    ramp_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Arc_Ramp_V4"]["triangles"]
+    candidate_points: list[np.ndarray] = []
+    seen_keys: set[tuple[float, float, float]] = set()
+    for triangle in ramp_triangles:
+        for point in triangle:
+            key = tuple(round(float(value), 7) for value in point)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            x_mm, y_mm, z_mm = (float(value) * 1000.0 for value in point)
+            if x_mm < -28.8 and y_mm > 8.7 and z_mm < -14.0:
+                candidate_points.append(point.copy())
+
+    if not candidate_points:
+        return None, {
+            "skipped": True,
+            "reason": "No ramp contact-point candidates found near the negative-X front corner.",
+        }
+
+    contact_point = min(candidate_points, key=lambda point: (float(point[0]), -float(point[1]), abs(float(point[2]))))
+    return contact_point.copy(), {
+        "candidateCount": len(candidate_points),
+        "contactPointProductMm": vector_to_mm_list(contact_point),
     }
 
 
@@ -1201,6 +1448,1341 @@ def collect_positive_x_opening_strip_component(
     }
 
 
+def closest_point_on_triangle(
+    point: np.ndarray,
+    point_a: np.ndarray,
+    point_b: np.ndarray,
+    point_c: np.ndarray,
+) -> np.ndarray:
+    vector_ab = point_b - point_a
+    vector_ac = point_c - point_a
+    vector_ap = point - point_a
+    dot_1 = float(np.dot(vector_ab, vector_ap))
+    dot_2 = float(np.dot(vector_ac, vector_ap))
+    if dot_1 <= 0.0 and dot_2 <= 0.0:
+        return point_a
+
+    vector_bp = point - point_b
+    dot_3 = float(np.dot(vector_ab, vector_bp))
+    dot_4 = float(np.dot(vector_ac, vector_bp))
+    if dot_3 >= 0.0 and dot_4 <= dot_3:
+        return point_b
+
+    cross_vc = (dot_1 * dot_4) - (dot_3 * dot_2)
+    if cross_vc <= 0.0 and dot_1 >= 0.0 and dot_3 <= 0.0:
+        interpolation = dot_1 / (dot_1 - dot_3)
+        return point_a + (interpolation * vector_ab)
+
+    vector_cp = point - point_c
+    dot_5 = float(np.dot(vector_ab, vector_cp))
+    dot_6 = float(np.dot(vector_ac, vector_cp))
+    if dot_6 >= 0.0 and dot_5 <= dot_6:
+        return point_c
+
+    cross_vb = (dot_5 * dot_2) - (dot_1 * dot_6)
+    if cross_vb <= 0.0 and dot_2 >= 0.0 and dot_6 <= 0.0:
+        interpolation = dot_2 / (dot_2 - dot_6)
+        return point_a + (interpolation * vector_ac)
+
+    cross_va = (dot_3 * dot_6) - (dot_5 * dot_4)
+    if cross_va <= 0.0 and (dot_4 - dot_3) >= 0.0 and (dot_5 - dot_6) >= 0.0:
+        interpolation = (dot_4 - dot_3) / ((dot_4 - dot_3) + (dot_5 - dot_6))
+        return point_b + (interpolation * (point_c - point_b))
+
+    denominator = 1.0 / (cross_va + cross_vb + cross_vc)
+    barycentric_v = cross_vb * denominator
+    barycentric_w = cross_vc * denominator
+    return point_a + (vector_ab * barycentric_v) + (vector_ac * barycentric_w)
+
+
+def build_positive_x_front_ramp_contact_chain(
+    gltf: dict,
+    bin_chunk: bytearray,
+    seed_chain: list[np.ndarray],
+    component_bbox_min_mm: np.ndarray,
+    component_bbox_max_mm: np.ndarray,
+) -> tuple[list[np.ndarray], dict[str, object]]:
+    ramp_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Arc_Ramp_V4"]["triangles"]
+    candidate_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for triangle in ramp_triangles:
+        triangle_points = np.stack(triangle, axis=0)
+        xs_mm = triangle_points[:, 0] * 1000.0
+        ys_mm = triangle_points[:, 1] * 1000.0
+        zs_mm = triangle_points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= component_bbox_min_mm[0] - 1.0
+            and max(xs_mm) <= component_bbox_max_mm[0] + 1.5
+            and min(ys_mm) >= -1.6
+            and max(ys_mm) <= 10.1
+            and min(zs_mm) >= component_bbox_min_mm[2] - 0.8
+            and max(zs_mm) <= component_bbox_max_mm[2] + 1.2
+        ):
+            candidate_triangles.append(triangle)
+
+    if not candidate_triangles:
+        raise ValueError("Failed to find ramp triangles for positive-X front strip tilt adjustment.")
+
+    contact_chain: list[np.ndarray] = []
+    seed_to_ramp_distances_mm: list[float] = []
+    for point in seed_chain:
+        best_distance_mm: float | None = None
+        best_contact_point: np.ndarray | None = None
+        for triangle in candidate_triangles:
+            contact_point = closest_point_on_triangle(point, triangle[0], triangle[1], triangle[2])
+            distance_mm = float(np.linalg.norm(point - contact_point) * 1000.0)
+            if best_distance_mm is None or distance_mm < best_distance_mm:
+                best_distance_mm = distance_mm
+                best_contact_point = contact_point.copy()
+        if best_contact_point is None or best_distance_mm is None:
+            raise ValueError("Failed to project positive-X front strip point onto ramp surface.")
+        contact_chain.append(best_contact_point)
+        seed_to_ramp_distances_mm.append(best_distance_mm)
+
+    return contact_chain, {
+        "candidateTriangleCount": len(candidate_triangles),
+        "contactChainPointCount": len(contact_chain),
+        "seedToRampDistanceRangeMm": [
+            round(min(seed_to_ramp_distances_mm), 4),
+            round(max(seed_to_ramp_distances_mm), 4),
+        ],
+        "contactChainStartProductMm": vector_to_mm_list(contact_chain[0]),
+        "contactChainEndProductMm": vector_to_mm_list(contact_chain[-1]),
+    }
+
+
+def remap_product_points_in_triangles(
+    triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    point_map: dict[tuple[float, float, float], np.ndarray],
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    remapped_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for triangle in triangles:
+        remapped_triangle: list[np.ndarray] = []
+        for point in triangle:
+            point_key = tuple(round(float(value), 9) for value in point)
+            replacement = point_map.get(point_key)
+            remapped_triangle.append(replacement.copy() if replacement is not None else point.copy())
+        remapped_triangles.append(tuple(remapped_triangle))
+    return remapped_triangles
+
+
+def finalize_positive_x_front_center_strip_tilt(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    target_points: dict[tuple[float, float, float], np.ndarray] = {}
+    for triangle in shell_triangles:
+        for point in triangle:
+            point_mm = point * 1000.0
+            if (
+                POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM[0] <= float(point_mm[0]) <= POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM[1]
+                and POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Y_RANGE_MM[0] <= float(point_mm[1]) <= POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Y_RANGE_MM[1]
+                and POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Z_RANGE_MM[0] <= float(point_mm[2]) <= POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Z_RANGE_MM[1]
+            ):
+                target_points.setdefault(tuple(round(float(value), 9) for value in point), point.copy())
+
+    if len(target_points) != EXPECTED_POSITIVE_X_FRONT_CENTER_TILT_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_FRONT_CENTER_TILT_VERTEX_COUNT} positive-X front-center tilt vertices, "
+            f"found {len(target_points)}."
+        )
+
+    ramp_contact_chain, ramp_debug = build_positive_x_front_ramp_contact_chain(
+        gltf,
+        bin_chunk,
+        list(target_points.values()),
+        np.array([POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM[0], -1.1, -17.05], dtype=float),
+        np.array([POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM[1], -0.4, -14.2], dtype=float),
+    )
+    point_map = {
+        point_key: contact_point.copy()
+        for point_key, contact_point in zip(target_points.keys(), ramp_contact_chain)
+    }
+    adjusted_distances_mm = [
+        float(np.linalg.norm(original_point - point_map[point_key]) * 1000.0)
+        for point_key, original_point in target_points.items()
+    ]
+
+    remapped_shell_triangles = remap_product_points_in_triangles(shell_triangles, point_map)
+    replace_shell_with_product_triangles(gltf, bin_chunk, remapped_shell_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive-X front-center tilt finalization, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    return {
+        "adjustedVertexCount": len(point_map),
+        "vertexRangesProductMm": {
+            "x": list(POSITIVE_X_FRONT_CENTER_TILT_VERTEX_X_RANGE_MM),
+            "y": list(POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Y_RANGE_MM),
+            "z": list(POSITIVE_X_FRONT_CENTER_TILT_VERTEX_Z_RANGE_MM),
+        },
+        "adjustedVertexProductMm": [vector_to_mm_list(point) for point in point_map.values()],
+        "adjustedDistanceToRampRangeMm": [
+            round(min(adjusted_distances_mm), 4),
+            round(max(adjusted_distances_mm), 4),
+        ],
+        "boundaryEdgeCountAfterAdjustment": len(final_boundary_edges),
+        "rampContactChain": ramp_debug,
+    }
+
+
+def finalize_negative_x_front_strip_tilt(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    candidate_points: dict[tuple[float, float, float], np.ndarray] = {}
+    for triangle in shell_triangles:
+        for point in triangle:
+            point_mm = point * 1000.0
+            if (
+                NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM[0] <= float(point_mm[0]) <= NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM[1]
+                and NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Y_RANGE_MM[0] <= float(point_mm[1]) <= NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Y_RANGE_MM[1]
+                and NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Z_RANGE_MM[0] <= float(point_mm[2]) <= NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Z_RANGE_MM[1]
+            ):
+                candidate_points.setdefault(tuple(round(float(value), 9) for value in point), point.copy())
+
+    sorted_points = sorted(candidate_points.values(), key=lambda point: float(point[0]))
+    clusters: list[list[np.ndarray]] = []
+    current_cluster: list[np.ndarray] = []
+    for point in sorted_points:
+        if not current_cluster:
+            current_cluster = [point]
+            continue
+        previous_point = current_cluster[-1]
+        x_gap_mm = abs(float((point[0] - previous_point[0]) * 1000.0))
+        if x_gap_mm <= NEGATIVE_X_FRONT_STRIP_TILT_CLUSTER_GAP_MM:
+            current_cluster.append(point)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [point]
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    selected_points = [min(cluster, key=lambda point: float(point[2])) for cluster in clusters]
+    if len(selected_points) != EXPECTED_NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_COUNT} negative-X front-strip tilt vertices, "
+            f"found {len(selected_points)}."
+        )
+
+    ramp_contact_chain, ramp_debug = build_positive_x_front_ramp_contact_chain(
+        gltf,
+        bin_chunk,
+        selected_points,
+        np.array([NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM[0], -1.1, -17.2], dtype=float),
+        np.array([NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM[1], -0.4, -14.0], dtype=float),
+    )
+    point_map = {
+        tuple(round(float(value), 9) for value in point): contact_point.copy()
+        for point, contact_point in zip(selected_points, ramp_contact_chain)
+    }
+    adjusted_distances_mm = [
+        float(np.linalg.norm(point - point_map[tuple(round(float(value), 9) for value in point)]) * 1000.0)
+        for point in selected_points
+    ]
+
+    remapped_shell_triangles = remap_product_points_in_triangles(shell_triangles, point_map)
+    replace_shell_with_product_triangles(gltf, bin_chunk, remapped_shell_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after negative-X front-strip tilt finalization, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    return {
+        "adjustedVertexCount": len(point_map),
+        "vertexRangesProductMm": {
+            "x": list(NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_X_RANGE_MM),
+            "y": list(NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Y_RANGE_MM),
+            "z": list(NEGATIVE_X_FRONT_STRIP_TILT_VERTEX_Z_RANGE_MM),
+        },
+        "clusterGapMm": NEGATIVE_X_FRONT_STRIP_TILT_CLUSTER_GAP_MM,
+        "adjustedVertexProductMm": [vector_to_mm_list(point) for point in point_map.values()],
+        "adjustedDistanceToRampRangeMm": [
+            round(min(adjusted_distances_mm), 4),
+            round(max(adjusted_distances_mm), 4),
+        ],
+        "boundaryEdgeCountAfterAdjustment": len(final_boundary_edges),
+        "rampContactChain": ramp_debug,
+    }
+
+
+def rebuild_front_edge_uniform_strip_coarse(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    triangle_indices: list[int] = []
+    selected_points: list[np.ndarray] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        triangle_points = np.stack(triangle, axis=0)
+        xs_mm = triangle_points[:, 0] * 1000.0
+        ys_mm = triangle_points[:, 1] * 1000.0
+        zs_mm = triangle_points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= FRONT_EDGE_UNIFORM_COARSE_X_RANGE_MM[0]
+            and max(xs_mm) <= FRONT_EDGE_UNIFORM_COARSE_X_RANGE_MM[1]
+            and min(ys_mm) >= FRONT_EDGE_UNIFORM_COARSE_Y_RANGE_MM[0]
+            and max(ys_mm) <= FRONT_EDGE_UNIFORM_COARSE_Y_RANGE_MM[1]
+            and min(zs_mm) >= FRONT_EDGE_UNIFORM_COARSE_Z_RANGE_MM[0]
+            and max(zs_mm) <= FRONT_EDGE_UNIFORM_COARSE_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+            selected_points.extend(triangle)
+
+    if len(triangle_indices) != EXPECTED_FRONT_EDGE_UNIFORM_COARSE_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_COARSE_TRIANGLE_COUNT} coarse front-edge strip triangles, "
+            f"found {len(triangle_indices)}."
+        )
+
+    target_indices = set(triangle_indices)
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= FRONT_EDGE_UNIFORM_COARSE_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_FRONT_EDGE_UNIFORM_COARSE_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_COARSE_HOLE_VERTEX_COUNT} coarse front-edge strip hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    chain_a = [point.copy() for point in hole_loop[:EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT]]
+    chain_b = [
+        point.copy()
+        for point in reversed(hole_loop[EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT - 1 :])
+    ]
+    if (
+        len(chain_a) != EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT
+        or len(chain_b) != EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT
+    ):
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_COARSE_CHAIN_POINT_COUNT}-point chains for coarse front-edge strip rebuild, "
+            f"found {len(chain_a)} and {len(chain_b)}."
+        )
+
+    reference_center = np.mean(np.stack(chain_a + chain_b, axis=0), axis=0)
+    rebuilt_triangles = [
+        triangle
+        for triangle in build_uniform_strip_between_chains(chain_a, chain_b, reference_center)
+        if float(np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0]))) > 1e-12
+    ]
+    if len(rebuilt_triangles) != EXPECTED_FRONT_EDGE_UNIFORM_COARSE_REBUILT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_COARSE_REBUILT_TRIANGLE_COUNT} rebuilt coarse front-edge strip triangles, "
+            f"found {len(rebuilt_triangles)}."
+        )
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after coarse front-edge strip rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    region_mins, region_maxs = compute_bbox(selected_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "holeLoopVertexCount": len(hole_loop),
+        "chainAPointCount": len(chain_a),
+        "chainBPointCount": len(chain_b),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "regionBboxMinProductMm": vector_to_mm_list(region_mins),
+        "regionBboxMaxProductMm": vector_to_mm_list(region_maxs),
+        "regionBboxSizeProductMm": vector_to_mm_list(region_maxs - region_mins),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "selectionRangesProductMm": {
+            "x": list(FRONT_EDGE_UNIFORM_COARSE_X_RANGE_MM),
+            "y": list(FRONT_EDGE_UNIFORM_COARSE_Y_RANGE_MM),
+            "z": list(FRONT_EDGE_UNIFORM_COARSE_Z_RANGE_MM),
+        },
+    }
+
+
+def refine_front_edge_uniform_strip(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    triangle_indices: list[int] = []
+    visible_triangle_count = 0
+    center_connector_triangle_count = 0
+    selected_points: list[np.ndarray] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        triangle_points = np.stack(triangle, axis=0)
+        xs_mm = triangle_points[:, 0] * 1000.0
+        ys_mm = triangle_points[:, 1] * 1000.0
+        zs_mm = triangle_points[:, 2] * 1000.0
+        in_visible_strip = (
+            min(xs_mm) >= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_X_RANGE_MM[0]
+            and max(xs_mm) <= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_X_RANGE_MM[1]
+            and min(ys_mm) >= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Y_RANGE_MM[0]
+            and max(ys_mm) <= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Y_RANGE_MM[1]
+            and min(zs_mm) >= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Z_RANGE_MM[0]
+            and max(zs_mm) <= FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Z_RANGE_MM[1]
+        )
+        in_center_connector = (
+            min(xs_mm) >= FRONT_EDGE_UNIFORM_REBUILD_CENTER_X_RANGE_MM[0]
+            and max(xs_mm) <= FRONT_EDGE_UNIFORM_REBUILD_CENTER_X_RANGE_MM[1]
+            and min(ys_mm) >= FRONT_EDGE_UNIFORM_REBUILD_CENTER_Y_RANGE_MM[0]
+            and max(ys_mm) <= FRONT_EDGE_UNIFORM_REBUILD_CENTER_Y_RANGE_MM[1]
+            and min(zs_mm) >= FRONT_EDGE_UNIFORM_REBUILD_CENTER_Z_RANGE_MM[0]
+            and max(zs_mm) <= FRONT_EDGE_UNIFORM_REBUILD_CENTER_Z_RANGE_MM[1]
+        )
+        if in_visible_strip or in_center_connector:
+            triangle_indices.append(triangle_index)
+            selected_points.extend(triangle)
+            if in_visible_strip:
+                visible_triangle_count += 1
+            else:
+                center_connector_triangle_count += 1
+
+    if len(triangle_indices) != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_TRIANGLE_COUNT} front-edge strip triangles, "
+            f"found {len(triangle_indices)}."
+        )
+    if visible_triangle_count != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_TRIANGLE_COUNT} visible front-edge strip triangles, "
+            f"found {visible_triangle_count}."
+        )
+    if center_connector_triangle_count != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CENTER_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CENTER_TRIANGLE_COUNT} front-edge center connector triangles, "
+            f"found {center_connector_triangle_count}."
+        )
+
+    target_indices = set(triangle_indices)
+    shell_without_region = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_indices
+    ]
+
+    boundary_edges = build_boundary_edges(shell_without_region)
+    hole_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= FRONT_EDGE_UNIFORM_REBUILD_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    hole_loop = ordered_boundary_loop_from_edges(hole_boundary_edges)
+    if len(hole_loop) != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_HOLE_VERTEX_COUNT} front-edge strip hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+
+    left_contact_chain = [point.copy() for point in hole_loop[0:12]]
+    center_upper_chain = [point.copy() for point in hole_loop[12:15]]
+    right_lower_chain = [point.copy() for point in hole_loop[15:28]]
+    right_contact_chain = [point.copy() for point in reversed(hole_loop[28:41])]
+    center_lower_chain = [point.copy() for point in reversed(hole_loop[41:44])]
+    left_lower_chain = [point.copy() for point in reversed(hole_loop[44:56])]
+    if (
+        len(left_contact_chain) != 12
+        or len(center_upper_chain) != 3
+        or len(right_lower_chain) != 13
+        or len(right_contact_chain) != 13
+        or len(center_lower_chain) != 3
+        or len(left_lower_chain) != 12
+    ):
+        raise ValueError(
+            "Unexpected front-edge uniform rebuild chain partition lengths: "
+            f"{len(left_contact_chain)}, {len(center_upper_chain)}, {len(right_lower_chain)}, "
+            f"{len(right_contact_chain)}, {len(center_lower_chain)}, {len(left_lower_chain)}."
+        )
+
+    reference_lower_point = left_lower_chain[-1]
+    adjusted_right_lower_chain: list[np.ndarray] = []
+    point_map: dict[tuple[float, float, float], np.ndarray] = {}
+    adjusted_distances_mm: list[float] = []
+    for point in right_lower_chain:
+        adjusted_point = point.copy()
+        adjusted_point[1] = reference_lower_point[1]
+        adjusted_point[2] = reference_lower_point[2]
+        adjusted_right_lower_chain.append(adjusted_point)
+        point_map[tuple(round(float(value), 9) for value in point)] = adjusted_point.copy()
+        adjusted_distances_mm.append(float(np.linalg.norm(point - adjusted_point) * 1000.0))
+
+    shell_without_region = remap_product_points_in_triangles(shell_without_region, point_map)
+
+    chain_a = left_contact_chain + center_upper_chain + adjusted_right_lower_chain
+    chain_b = left_lower_chain + center_lower_chain + right_contact_chain
+    if (
+        len(chain_a) != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CHAIN_POINT_COUNT
+        or len(chain_b) != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CHAIN_POINT_COUNT
+    ):
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_CHAIN_POINT_COUNT}-point chains for front-edge strip rebuild, "
+            f"found {len(chain_a)} and {len(chain_b)}."
+        )
+
+    reference_center = np.mean(np.stack(chain_a + chain_b, axis=0), axis=0)
+    rebuilt_triangles = [
+        triangle
+        for triangle in build_uniform_strip_between_chains(chain_a, chain_b, reference_center)
+        if float(np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0]))) > 1e-12
+    ]
+    if len(rebuilt_triangles) != EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_REBUILT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_FRONT_EDGE_UNIFORM_REBUILD_REBUILT_TRIANGLE_COUNT} rebuilt front-edge strip triangles, "
+            f"found {len(rebuilt_triangles)}."
+        )
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_region + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after front-edge uniform strip rebuild, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    region_mins, region_maxs = compute_bbox(selected_points)
+    return {
+        "removedTriangleCount": len(target_indices),
+        "removedTriangleIndices": sorted(target_indices),
+        "visibleStripTriangleCount": visible_triangle_count,
+        "centerConnectorTriangleCount": center_connector_triangle_count,
+        "holeLoopVertexCount": len(hole_loop),
+        "chainAPointCount": len(chain_a),
+        "chainBPointCount": len(chain_b),
+        "adjustedRightLowerPointCount": len(adjusted_right_lower_chain),
+        "adjustedRightLowerDistanceRangeMm": [
+            round(min(adjusted_distances_mm), 4),
+            round(max(adjusted_distances_mm), 4),
+        ],
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "regionBboxMinProductMm": vector_to_mm_list(region_mins),
+        "regionBboxMaxProductMm": vector_to_mm_list(region_maxs),
+        "regionBboxSizeProductMm": vector_to_mm_list(region_maxs - region_mins),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+        "selectionRangesProductMm": {
+            "visibleStrip": {
+                "x": list(FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_X_RANGE_MM),
+                "y": list(FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Y_RANGE_MM),
+                "z": list(FRONT_EDGE_UNIFORM_REBUILD_VISIBLE_Z_RANGE_MM),
+            },
+            "centerConnector": {
+                "x": list(FRONT_EDGE_UNIFORM_REBUILD_CENTER_X_RANGE_MM),
+                "y": list(FRONT_EDGE_UNIFORM_REBUILD_CENTER_Y_RANGE_MM),
+                "z": list(FRONT_EDGE_UNIFORM_REBUILD_CENTER_Z_RANGE_MM),
+            },
+        },
+    }
+
+
+def rebuild_front_edge_uniform_strip(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    coarse_pass = rebuild_front_edge_uniform_strip_coarse(
+        gltf,
+        bin_chunk,
+    )
+    refinement_pass = refine_front_edge_uniform_strip(
+        gltf,
+        bin_chunk,
+    )
+    return {
+        "mode": "coarseThenRefine",
+        "initialPass": coarse_pass,
+        "refinementPass": refinement_pass,
+        "boundaryEdgeCountAfterRebuild": refinement_pass["boundaryEdgeCountAfterRebuild"],
+        "finalRebuiltTriangleCount": refinement_pass["rebuiltTriangleCount"],
+        "adjustedRightLowerPointCount": refinement_pass["adjustedRightLowerPointCount"],
+        "adjustedRightLowerDistanceRangeMm": refinement_pass["adjustedRightLowerDistanceRangeMm"],
+    }
+
+
+def select_front_edge_cross_strip_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    *,
+    x_range_mm: tuple[float, float],
+) -> list[int]:
+    triangle_indices: list[int] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        points = np.stack(triangle, axis=0)
+        xs_mm = points[:, 0] * 1000.0
+        ys_mm = points[:, 1] * 1000.0
+        zs_mm = points[:, 2] * 1000.0
+        if not (
+            min(xs_mm) >= x_range_mm[0]
+            and max(xs_mm) <= x_range_mm[1]
+            and min(zs_mm) >= NEGATIVE_X_PAIRING_REPAIR_Z_RANGE_MM[0]
+            and max(zs_mm) <= NEGATIVE_X_PAIRING_REPAIR_Z_RANGE_MM[1]
+        ):
+            continue
+        has_top = bool(np.any(ys_mm > NEGATIVE_X_PAIRING_REPAIR_TOP_Y_MIN_MM))
+        has_bottom = bool(
+            np.any(
+                (ys_mm > NEGATIVE_X_PAIRING_REPAIR_BOTTOM_Y_RANGE_MM[0])
+                & (ys_mm < NEGATIVE_X_PAIRING_REPAIR_BOTTOM_Y_RANGE_MM[1])
+            )
+        )
+        if has_top and has_bottom:
+            triangle_indices.append(triangle_index)
+    return triangle_indices
+
+
+def classify_positive_x_pairing_repair_loop(
+    hole_loop: list[np.ndarray],
+) -> dict[str, list[np.ndarray]]:
+    if len(hole_loop) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_PAIRING_REPAIR_HOLE_VERTEX_COUNT} positive-X pairing-repair hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+    chains = {
+        "C": [point.copy() for point in hole_loop[0:13]],
+        "A": [point.copy() for point in hole_loop[13:26]],
+        "B": [point.copy() for point in hole_loop[26:39]],
+        "D": [point.copy() for point in hole_loop[39:52]],
+    }
+    if any(len(chain) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_CHAIN_POINT_COUNT for chain in chains.values()):
+        raise ValueError("Unexpected positive-X pairing-repair chain lengths.")
+    return chains
+
+
+def classify_negative_x_pairing_repair_loop(
+    hole_loop: list[np.ndarray],
+) -> dict[str, list[np.ndarray]]:
+    if len(hole_loop) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_HOLE_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_PAIRING_REPAIR_HOLE_VERTEX_COUNT} negative-X pairing-repair hole vertices, "
+            f"found {len(hole_loop)}."
+        )
+    chains = {
+        "C": [point.copy() for point in hole_loop[1:14]],
+        "A": [point.copy() for point in hole_loop[27:40]],
+        "B": [hole_loop[0].copy()] + [point.copy() for point in reversed(hole_loop[40:52])],
+        "D": [point.copy() for point in reversed(hole_loop[14:27])],
+    }
+    if any(len(chain) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_CHAIN_POINT_COUNT for chain in chains.values()):
+        raise ValueError("Unexpected negative-X pairing-repair chain lengths.")
+    return chains
+
+
+def repair_negative_x_front_strip_pairing(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    reference_indices = select_front_edge_cross_strip_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_PAIRING_REPAIR_X_POS_RANGE_MM,
+    )
+    target_indices = select_front_edge_cross_strip_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_PAIRING_REPAIR_X_NEG_RANGE_MM,
+    )
+    if len(reference_indices) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REFERENCE_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REFERENCE_TRIANGLE_COUNT} positive-X pairing-repair reference triangles, "
+            f"found {len(reference_indices)}."
+        )
+    if len(target_indices) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_TARGET_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_PAIRING_REPAIR_TARGET_TRIANGLE_COUNT} negative-X pairing-repair target triangles, "
+            f"found {len(target_indices)}."
+        )
+
+    reference_triangle_set = set(reference_indices)
+    target_triangle_set = set(target_indices)
+
+    shell_without_reference = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in reference_triangle_set
+    ]
+    reference_boundary_edges = build_boundary_edges(shell_without_reference)
+    reference_hole_edges = [
+        edge
+        for edge in reference_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_POS_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_POS_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    reference_loop = ordered_boundary_loop_from_edges(reference_hole_edges)
+    reference_chains = classify_positive_x_pairing_repair_loop(reference_loop)
+
+    shell_without_target = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_triangle_set
+    ]
+    target_boundary_edges = build_boundary_edges(shell_without_target)
+    target_hole_edges = [
+        edge
+        for edge in target_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_NEG_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_NEG_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    target_loop = ordered_boundary_loop_from_edges(target_hole_edges)
+    target_chains = classify_negative_x_pairing_repair_loop(target_loop)
+
+    point_map: dict[tuple[float, float, float], np.ndarray] = {}
+    for chain_label in ("A", "B", "C", "D"):
+        reference_sorted = sorted(reference_chains[chain_label], key=lambda point: abs(float(point[0])))
+        target_sorted = sorted(target_chains[chain_label], key=lambda point: abs(float(point[0])))
+        for reference_point, target_point in zip(reference_sorted, target_sorted):
+            point_map[tuple(round(float(value), 9) for value in reference_point)] = target_point.copy()
+
+    rebuilt_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for triangle_index in reference_indices:
+        remapped_triangle: list[np.ndarray] = []
+        for point in shell_triangles[triangle_index]:
+            replacement = point_map.get(tuple(round(float(value), 9) for value in point))
+            if replacement is None:
+                raise ValueError("Failed to map positive-X reference triangle into negative-X pairing repair region.")
+            remapped_triangle.append(replacement.copy())
+        rebuilt_triangles.append(tuple(remapped_triangle))
+
+    reference_center = np.mean(np.stack([point for triangle in rebuilt_triangles for point in triangle], axis=0), axis=0)
+    rebuilt_triangles.append(
+        orient_triangle_away_from_center(
+            (
+                target_chains["A"][0],
+                target_chains["C"][0],
+                target_chains["D"][0],
+            ),
+            reference_center,
+        )
+    )
+    rebuilt_triangles.append(
+        orient_triangle_away_from_center(
+            (
+                target_chains["B"][0],
+                target_chains["D"][0],
+                target_chains["C"][0],
+            ),
+            reference_center,
+        )
+    )
+
+    if len(rebuilt_triangles) != EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REBUILT_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_PAIRING_REPAIR_REBUILT_TRIANGLE_COUNT} rebuilt negative-X pairing-repair triangles, "
+            f"found {len(rebuilt_triangles)}."
+        )
+
+    replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_target + rebuilt_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after negative-X pairing repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    rebuilt_points = [point for triangle in rebuilt_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    target_points = [point for triangle_index in target_indices for point in shell_triangles[triangle_index]]
+    target_mins, target_maxs = compute_bbox(target_points)
+    return {
+        "referenceTriangleCount": len(reference_indices),
+        "targetTriangleCount": len(target_indices),
+        "referenceHoleVertexCount": len(reference_loop),
+        "targetHoleVertexCount": len(target_loop),
+        "rebuiltTriangleCount": len(rebuilt_triangles),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "targetTriangleIndices": sorted(target_triangle_set),
+        "referenceTriangleIndices": sorted(reference_triangle_set),
+        "targetBboxMinProductMm": vector_to_mm_list(target_mins),
+        "targetBboxMaxProductMm": vector_to_mm_list(target_maxs),
+        "targetBboxSizeProductMm": vector_to_mm_list(target_maxs - target_mins),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+    }
+
+
+def repair_negative_x_front_strip_endpoint_anchor(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    reference_indices = select_front_edge_cross_strip_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_PAIRING_REPAIR_X_POS_RANGE_MM,
+    )
+    target_indices = select_front_edge_cross_strip_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_PAIRING_REPAIR_X_NEG_RANGE_MM,
+    )
+    reference_triangle_set = set(reference_indices)
+    target_triangle_set = set(target_indices)
+
+    shell_without_reference = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in reference_triangle_set
+    ]
+    reference_boundary_edges = build_boundary_edges(shell_without_reference)
+    reference_hole_edges = [
+        edge
+        for edge in reference_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_POS_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_POS_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    reference_loop = ordered_boundary_loop_from_edges(reference_hole_edges)
+    reference_chains = classify_positive_x_pairing_repair_loop(reference_loop)
+
+    shell_without_target = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_triangle_set
+    ]
+    target_boundary_edges = build_boundary_edges(shell_without_target)
+    target_hole_edges = [
+        edge
+        for edge in target_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_NEG_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_NEG_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_PAIRING_REPAIR_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    target_loop = ordered_boundary_loop_from_edges(target_hole_edges)
+    target_chains = classify_negative_x_pairing_repair_loop(target_loop)
+
+    reference_sorted = sorted(reference_chains["A"], key=lambda point: abs(float(point[0])))
+    target_sorted = sorted(target_chains["A"], key=lambda point: abs(float(point[0])))
+    old_endpoint = target_sorted[-1].copy()
+    new_endpoint = reference_sorted[-1].copy()
+    new_endpoint[0] *= -1.0
+
+    endpoint_key = tuple(round(float(value), 9) for value in old_endpoint)
+    affected_triangle_indices = [
+        triangle_index
+        for triangle_index, triangle in enumerate(shell_triangles)
+        if any(tuple(round(float(value), 9) for value in point) == endpoint_key for point in triangle)
+    ]
+    if len(affected_triangle_indices) != EXPECTED_NEGATIVE_X_ENDPOINT_ANCHOR_AFFECTED_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_ENDPOINT_ANCHOR_AFFECTED_TRIANGLE_COUNT} triangles sharing negative-X endpoint anchor, "
+            f"found {len(affected_triangle_indices)}."
+        )
+
+    remapped_shell_triangles = remap_product_points_in_triangles(
+        shell_triangles,
+        {
+            endpoint_key: new_endpoint,
+        },
+    )
+    replace_shell_with_product_triangles(gltf, bin_chunk, remapped_shell_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after negative-X endpoint anchor repair, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    return {
+        "affectedTriangleCount": len(affected_triangle_indices),
+        "affectedTriangleIndices": affected_triangle_indices,
+        "oldEndpointProductMm": vector_to_mm_list(old_endpoint),
+        "newEndpointProductMm": vector_to_mm_list(new_endpoint),
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+    }
+
+
+def regularize_positive_x_corner_strip_thickness(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    target_points: dict[tuple[float, float, float], np.ndarray] = {}
+    for triangle in shell_triangles:
+        for point in triangle:
+            point_mm = point * 1000.0
+            if (
+                POSITIVE_X_CORNER_THICKNESS_B_X_RANGE_MM[0] <= float(point_mm[0]) <= POSITIVE_X_CORNER_THICKNESS_B_X_RANGE_MM[1]
+                and POSITIVE_X_CORNER_THICKNESS_B_Y_RANGE_MM[0] <= float(point_mm[1]) <= POSITIVE_X_CORNER_THICKNESS_B_Y_RANGE_MM[1]
+                and POSITIVE_X_CORNER_THICKNESS_B_Z_RANGE_MM[0] <= float(point_mm[2]) <= POSITIVE_X_CORNER_THICKNESS_B_Z_RANGE_MM[1]
+            ):
+                target_points.setdefault(tuple(round(float(value), 9) for value in point), point.copy())
+
+    sorted_points = sorted(target_points.values(), key=lambda point: float(point[0]))
+    if len(sorted_points) != EXPECTED_POSITIVE_X_CORNER_THICKNESS_B_POINT_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_POSITIVE_X_CORNER_THICKNESS_B_POINT_COUNT} positive-X corner thickness points, "
+            f"found {len(sorted_points)}."
+        )
+
+    start_point = sorted_points[0]
+    end_point = sorted_points[-1]
+    point_map: dict[tuple[float, float, float], np.ndarray] = {}
+    for point_index, point in enumerate(sorted_points):
+        blend = point_index / max(len(sorted_points) - 1, 1)
+        replacement = point.copy()
+        replacement[1] = (start_point[1] * (1.0 - blend)) + (end_point[1] * blend)
+        replacement[2] = (start_point[2] * (1.0 - blend)) + (end_point[2] * blend)
+        point_map[tuple(round(float(value), 9) for value in point)] = replacement
+
+    remapped_shell_triangles = remap_product_points_in_triangles(shell_triangles, point_map)
+    replace_shell_with_product_triangles(gltf, bin_chunk, remapped_shell_triangles)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    if final_boundary_edges:
+        raise ValueError(
+            f"Expected closed shell after positive-X corner thickness regularization, found {len(final_boundary_edges)} boundary edges."
+        )
+
+    adjusted_points = [point_map[tuple(round(float(value), 9) for value in point)] for point in sorted_points]
+    adjusted_depths_mm = [float(point[2] * 1000.0) for point in adjusted_points]
+    return {
+        "adjustedPointCount": len(adjusted_points),
+        "originalPointsProductMm": [vector_to_mm_list(point) for point in sorted_points],
+        "adjustedPointsProductMm": [vector_to_mm_list(point) for point in adjusted_points],
+        "selectionRangesProductMm": {
+            "x": list(POSITIVE_X_CORNER_THICKNESS_B_X_RANGE_MM),
+            "y": list(POSITIVE_X_CORNER_THICKNESS_B_Y_RANGE_MM),
+            "z": list(POSITIVE_X_CORNER_THICKNESS_B_Z_RANGE_MM),
+        },
+        "adjustedDepthRangeMm": [
+            round(min(adjusted_depths_mm), 4),
+            round(max(adjusted_depths_mm), 4),
+        ],
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+    }
+
+
+def select_front_corner_region_triangles(
+    shell_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    *,
+    x_range_mm: tuple[float, float],
+) -> dict[str, object]:
+    triangle_indices: list[int] = []
+    selected_points: list[np.ndarray] = []
+    for triangle_index, triangle in enumerate(shell_triangles):
+        triangle_points = np.stack(triangle, axis=0)
+        xs_mm = triangle_points[:, 0] * 1000.0
+        ys_mm = triangle_points[:, 1] * 1000.0
+        zs_mm = triangle_points[:, 2] * 1000.0
+        if (
+            min(xs_mm) >= x_range_mm[0]
+            and max(xs_mm) <= x_range_mm[1]
+            and min(ys_mm) >= NEGATIVE_X_CORNER_STYLE_Y_RANGE_MM[0]
+            and max(ys_mm) <= NEGATIVE_X_CORNER_STYLE_Y_RANGE_MM[1]
+            and min(zs_mm) >= NEGATIVE_X_CORNER_STYLE_Z_RANGE_MM[0]
+            and max(zs_mm) <= NEGATIVE_X_CORNER_STYLE_Z_RANGE_MM[1]
+        ):
+            triangle_indices.append(triangle_index)
+            selected_points.extend(triangle)
+
+    mins, maxs = compute_bbox(selected_points)
+    return {
+        "triangleIndices": triangle_indices,
+        "triangleCount": len(triangle_indices),
+        "bboxMinProductMm": vector_to_mm_list(mins),
+        "bboxMaxProductMm": vector_to_mm_list(maxs),
+        "bboxSizeProductMm": vector_to_mm_list(maxs - mins),
+    }
+
+
+def repair_negative_x_front_corner_line_style(
+    gltf: dict,
+    bin_chunk: bytearray,
+) -> dict[str, object]:
+    shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    reference_region = select_front_corner_region_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_CORNER_STYLE_REFERENCE_X_RANGE_MM,
+    )
+    target_region = select_front_corner_region_triangles(
+        shell_triangles,
+        x_range_mm=NEGATIVE_X_CORNER_STYLE_TARGET_X_RANGE_MM,
+    )
+    reference_indices = reference_region["triangleIndices"]
+    target_indices = target_region["triangleIndices"]
+    if len(reference_indices) != EXPECTED_NEGATIVE_X_CORNER_STYLE_REFERENCE_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_CORNER_STYLE_REFERENCE_TRIANGLE_COUNT} positive-X corner reference triangles, "
+            f"found {len(reference_indices)}."
+        )
+    if len(target_indices) != EXPECTED_NEGATIVE_X_CORNER_STYLE_TARGET_TRIANGLE_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_CORNER_STYLE_TARGET_TRIANGLE_COUNT} negative-X corner target triangles, "
+            f"found {len(target_indices)}."
+        )
+
+    def is_point_in_y_range(point: np.ndarray, y_range_mm: tuple[float, float]) -> bool:
+        y_mm = float(point[1] * 1000.0)
+        return y_range_mm[0] <= y_mm <= y_range_mm[1]
+
+    def align_curve_to_ramp_arc(curve_points: list[np.ndarray]) -> list[np.ndarray]:
+        if not curve_points:
+            return []
+
+        ramp_points_xz: list[np.ndarray] = []
+        seen_ramp_keys: set[tuple[float, float]] = set()
+        for triangle in build_part_geometries(gltf, bin_chunk)["Case_Base_Arc_Ramp_V4"]["triangles"]:
+            for point in triangle:
+                x_mm, y_mm, z_mm = (float(value) * 1000.0 for value in point)
+                if (
+                    NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[0] <= x_mm <= -20.0
+                    and -3.0 <= y_mm <= 10.0
+                    and NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[0] <= z_mm <= -12.0
+                ):
+                    ramp_key = (round(float(point[0]), 6), round(float(point[2]), 6))
+                    if ramp_key in seen_ramp_keys:
+                        continue
+                    seen_ramp_keys.add(ramp_key)
+                    ramp_points_xz.append(np.array([float(point[0]), float(point[2])], dtype=float))
+
+        if not ramp_points_xz:
+            return [point.copy() for point in sorted(curve_points, key=lambda point: float(point[0]))]
+
+        def select_nearest_ramp_point(reference_point: np.ndarray) -> np.ndarray | None:
+            candidates = [
+                ramp_point
+                for ramp_point in ramp_points_xz
+                if abs(float(ramp_point[0] - reference_point[0]) * 1000.0) <= 2.5
+            ]
+            if not candidates:
+                return None
+            return min(
+                candidates,
+                key=lambda ramp_point: (
+                    abs(float(ramp_point[0] - reference_point[0]) * 1000.0)
+                    + (0.35 * abs(float(ramp_point[1] - reference_point[2]) * 1000.0))
+                ),
+            )
+
+        sorted_curve = sorted(curve_points, key=lambda point: float(point[0]))
+        overlap_matches: list[tuple[np.ndarray, np.ndarray]] = []
+        for point in sorted_curve:
+            nearest_point = select_nearest_ramp_point(point)
+            if nearest_point is None:
+                continue
+            overlap_matches.append((point, nearest_point))
+
+        if not overlap_matches:
+            return [point.copy() for point in sorted_curve]
+
+        z_offset = float(
+            np.median(
+                [float(reference_point[2] - ramp_point[1]) for reference_point, ramp_point in overlap_matches]
+            )
+        )
+        adjusted_curve: list[np.ndarray] = []
+        for point in sorted_curve:
+            adjusted_point = point.copy()
+            nearest_point = select_nearest_ramp_point(point)
+            if nearest_point is not None:
+                ramp_aligned_z = float(nearest_point[1] + z_offset)
+                adjusted_point[2] = float((0.65 * float(point[2])) + (0.35 * ramp_aligned_z))
+            adjusted_curve.append(adjusted_point)
+        return adjusted_curve
+
+    def fix_visible_strip_triangle_orientation(
+        triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], bool]:
+        triangle_points = np.stack(triangle, axis=0)
+        center_mm = triangle_points.mean(axis=0) * 1000.0
+        normal = triangle_normal(triangle)
+        if (
+            NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_X_RANGE_MM[0] <= float(center_mm[0]) <= NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_X_RANGE_MM[1]
+            and NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Y_RANGE_MM[0] <= float(center_mm[1]) <= NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Y_RANGE_MM[1]
+            and NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Z_RANGE_MM[0] <= float(center_mm[2]) <= NEGATIVE_X_CORNER_STYLE_VISIBLE_NORMAL_FIX_Z_RANGE_MM[1]
+            and float(normal[1]) < -0.25
+        ):
+            return (triangle[0], triangle[2], triangle[1]), True
+        return triangle, False
+
+    target_triangle_set = set(target_indices)
+    shell_without_target = [
+        triangle for triangle_index, triangle in enumerate(shell_triangles) if triangle_index not in target_triangle_set
+    ]
+    boundary_edges = build_boundary_edges(shell_without_target)
+    local_boundary_edges = [
+        edge
+        for edge in boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    boundary_point_lookup = {
+        tuple(round(float(value), 9) for value in point): np.array(point, dtype=float)
+        for edge in local_boundary_edges
+        for point in edge
+    }
+
+    mirrored_point_map: dict[tuple[float, float, float], np.ndarray] = {}
+    mirrored_reference_upper_curve: list[np.ndarray] = []
+    mirrored_reference_lower_curve: list[np.ndarray] = []
+    seen_reference_points: set[tuple[float, float, float]] = set()
+    for triangle_index in reference_indices:
+        for point in shell_triangles[triangle_index]:
+            point_key_value = tuple(round(float(value), 9) for value in point)
+            if point_key_value in mirrored_point_map:
+                continue
+            mirrored_point = np.array(point, dtype=float)
+            mirrored_point[0] *= -1.0
+            mirrored_key = tuple(round(float(value), 9) for value in mirrored_point)
+            mirrored_point_map[point_key_value] = boundary_point_lookup.get(mirrored_key, mirrored_point)
+            if point_key_value in seen_reference_points:
+                continue
+            seen_reference_points.add(point_key_value)
+            if is_point_in_y_range(mirrored_point, NEGATIVE_X_CORNER_STYLE_VISIBLE_UPPER_Y_RANGE_MM):
+                mirrored_reference_upper_curve.append(mirrored_point.copy())
+            elif is_point_in_y_range(mirrored_point, NEGATIVE_X_CORNER_STYLE_VISIBLE_LOWER_Y_RANGE_MM):
+                mirrored_reference_lower_curve.append(mirrored_point.copy())
+
+    reference_center = np.mean(
+        np.stack([point for triangle_index in reference_indices for point in shell_triangles[triangle_index]], axis=0),
+        axis=0,
+    )
+    mirrored_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    mirrored_center = reference_center * np.array([-1.0, 1.0, 1.0], dtype=float)
+    for triangle_index in reference_indices:
+        remapped_triangle = tuple(
+            np.array(mirrored_point_map[tuple(round(float(value), 9) for value in point)], dtype=float)
+            for point in shell_triangles[triangle_index]
+        )
+        remapped_triangle = (remapped_triangle[0], remapped_triangle[2], remapped_triangle[1])
+        mirrored_triangles.append(
+            orient_triangle_away_from_center(
+                remapped_triangle,
+                mirrored_center,
+            )
+        )
+
+    adjusted_upper_curve = align_curve_to_ramp_arc(mirrored_reference_upper_curve)
+    adjusted_lower_curve = align_curve_to_ramp_arc(mirrored_reference_lower_curve)
+
+    if len(adjusted_upper_curve) < 2 or len(adjusted_lower_curve) < 2:
+        raise ValueError(
+            "Expected both negative-X corner visible curves to contain at least two points."
+        )
+
+    leading_upper_count = max(len(adjusted_upper_curve) - len(adjusted_lower_curve), 0)
+    if leading_upper_count >= len(adjusted_upper_curve):
+        raise ValueError(
+            "Negative-X corner visible curve alignment left no points for the rebuilt strip."
+        )
+
+    leading_upper_curve = adjusted_upper_curve[: leading_upper_count + 1] if leading_upper_count > 0 else []
+    strip_upper_curve = adjusted_upper_curve[leading_upper_count:]
+    strip_lower_curve = adjusted_lower_curve
+    if len(strip_upper_curve) != len(strip_lower_curve):
+        strip_lower_curve = resample_open_polyline(strip_lower_curve, len(strip_upper_curve))
+
+    stage_one_shell = shell_without_target + mirrored_triangles
+    stage_one_boundary_edges = build_boundary_edges(stage_one_shell)
+    stage_one_local_edges = [
+        edge
+        for edge in stage_one_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    stage_one_loop = ordered_boundary_loop_from_edges(stage_one_local_edges)
+    if len(stage_one_loop) != EXPECTED_NEGATIVE_X_CORNER_STYLE_STAGE1_LOOP_VERTEX_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_NEGATIVE_X_CORNER_STYLE_STAGE1_LOOP_VERTEX_COUNT} vertices in the negative-X corner stage-one loop, "
+            f"found {len(stage_one_loop)}."
+        )
+
+    visible_boundary_point_map: dict[tuple[float, float, float], np.ndarray] = {}
+    for point in stage_one_loop:
+        point_key_value = point_key(point)
+        if is_point_in_y_range(point, NEGATIVE_X_CORNER_STYLE_VISIBLE_UPPER_Y_RANGE_MM) and adjusted_upper_curve:
+            visible_boundary_point_map[point_key_value] = interpolate_point_by_x(
+                adjusted_upper_curve,
+                float(point[0]),
+            )
+        elif is_point_in_y_range(point, NEGATIVE_X_CORNER_STYLE_VISIBLE_LOWER_Y_RANGE_MM) and adjusted_lower_curve:
+            visible_boundary_point_map[point_key_value] = interpolate_point_by_x(
+                adjusted_lower_curve,
+                float(point[0]),
+            )
+
+    adjusted_mirrored_triangles = [
+        remap_triangle_points(triangle, visible_boundary_point_map) for triangle in mirrored_triangles
+    ]
+
+    visible_orientation_flip_count = 0
+    oriented_shell_without_target: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for triangle in shell_without_target:
+        fixed_triangle, flipped = fix_visible_strip_triangle_orientation(triangle)
+        visible_orientation_flip_count += int(flipped)
+        oriented_shell_without_target.append(fixed_triangle)
+
+    support_edge_normals: dict[tuple[tuple[float, float, float], tuple[float, float, float]], list[np.ndarray]] = defaultdict(list)
+    for triangle in oriented_shell_without_target:
+        normal = triangle_normal(triangle)
+        if float(np.linalg.norm(normal)) <= 1e-9:
+            continue
+        triangle_points = [point_key(point) for point in triangle]
+        for start, end in ((0, 1), (1, 2), (2, 0)):
+            edge = tuple(sorted((triangle_points[start], triangle_points[end])))
+            support_edge_normals[edge].append(normal)
+
+    oriented_mirrored_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    rebuilt_orientation_flip_count = 0
+    rebuilt_strip_source_triangles: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    if leading_upper_curve:
+        fan_anchor = np.array(strip_lower_curve[0], dtype=float)
+        for point_a, point_b in zip(leading_upper_curve[:-1], leading_upper_curve[1:]):
+            rebuilt_strip_source_triangles.append(
+                (
+                    np.array(point_a, dtype=float),
+                    np.array(point_b, dtype=float),
+                    fan_anchor.copy(),
+                )
+            )
+    rebuilt_strip_source_triangles.extend(
+        build_uniform_strip_between_chains(
+            [np.array(point, dtype=float) for point in strip_upper_curve],
+            [np.array(point, dtype=float) for point in strip_lower_curve],
+            mirrored_center,
+        )
+    )
+
+    for triangle in rebuilt_strip_source_triangles:
+        pre_fixed_triangle, pre_fixed_flipped = fix_visible_strip_triangle_orientation(triangle)
+        rebuilt_orientation_flip_count += int(pre_fixed_flipped)
+        triangle_points = [point_key(point) for point in pre_fixed_triangle]
+        neighbor_normals: list[np.ndarray] = []
+        for start, end in ((0, 1), (1, 2), (2, 0)):
+            edge = tuple(sorted((triangle_points[start], triangle_points[end])))
+            neighbor_normals.extend(support_edge_normals.get(edge, []))
+        oriented_triangle = orient_triangle_to_match_neighbor_normals(
+            pre_fixed_triangle,
+            neighbor_normals,
+            mirrored_center,
+        )
+        if any(
+            point_key(oriented_triangle[index]) != point_key(pre_fixed_triangle[index])
+            for index in range(3)
+        ):
+            rebuilt_orientation_flip_count += 1
+        oriented_mirrored_triangles.append(oriented_triangle)
+
+    # Leave the corner hole open here. We only restore the visible outer strip;
+    # the missing corner cap should be filled later by a dedicated patch model.
+    final_shell = oriented_shell_without_target + oriented_mirrored_triangles
+    replace_shell_with_product_triangles(gltf, bin_chunk, final_shell)
+    final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
+    final_boundary_edges = build_boundary_edges(final_shell_triangles)
+    rebuilt_points = [point for triangle in oriented_mirrored_triangles for point in triangle]
+    rebuilt_mins, rebuilt_maxs = compute_bbox(rebuilt_points)
+    target_points = [point for triangle_index in target_indices for point in shell_triangles[triangle_index]]
+    target_mins, target_maxs = compute_bbox(target_points)
+    final_local_boundary_edges = [
+        edge
+        for edge in final_boundary_edges
+        if (
+            min(edge[0][0], edge[1][0]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[0]
+            and max(edge[0][0], edge[1][0]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_X_RANGE_MM[1]
+            and min(edge[0][1], edge[1][1]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[0]
+            and max(edge[0][1], edge[1][1]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Y_RANGE_MM[1]
+            and min(edge[0][2], edge[1][2]) * 1000.0 >= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[0]
+            and max(edge[0][2], edge[1][2]) * 1000.0 <= NEGATIVE_X_CORNER_STYLE_LOCAL_EDGE_Z_RANGE_MM[1]
+        )
+    ]
+    final_stage_one_loop_error: str | None = None
+    try:
+        final_stage_one_loop = ordered_boundary_loop_from_edges(final_local_boundary_edges)
+    except ValueError as error:
+        final_stage_one_loop_error = str(error)
+        final_stage_one_loop = [
+            np.array(point, dtype=float)
+            for point in sorted(
+                {
+                    point
+                    for edge in final_local_boundary_edges
+                    for point in edge
+                },
+                key=lambda point: (point[0], point[1], point[2]),
+            )
+        ]
+    return {
+        "referenceTriangleCount": len(reference_indices),
+        "targetTriangleCount": len(target_indices),
+        "mirroredTriangleCount": len(oriented_mirrored_triangles),
+        "snapPairCount": 0,
+        "capFillTriangleCount": 0,
+        "boundaryEdgeCountAfterRepair": len(final_boundary_edges),
+        "visibleBoundaryPointAdjustmentCount": len(visible_boundary_point_map),
+        "visibleOrientationFlipCount": visible_orientation_flip_count,
+        "rebuiltOrientationFlipCount": rebuilt_orientation_flip_count,
+        "referenceTriangleIndices": sorted(reference_indices),
+        "targetTriangleIndices": sorted(target_indices),
+        "stageOneLoopProductMm": [vector_to_mm_list(point) for point in final_stage_one_loop],
+        "stageOneLoopError": final_stage_one_loop_error,
+        "stageTwoLoopProductMm": [],
+        "snapPairs": [],
+        "adjustedUpperCurveProductMm": [vector_to_mm_list(point) for point in adjusted_upper_curve],
+        "adjustedLowerCurveProductMm": [vector_to_mm_list(point) for point in adjusted_lower_curve],
+        "targetBboxMinProductMm": vector_to_mm_list(target_mins),
+        "targetBboxMaxProductMm": vector_to_mm_list(target_maxs),
+        "targetBboxSizeProductMm": vector_to_mm_list(target_maxs - target_mins),
+        "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
+        "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
+        "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
+    }
+
+
 def rebuild_positive_x_opening_strip_component(
     gltf: dict,
     bin_chunk: bytearray,
@@ -1234,8 +2816,41 @@ def rebuild_positive_x_opening_strip_component(
     split_index = len(hole_loop) // 2
     chain_a = [point.copy() for point in hole_loop[: split_index + 1]]
     chain_b = [hole_loop[0].copy()] + [point.copy() for point in reversed(hole_loop[split_index:])]
-    reference_center = np.mean(np.stack(hole_loop, axis=0), axis=0)
-    rebuilt_triangles = loft_open_polylines(chain_a, chain_b, reference_center)
+    adjusted_chain_b = [point.copy() for point in chain_b]
+    ramp_contact_chain_debug: dict[str, object] | None = None
+    adjusted_point_count = 0
+    adjusted_distances_mm: list[float] = []
+
+    if not z_positive:
+        ramp_contact_chain, ramp_contact_chain_debug = build_positive_x_front_ramp_contact_chain(
+            gltf,
+            bin_chunk,
+            chain_b,
+            bbox_min,
+            bbox_max,
+        )
+        point_map: dict[tuple[float, float, float], np.ndarray] = {}
+        for index, (original_point, ramp_point) in enumerate(zip(chain_b, ramp_contact_chain)):
+            x_mm = float(original_point[0] * 1000.0)
+            if index in (0, len(chain_b) - 1) or x_mm <= POSITIVE_X_OPENING_STRIP_TILT_START_X_MM:
+                continue
+            if x_mm >= POSITIVE_X_OPENING_STRIP_TILT_FULL_X_MM:
+                blend = 1.0
+            else:
+                blend = (x_mm - POSITIVE_X_OPENING_STRIP_TILT_START_X_MM) / (
+                    POSITIVE_X_OPENING_STRIP_TILT_FULL_X_MM - POSITIVE_X_OPENING_STRIP_TILT_START_X_MM
+                )
+            adjusted_point = (original_point * (1.0 - blend)) + (ramp_point * blend)
+            adjusted_chain_b[index] = adjusted_point
+            point_map[tuple(round(float(value), 9) for value in original_point)] = adjusted_point
+            adjusted_point_count += 1
+            adjusted_distances_mm.append(float(np.linalg.norm(adjusted_point - ramp_point) * 1000.0))
+
+        if point_map:
+            shell_without_component = remap_product_points_in_triangles(shell_without_component, point_map)
+
+    reference_center = np.mean(np.stack(chain_a + adjusted_chain_b, axis=0), axis=0)
+    rebuilt_triangles = loft_open_polylines(chain_a, adjusted_chain_b, reference_center)
 
     replace_shell_with_product_triangles(gltf, bin_chunk, shell_without_component + rebuilt_triangles)
     final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
@@ -1257,7 +2872,18 @@ def rebuild_positive_x_opening_strip_component(
         "holeSplitIndex": split_index,
         "chainAPointCount": len(chain_a),
         "chainBPointCount": len(chain_b),
+        "adjustedChainBPointCount": adjusted_point_count,
+        "tiltBlendXRangeMm": [
+            POSITIVE_X_OPENING_STRIP_TILT_START_X_MM,
+            POSITIVE_X_OPENING_STRIP_TILT_FULL_X_MM,
+        ],
         "boundaryEdgeCountAfterRebuild": len(final_boundary_edges),
+        "adjustedPointDistanceToRampRangeMm": (
+            [round(min(adjusted_distances_mm), 4), round(max(adjusted_distances_mm), 4)]
+            if adjusted_distances_mm
+            else None
+        ),
+        "rampContactChain": ramp_contact_chain_debug,
         "rebuiltBboxMinProductMm": vector_to_mm_list(rebuilt_mins),
         "rebuiltBboxMaxProductMm": vector_to_mm_list(rebuilt_maxs),
         "rebuiltBboxSizeProductMm": vector_to_mm_list(rebuilt_maxs - rebuilt_mins),
@@ -2777,10 +4403,23 @@ def rebuild_front_window_shell(
         sloped_residual_indices,
     )
 
+    front_window_corner_cap_removal = remove_front_window_corner_cap_triangle(
+        gltf,
+        bin_chunk,
+        rim_reference,
+    )
+    front_window_corner_ramp_contact_point, front_window_corner_ramp_contact_debug = (
+        extract_front_window_corner_ramp_contact_point(gltf, bin_chunk)
+    )
+
     part_geometries = build_part_geometries(gltf, bin_chunk)
     shell_triangles = part_geometries["Case_Base_Shell"]["triangles"]
     boundary_loop = ordered_boundary_loop(shell_triangles)
-    fill_triangles, fill_patch_debug = build_structured_front_window_patch(boundary_loop, rim_reference)
+    fill_triangles, fill_patch_debug = build_structured_front_window_patch(
+        boundary_loop,
+        rim_reference,
+        corner_apex_override=front_window_corner_ramp_contact_point,
+    )
     final_product_triangles = shell_triangles + fill_triangles
     replace_shell_with_product_triangles(gltf, bin_chunk, final_product_triangles)
     positive_x_front_strip_rebuild = rebuild_positive_x_opening_strip_component(
@@ -2801,6 +4440,34 @@ def rebuild_front_window_shell(
         bin_chunk,
     )
     center_cap_alignment_repair = repair_center_cap_alignment_strip(
+        gltf,
+        bin_chunk,
+    )
+    positive_x_front_center_tilt_finalize = finalize_positive_x_front_center_strip_tilt(
+        gltf,
+        bin_chunk,
+    )
+    negative_x_front_strip_tilt_finalize = finalize_negative_x_front_strip_tilt(
+        gltf,
+        bin_chunk,
+    )
+    front_edge_uniform_rebuild = rebuild_front_edge_uniform_strip(
+        gltf,
+        bin_chunk,
+    )
+    negative_x_pairing_repair = repair_negative_x_front_strip_pairing(
+        gltf,
+        bin_chunk,
+    )
+    negative_x_endpoint_anchor_repair = repair_negative_x_front_strip_endpoint_anchor(
+        gltf,
+        bin_chunk,
+    )
+    positive_x_corner_thickness_regularization = regularize_positive_x_corner_strip_thickness(
+        gltf,
+        bin_chunk,
+    )
+    negative_x_corner_line_style_repair = repair_negative_x_front_corner_line_style(
         gltf,
         bin_chunk,
     )
@@ -2827,14 +4494,16 @@ def rebuild_front_window_shell(
 
     final_shell_triangles = build_part_geometries(gltf, bin_chunk)["Case_Base_Shell"]["triangles"]
     final_boundary_edges = build_boundary_edges(final_shell_triangles)
-    if final_boundary_edges:
-        raise ValueError(f"Expected closed shell after rebuilding opening, found {len(final_boundary_edges)} boundary edges.")
+    if len(final_boundary_edges) not in (0, *EXPECTED_NEGATIVE_X_CORNER_STYLE_OPEN_BOUNDARY_EDGE_COUNTS):
+        raise ValueError(
+            f"Expected either a closed shell or the reserved negative-X corner opening, found {len(final_boundary_edges)} boundary edges."
+        )
 
     fill_points = [point for triangle in fill_triangles for point in triangle]
     fill_mins, fill_maxs = compute_bbox(fill_points)
     return {
         "node": "Case_Base_Shell",
-        "operation": "delete_front_blocker_remove_sloped_residuals_rebuild_front_window_rebuild_positive_x_front_opening_strip_repair_front_center_seam_remove_center_spur_node_loft_positive_x_cap_and_align_center_cap_strip",
+        "operation": "delete_front_blocker_remove_sloped_residuals_remove_corner_cap_rebuild_front_window_rebuild_positive_x_front_opening_strip_repair_front_center_seam_remove_center_spur_node_loft_positive_x_cap_and_align_center_cap_strip",
         "blockerRemovedTriangleCount": blocker_removed_count,
         "afterBlockerTriangleCount": after_blocker_triangle_count,
         "frontFaceRemovedTriangleCount": front_face_removed_count,
@@ -2847,10 +4516,13 @@ def rebuild_front_window_shell(
         "finalTriangleCount": len(final_shell_triangles),
         "boundaryVertexCountBeforeFill": len(boundary_loop),
         "boundaryEdgeCountAfterFill": len(final_boundary_edges),
+        "reservedNegativeXCornerOpening": len(final_boundary_edges) in EXPECTED_NEGATIVE_X_CORNER_STYLE_OPEN_BOUNDARY_EDGE_COUNTS,
         "blockerComponent": blocker_component,
         "frontFaceComponent": front_face_component,
         "sidewallComponent": sidewall_component,
         "slopedResidualComponent": sloped_residual_component,
+        "frontWindowCornerCapRemoval": front_window_corner_cap_removal,
+        "frontWindowCornerRampContact": front_window_corner_ramp_contact_debug,
         "rimReference": serialize_front_window_reference_rim(rim_reference),
         "fillPatchDebug": fill_patch_debug,
         "positiveXFrontStripRebuild": positive_x_front_strip_rebuild,
@@ -2858,6 +4530,13 @@ def rebuild_front_window_shell(
         "frontCenterSpurRepair": front_center_spur_repair,
         "positiveXCapLoftRepair": positive_x_cap_loft_repair,
         "centerCapAlignmentRepair": center_cap_alignment_repair,
+        "positiveXFrontCenterTiltFinalize": positive_x_front_center_tilt_finalize,
+        "negativeXFrontStripTiltFinalize": negative_x_front_strip_tilt_finalize,
+        "frontEdgeUniformRebuild": front_edge_uniform_rebuild,
+        "negativeXFrontStripPairingRepair": negative_x_pairing_repair,
+        "negativeXFrontStripEndpointAnchorRepair": negative_x_endpoint_anchor_repair,
+        "positiveXCornerThicknessRegularization": positive_x_corner_thickness_regularization,
+        "negativeXFrontCornerLineStyleRepair": negative_x_corner_line_style_repair,
         "positiveXBackStripRebuild": positive_x_back_strip_rebuild,
         "positiveLipSymmetry": positive_lip_symmetry,
         "positiveLipCenterRebuild": positive_lip_center_rebuild,
@@ -2955,7 +4634,7 @@ def main() -> None:
     output_path = args.output or default_output_path(args.phase)
     report_path = args.report or default_report_path(args.phase)
     sheet_path = args.sheet_output or default_sheet_path(args.phase)
-    phase1_sheet_path = default_sheet_path(1)
+    phase1_sheet_path = default_sheet_path(1) if args.phase == 1 else Path("/tmp/qihang_product_pearl_phase1_six_views.png")
 
     gltf, bin_chunk = parse_glb(args.input)
     phase_logs = [apply_phase_1(gltf, bin_chunk, sheet_path=phase1_sheet_path)]

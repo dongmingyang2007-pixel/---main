@@ -269,6 +269,7 @@ async function setPlaywrightProjects(
 async function forceSelectChatProject(page: Page, projectId: string) {
   const select = page.locator(".inline-topbar-project-select");
   await expect(select).toBeVisible({ timeout: 10000 });
+  await expect(select).toBeEnabled({ timeout: 10000 });
   await page.evaluate(
     ({ nextProjectId }) => {
       const select = document.querySelector<HTMLSelectElement>(
@@ -350,8 +351,24 @@ async function stubAssistantMessageWithRetrievalTrace(
 }
 
 async function openChatToolsMenu(page: Page) {
-  await page.getByRole("button", { name: "工具" }).click();
-  await expect(page.locator(".chat-tools-menu")).toBeVisible();
+  const trigger = page.getByRole("button", { name: "工具" });
+  const menu = page.locator(".chat-tools-menu");
+
+  await trigger.click();
+  await expect(menu).toBeVisible();
+
+  const triggerBox = await trigger.boundingBox();
+  const menuBox = await menu.boundingBox();
+  expect(triggerBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  if (!triggerBox || !menuBox) {
+    return;
+  }
+
+  expect(menuBox.x).toBeGreaterThanOrEqual(Math.max(0, triggerBox.x - 32));
+  expect(menuBox.x).toBeLessThanOrEqual(triggerBox.x + 32);
+  expect(menuBox.y).toBeGreaterThanOrEqual(0);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(triggerBox.y + 16);
 }
 
 test.describe("Console Shell", () => {
@@ -617,71 +634,54 @@ test.describe("Console Shell", () => {
     await expect(page.getByRole("heading", { name: "My AI" })).toBeVisible();
   });
 
-  test("discover model details resolve dotted ids and current vision model ids", async ({
+  test("discover routes fall back to the console home when disabled", async ({
     page,
   }) => {
     await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto("/app/discover");
-    await page
-      .locator(".model-card")
-      .filter({ hasText: "Qwen3.5-Plus" })
-      .first()
-      .click();
-    await expect(page).toHaveURL(/\/app\/discover\/models\/qwen3\.5-plus$/);
-    await expect(
-      page.getByRole("heading", { name: "Qwen3.5-Plus" }),
-    ).toBeVisible();
-    await expect(page.getByRole("button", { name: "使用此模型" })).toHaveCount(
-      0,
-    );
-    await expect(page.locator(".model-detail-status")).toContainText(
-      "可在助手页使用",
-    );
-    await expect(page.getByRole("link", { name: "返回发现" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "models" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "我的 AI" })).toBeVisible();
 
     await page.goto("/app/discover/models/qwen3-vl-plus");
-    await expect(
-      page.getByRole("heading", { name: "Qwen3-VL-Plus" }),
-    ).toBeVisible();
-    await expect(page.locator(".model-detail-provider")).toContainText("千问");
+    await expect(page.getByRole("heading", { name: "我的 AI" })).toBeVisible();
+
+    await page.goto("/app/discover/packs/demo-pack");
+    await expect(page).toHaveURL(/\/app$/);
   });
 
-  test("english discover and detail localize official labels", async ({
+  test("english discover routes also fall back to the console home", async ({
     page,
   }) => {
+    await installWorkbenchApiMock(page, { authenticated: true });
+
     await page.goto("/en/app/discover");
-    await expect(
-      page
-        .locator(".discover-category-chip")
-        .filter({ hasText: "Text Generation" })
-        .first(),
-    ).toBeVisible();
-    await expect(page.locator(".model-card-provider").first()).toContainText(
-      "Qwen",
-    );
+    await expect(page.getByRole("heading", { name: "My AI" })).toBeVisible();
 
-    await page
-      .locator(".model-card")
-      .filter({ hasText: "Qwen3.5-Plus" })
-      .first()
-      .click();
-    await expect(page).toHaveURL(/\/en\/app\/discover\/models\/qwen3\.5-plus$/);
-    await expect(
-      page.locator(".model-detail-tags .model-card-tag.highlight"),
-    ).toContainText("Text Generation");
-    await expect(page.locator(".model-detail-provider")).toContainText(
-      "Alibaba",
-    );
+    await page.goto("/en/app/discover/models/qwen3.5-plus");
+    await expect(page.getByRole("heading", { name: "My AI" })).toBeVisible();
+
+    await page.goto("/en/app/discover/packs/demo-pack");
+    await expect(page).toHaveURL(/\/en\/app$/);
   });
 
-  test("discover shows an error state when the official catalog request fails", async ({
+  test("discover navigation entry is hidden from console navigation", async ({
     page,
   }) => {
+    await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto("/app");
+    await expect(page.locator('a[href="/app/discover"]')).toHaveCount(0);
+  });
+
+  test("discover falls back without requesting disabled catalog surfaces", async ({
+    page,
+  }) => {
+    let catalogRequestCount = 0;
+
     await page.route(
       "**/api/v1/models/catalog?view=discover",
       async (route) => {
+        catalogRequestCount += 1;
         await route.fulfill({
           status: 500,
           contentType: "application/json",
@@ -691,7 +691,8 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto("/app/discover");
-    await expect(page.getByText("加载官方模型目录失败。")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "我的 AI" })).toBeVisible();
+    expect(catalogRequestCount).toBe(0);
   });
 
   test("assistant detail route renders current action surface without 5xx responses", async ({
@@ -814,17 +815,12 @@ test.describe("Console Shell", () => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/assistants/${handle.seedProjectId}`);
-    await page
-      .locator(".profile-model-row")
-      .filter({ hasText: "对话模型" })
-      .first()
-      .getByRole("button", { name: "更换" })
-      .click();
+    await page.getByTestId("assistant-model-change-llm").click();
     await page.getByRole("link", { name: "前往模型广场" }).click();
 
     await expect(page).toHaveURL(/\/app\/discover\?picker=1&category=llm/);
     await page
-      .locator(".model-card")
+      .locator(".dhub-model-card")
       .filter({ hasText: "Qwen Max" })
       .first()
       .click();
@@ -923,6 +919,7 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await expect(
       page.getByRole("textbox", { name: "输入消息…" }).first(),
     ).toBeEnabled();
@@ -996,6 +993,7 @@ test.describe("Console Shell", () => {
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     await ensureChatConversationReady(page, handle.seedProjectId);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.locator(".chat-mic-btn").click();
     await expect(page.locator(".chat-voice-indicator")).toContainText(
       "听写中…再次点击完成",
@@ -1038,6 +1036,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我回答");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1055,6 +1054,7 @@ test.describe("Console Shell", () => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
@@ -1178,6 +1178,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("测试流式最终事件");
@@ -1187,10 +1188,446 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "来自最终事件的完整回复",
     );
-    await assistantMessage.locator(".chat-reasoning-toggle").click();
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
+    await expect(assistantMessage.locator(".chat-thinking-inline")).toContainText(
+      "思考步骤",
+    );
+    await assistantMessage.locator(".chat-thinking-inline-toggle").click();
+    await expect(assistantMessage.locator(".chat-thinking-inline-body")).toContainText(
       "最终思考轨迹",
     );
+  });
+
+  test("multiple stream events delivered in one response chunk still appear progressively", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "requestAnimationFrame", {
+        configurable: true,
+        writable: true,
+        value: (callback: FrameRequestCallback) =>
+          window.setTimeout(() => callback(performance.now()), 60),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          "event: message_start",
+          'data: {"role":"assistant"}',
+          "",
+          "event: reasoning",
+          'data: {"content":"先想第一步。"}',
+          "",
+          "event: reasoning",
+          'data: {"content":"再想第二步。"}',
+          "",
+          "event: token",
+          'data: {"content":"先给第一句。"}',
+          "",
+          "event: token",
+          'data: {"content":"再给第二句。"}',
+          "",
+          "event: message_done",
+          'data: {"id":"msg-stream-progressive","content":"先给第一句。再给第二句。","reasoning_content":"先想第一步。再想第二步。"}',
+          "",
+        ].join("\n"),
+      });
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await openChatToolsMenu(page);
+    await page
+      .locator(".chat-tools-menu-item", { hasText: "深入分析" })
+      .click();
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("测试逐步流式");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    const thinkingBody = assistantMessage.locator(".chat-thinking-inline-body");
+
+    await expect(thinkingBody).toContainText("先想第一步。");
+    await expect(thinkingBody).not.toContainText("再想第二步。");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "先给第一句。",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText(
+      "再给第二句。",
+    );
+
+    await expect(thinkingBody).toContainText("再想第二步。");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "再给第二句。",
+    );
+  });
+
+  test("streaming replies keep partial markdown as plain text until the final message lands", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "requestAnimationFrame", {
+        configurable: true,
+        writable: true,
+        value: (callback: FrameRequestCallback) =>
+          window.setTimeout(() => callback(performance.now()), 60),
+      });
+    });
+
+    await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          "event: message_start",
+          'data: {"role":"assistant"}',
+          "",
+          "event: token",
+          'data: {"content":"### 1. 出发点：德布罗意关系","snapshot":"### 1. 出发点：德布罗意关系"}',
+          "",
+          "event: token",
+          'data: {"content":"\\n\\n这里是补充说明。","snapshot":"### 1. 出发点：德布罗意关系\\n\\n这里是补充说明。"}',
+          "",
+          "event: message_done",
+          'data: {"id":"msg-stream-markdown-final","content":"### 1. 出发点：德布罗意关系\\n\\n这里是补充说明。","reasoning_content":null}',
+          "",
+        ].join("\n"),
+      });
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("测试流式 markdown");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "### 1. 出发点：德布罗意关系",
+    );
+    await expect(
+      assistantMessage.getByRole("heading", { name: "1. 出发点：德布罗意关系" }),
+    ).toHaveCount(0);
+
+    await expect(
+      assistantMessage.getByRole("heading", { name: "1. 出发点：德布罗意关系" }),
+    ).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText("###");
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "这里是补充说明。",
+    );
+  });
+
+  test("streamed replies hydrate late sources and memory metadata without a manual refresh", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, {
+      authenticated: true,
+      seedConversations: [
+        {
+          id: "conv-late-metadata",
+          title: "延迟元数据测试",
+        },
+      ],
+    });
+    let messageFetchCount = 0;
+
+    await page.route(
+      "**/api/v1/chat/conversations/conv-late-metadata/messages",
+      async (route, request) => {
+        if (request.method() !== "GET") {
+          await route.fallback();
+          return;
+        }
+
+        messageFetchCount += 1;
+        const body =
+          messageFetchCount === 1
+            ? []
+            : [
+                {
+                  id: "msg-user-late-metadata",
+                  conversation_id: "conv-late-metadata",
+                  role: "user",
+                  content: "帮我联网查一下并记住结果",
+                  created_at: "2026-03-14T12:00:00.000Z",
+                },
+                {
+                  id: "msg-assistant-late-metadata",
+                  conversation_id: "conv-late-metadata",
+                  role: "assistant",
+                  content: "先给你正文，来源和记忆稍后补齐。",
+                  reasoning_content: null,
+                  metadata_json: {
+                    sources: [
+                      {
+                        index: 1,
+                        title: "Aliyun Docs",
+                        url: "https://help.aliyun.com/zh/model-studio/web-search",
+                        domain: "help.aliyun.com",
+                        site_name: "Aliyun Docs",
+                      },
+                    ],
+                    extracted_facts: [
+                      {
+                        fact: "用户希望后续默认附上网页来源",
+                        category: "偏好",
+                        importance: 0.87,
+                        status: "permanent",
+                        triage_action: "create",
+                        triage_reason: "这是稳定的输出偏好。",
+                      },
+                    ],
+                  },
+                  created_at: "2026-03-14T12:00:01.000Z",
+                },
+              ];
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      },
+    );
+
+    await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          "event: message_start",
+          'data: {"role":"assistant"}',
+          "",
+          "event: message_done",
+          'data: {"id":"msg-assistant-late-metadata","content":"先给你正文，来源和记忆稍后补齐。"}',
+          "",
+        ].join("\n"),
+      });
+    });
+
+    await page.goto(
+      `/app/chat?project_id=${handle.seedProjectId}&conv=conv-late-metadata`,
+    );
+
+    await expect(page.locator(".chat-sidebar-item.is-active")).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("帮我联网查一下并记住结果");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "先给你正文，来源和记忆稍后补齐。",
+    );
+    await expect(
+      assistantMessage.locator(".chat-source-summary-trigger"),
+    ).toContainText("来源", { timeout: 5000 });
+    await expect(assistantMessage.locator(".chat-memory-summary-card")).toContainText(
+      "用户希望后续默认附上网页来源",
+      { timeout: 5000 },
+    );
+    expect(messageFetchCount).toBeGreaterThanOrEqual(2);
+  });
+
+  test("streamed replies with pending extraction hydrate memory cards as soon as metadata events arrive", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, {
+      authenticated: true,
+      seedConversations: [
+        {
+          id: "conv-stream-memory-events",
+          title: "流式记忆事件测试",
+        },
+      ],
+    });
+    let messageFetchCount = 0;
+
+    await page.addInitScript(() => {
+      class MockEventSource {
+        url: string;
+        withCredentials: boolean;
+        onerror: ((event: Event) => void) | null = null;
+        private listeners = new Map<
+          string,
+          Array<(event: MessageEvent<string>) => void>
+        >();
+
+        constructor(url: string | URL, init?: EventSourceInit) {
+          this.url = String(url);
+          this.withCredentials = Boolean(init?.withCredentials);
+
+          if (
+            this.url.includes(
+              "/api/v1/chat/conversations/conv-stream-memory-events/events",
+            )
+          ) {
+            setTimeout(() => {
+              const payload = {
+                id: "msg-stream-memory-001",
+                metadata_json: {
+                  memory_extraction_status: "completed",
+                  memories_extracted: "新增永久记忆 1 条",
+                  extracted_facts: [
+                    {
+                      fact: "用户现在是大一学生。",
+                      category: "教育.学业阶段",
+                      importance: 0.95,
+                      status: "permanent",
+                      triage_action: "create",
+                      triage_reason: "这是稳定的教育阶段信息。",
+                    },
+                  ],
+                },
+              };
+              const callbacks =
+                this.listeners.get("assistant_message_metadata") || [];
+              for (const callback of callbacks) {
+                callback(
+                  new MessageEvent("assistant_message_metadata", {
+                    data: JSON.stringify(payload),
+                  }),
+                );
+              }
+            }, 250);
+          }
+        }
+
+        addEventListener(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+        ) {
+          const callback =
+            typeof listener === "function"
+              ? (listener as (event: MessageEvent<string>) => void)
+              : (event: MessageEvent<string>) => listener.handleEvent(event);
+          const existing = this.listeners.get(type) || [];
+          existing.push(callback);
+          this.listeners.set(type, existing);
+        }
+
+        removeEventListener(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+        ) {
+          const existing = this.listeners.get(type) || [];
+          const callback =
+            typeof listener === "function"
+              ? (listener as (event: MessageEvent<string>) => void)
+              : (event: MessageEvent<string>) => listener.handleEvent(event);
+          this.listeners.set(
+            type,
+            existing.filter((item) => item !== callback),
+          );
+        }
+
+        close() {
+          return undefined;
+        }
+      }
+
+      Object.defineProperty(window, "EventSource", {
+        configurable: true,
+        writable: true,
+        value: MockEventSource,
+      });
+
+      Object.defineProperty(globalThis, "EventSource", {
+        configurable: true,
+        writable: true,
+        value: MockEventSource,
+      });
+    });
+
+    await page.route(
+      "**/api/v1/chat/conversations/conv-stream-memory-events/messages",
+      async (route, request) => {
+        if (request.method() !== "GET") {
+          await route.fallback();
+          return;
+        }
+
+        messageFetchCount += 1;
+        const body =
+          messageFetchCount === 1
+            ? []
+            : [
+                {
+                  id: "msg-user-stream-memory-001",
+                  conversation_id: "conv-stream-memory-events",
+                  role: "user",
+                  content: "记一下我现在是大一学生",
+                  created_at: "2026-03-14T12:00:00.000Z",
+                },
+                {
+                  id: "msg-stream-memory-001",
+                  conversation_id: "conv-stream-memory-events",
+                  role: "assistant",
+                  content: "先回答你，记忆很快补上。",
+                  reasoning_content: null,
+                  metadata_json: {
+                    memory_extraction_status: "completed",
+                    memories_extracted: "新增永久记忆 1 条",
+                    extracted_facts: [
+                      {
+                        fact: "用户现在是大一学生。",
+                        category: "教育.学业阶段",
+                        importance: 0.95,
+                        status: "permanent",
+                        triage_action: "create",
+                        triage_reason: "这是稳定的教育阶段信息。",
+                      },
+                    ],
+                  },
+                  created_at: "2026-03-14T12:00:01.000Z",
+                },
+              ];
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      },
+    );
+
+    await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          "event: message_start",
+          'data: {"role":"assistant"}',
+          "",
+          "event: message_done",
+          'data: {"id":"msg-stream-memory-001","content":"先回答你，记忆很快补上。","memory_extraction_status":"pending"}',
+          "",
+        ].join("\n"),
+      });
+    });
+
+    await page.goto(
+      `/app/chat?project_id=${handle.seedProjectId}&conv=conv-stream-memory-events`,
+    );
+
+    await expect(page.locator(".chat-sidebar-item.is-active")).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "输入消息…" })
+      .fill("记一下我现在是大一学生");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "先回答你，记忆很快补上。",
+    );
+    await expect(assistantMessage.locator(".chat-memory-summary-card")).toContainText(
+      "用户现在是大一学生。",
+      { timeout: 5000 },
+    );
+    expect(messageFetchCount).toBeGreaterThanOrEqual(1);
   });
 
   test("deep think shows reasoning content and read aloud still uses the final answer", async ({
@@ -1230,7 +1667,11 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("button", { name: "深度思考" }).click();
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await openChatToolsMenu(page);
+    await page
+      .locator(".chat-tools-menu-item", { hasText: "深入分析" })
+      .click();
     await page.getByRole("textbox", { name: "输入消息…" }).fill("请拆解一下");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1241,14 +1682,15 @@ test.describe("Console Shell", () => {
     });
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
-      "思考过程",
-    );
-    await expect(assistantMessage.locator(".chat-reasoning")).toContainText(
-      "Mock reasoning trace",
+    await expect(assistantMessage.locator(".chat-thinking-inline")).toContainText(
+      "思考步骤",
     );
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "Mock assistant response",
+    );
+    await assistantMessage.locator(".chat-thinking-inline-toggle").click();
+    await expect(assistantMessage.locator(".chat-thinking-inline-body")).toContainText(
+      "Mock reasoning trace",
     );
 
     await assistantMessage.getByRole("button", { name: "朗读" }).click();
@@ -1256,7 +1698,7 @@ test.describe("Console Shell", () => {
     expect(speechBodies[0]).toEqual({ content: "Mock assistant response" });
   });
 
-  test("assistant messages with sources still render markdown, formulas, and source cards", async ({
+  test("assistant messages with sources render a compact source entry and inspector cards", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1300,6 +1742,7 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我查一下");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1318,19 +1761,22 @@ test.describe("Console Shell", () => {
     await expect(
       assistantMessage.locator(".chat-citation-preview"),
     ).toContainText("根据公开资料，公式 $E=mc^2$ 可以正常显示。");
-    await expect(assistantMessage.locator(".chat-source-chip")).toContainText(
-      "Aliyun Docs · help.aliyun.com",
-    );
-    await expect(assistantMessage.locator(".chat-source-chip")).toContainText(
-      "1",
-    );
-    await expect(assistantMessage.locator(".chat-source-chip")).toHaveAttribute(
+    const sourceSummary = assistantMessage.locator(".chat-source-summary-trigger");
+    await expect(sourceSummary).toContainText("来源");
+    await expect(sourceSummary).toContainText("1");
+    await expect(
+      sourceSummary.locator(".chat-source-favicon"),
+    ).toBeVisible();
+    await sourceSummary.click();
+    const inspectorSourceCard = page
+      .locator(".chat-inspector-panel .chat-inspector-source-card")
+      .first();
+    await expect(inspectorSourceCard).toContainText("Aliyun Web Search");
+    await expect(inspectorSourceCard).toContainText("Aliyun Docs");
+    await expect(inspectorSourceCard).toHaveAttribute(
       "href",
       "https://help.aliyun.com/zh/model-studio/web-search",
     );
-    await expect(
-      assistantMessage.locator(".chat-source-favicon"),
-    ).toBeVisible();
   });
 
   test("assistant messages normalize malformed adjacent math blocks", async ({
@@ -1357,7 +1803,7 @@ test.describe("Console Shell", () => {
             conversation_id: conversationId,
             role: "assistant",
             content:
-              "- 对时间求导:$$\\frac{\\partial \\psi}{\\partial t}=-i\\omega\\psi$$$\\Rightarrow i\\hbar\\frac{\\partial \\psi}{\\partial t}=E\\psi$$",
+              "- 对时间求导:$$\\frac{\\partial \\psi}{\\partial t}=-i\\omega\\psi$$$\\Rightarrowi\\hbar\\frac{\\partial \\psi}{\\partial t}=E\\psi$$",
             reasoning_content: null,
             metadata_json: {},
             created_at: "2026-03-31T09:30:00.000Z",
@@ -1367,6 +1813,7 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("解释一下");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1374,12 +1821,18 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "对时间求导",
     );
-    await expect.poll(
-      () => assistantMessage.locator(".chat-bubble .katex").count(),
-    ).toBe(2);
+    await expect
+      .poll(() => assistantMessage.locator(".chat-bubble .katex").count())
+      .toBe(2);
     await expect(
       assistantMessage.locator(".chat-bubble .katex-error"),
     ).toHaveCount(0);
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText(
+      "\\Rightarrowi",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).not.toContainText(
+      "\\Rightarrow",
+    );
   });
 
   test("assistant messages merge dangling colon lines before rendering", async ({
@@ -1406,7 +1859,7 @@ test.describe("Console Shell", () => {
             conversation_id: conversationId,
             role: "assistant",
             content:
-              "居住地逻辑\n: 长期定居北京，求学于伦敦。\n学术兴趣\n： 拓扑学。",
+              "Campofrío\n\n: 西班牙最大的肉制品公司之一，产品线极广，从入门到高端都有。\n\nEl Pozo\n\n： 另一家大型食品集团，常见于各大超市。\n\n给“董铭锡”的特别操作建议\n\n：\n\n选择部位\n\n： 如果购买整腿或切片，尽量选取脂肪较少的部位。",
             reasoning_content: null,
             metadata_json: {},
             created_at: "2026-03-31T13:35:00.000Z",
@@ -1416,26 +1869,56 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    await expect.poll(async () =>
-      assistantMessage
-        .locator(".chat-bubble")
-        .evaluate((node) => node.textContent || ""),
-    ).toContain("学术兴趣： 拓扑学。");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("Campofrío: 西班牙最大的肉制品公司之一");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain(
+        "Campofrío: 西班牙最大的肉制品公司之一，产品线极广，从入门到高端都有。",
+      );
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("El Pozo： 另一家大型食品集团，常见于各大超市。");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("给“董铭锡”的特别操作建议：");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("选择部位： 如果购买整腿或切片，尽量选取脂肪较少的部位。");
     const bubbleText = await assistantMessage
       .locator(".chat-bubble")
       .evaluate((node) => node.textContent || "");
-
-    expect(bubbleText).toContain("居住地逻辑: 长期定居北京，求学于伦敦。");
-    expect(bubbleText).toContain("学术兴趣： 拓扑学。");
     expect(bubbleText).not.toContain("\n:");
     expect(bubbleText).not.toContain("\n：");
   });
 
-  test("assistant messages normalize glued headings and math commands", async ({
+  test("assistant messages render normalized headings and math commands", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1459,7 +1942,7 @@ test.describe("Console Shell", () => {
             conversation_id: conversationId,
             role: "assistant",
             content:
-              "薛定谔方程的启发式推导### 1. 出发点：德布罗意关系\n$$\\frac{\\partial^2 \\psi}{\\partialx^2}=-k^2\\psi$$\n###5. 加入势能项",
+              "薛定谔方程的启发式推导\n### 1. 出发点：德布罗意关系\n$$\\frac{\\partial^2 \\psi}{\\partial x^2}=-k^2\\psi$$\n### 5. 加入势能项",
             reasoning_content: null,
             metadata_json: {},
             created_at: "2026-03-31T15:52:00.000Z",
@@ -1469,12 +1952,15 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
     await expect(
-      assistantMessage.getByRole("heading", { name: "1. 出发点：德布罗意关系" }),
+      assistantMessage.getByRole("heading", {
+        name: "1. 出发点：德布罗意关系",
+      }),
     ).toBeVisible();
     await expect(
       assistantMessage.getByRole("heading", { name: "5. 加入势能项" }),
@@ -1488,7 +1974,7 @@ test.describe("Console Shell", () => {
     );
   });
 
-  test("assistant messages expand compact markdown tables before rendering", async ({
+  test("assistant messages render normalized markdown tables", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1512,7 +1998,7 @@ test.describe("Console Shell", () => {
             conversation_id: conversationId,
             role: "assistant",
             content:
-              "##理性总结| 步骤| 核心思想 | 局限性 ||------|----------|--------||德布罗意关系 | 波粒二象性 | 实验假设 ||平面波假设 | 自由粒子模型 | 仅适用于自由态 |",
+              "## 理性总结\n| 步骤| 核心思想 | 局限性|\n|------|----------|--------|\n|德布罗意关系 | 波粒二象性 | 实验假设|\n|平面波假设 | 自由粒子模型 | 仅适用于自由态 |",
             reasoning_content: null,
             metadata_json: {},
             created_at: "2026-03-31T15:53:00.000Z",
@@ -1522,6 +2008,7 @@ test.describe("Console Shell", () => {
     );
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1544,6 +2031,120 @@ test.describe("Console Shell", () => {
     );
   });
 
+  test("assistant messages render normalized section labels, label-value rows, and bullet lists", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-structure-fix-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content:
+              "薛定谔方程，一句话：它是量子力学的“牛顿第二定律”。\n\n核心要点：\n波函数 Ψ： 方程的解，代表粒子的“量子态”。\n\n关键优势：\n- 自动处理约束： 不用像牛顿力学那样硬算约束力。\n- 坐标无关性： 更适合广义坐标。",
+            reasoning_content: null,
+            metadata_json: {},
+            created_at: "2026-04-01T14:20:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("薛定谔方程，一句话：它是量子力学的“牛顿第二定律”。");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("核心要点：");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("波函数 Ψ： 方程的解，代表粒子的“量子态”。");
+    await expect
+      .poll(async () =>
+        assistantMessage
+          .locator(".chat-bubble")
+          .evaluate((node) => node.textContent || ""),
+      )
+      .toContain("关键优势：");
+    await expect(assistantMessage.locator(".chat-bubble ul")).toBeVisible();
+    await expect(assistantMessage.locator(".chat-bubble li")).toHaveCount(2);
+    await expect(
+      assistantMessage.locator(".chat-bubble li").first(),
+    ).toContainText("自动处理约束： 不用像牛顿力学那样硬算约束力。");
+    await expect(
+      assistantMessage.locator(".chat-bubble li").nth(1),
+    ).toContainText("坐标无关性： 更适合广义坐标。");
+  });
+
+  test("assistant messages recover broken emoji label blocks before rendering", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.route("**/api/v1/chat/conversations/*/stream", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          "event: message_start",
+          'data: {"role":"assistant"}',
+          "",
+          "event: message_done",
+          'data: {"id":"msg-emoji-label-fix-001","content":"下午好，董明阳！\\n🍵\\n深淬理论\\n：继续把狄拉克方程的能量变换，享受推导的快感？\\n🌳\\n校园漫步\\n：去海德公园（Hyde Park），或者南肯辛顿的博物馆区转转，寻找灵感？\\n💡\\n创意发散\\n：聊聊怎么把下午茶的悠闲和量子力学的烧脑结合起来？","reasoning_content":null}',
+          "",
+        ].join("\n"),
+      });
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("继续");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "🍵 深淬理论：继续把狄拉克方程的能量变换，享受推导的快感？",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "🌳 校园漫步：去海德公园（Hyde Park），或者南肯辛顿的博物馆区转转，寻找灵感？",
+    );
+    await expect(assistantMessage.locator(".chat-bubble")).toContainText(
+      "💡 创意发散：聊聊怎么把下午茶的悠闲和量子力学的烧脑结合起来？",
+    );
+  });
+
   test("context trace stays hidden for none routes", async ({ page }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
     await stubAssistantMessageWithRetrievalTrace(page, {
@@ -1557,6 +2158,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("介绍一下你自己");
@@ -1566,12 +2168,12 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "Mock assistant response",
     );
-    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(
-      0,
-    );
+    await expect(
+      assistantMessage.locator(".chat-meta-chip--context"),
+    ).toHaveCount(0);
   });
 
-  test("context trace stays hidden for profile-only routes", async ({
+  test("profile-only routes surface a lightweight context chip", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1596,6 +2198,7 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("你大概了解我什么");
@@ -1605,12 +2208,12 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "Mock assistant response",
     );
-    await expect(assistantMessage.locator(".chat-context-trace")).toHaveCount(
-      0,
-    );
+    await expect(
+      assistantMessage.locator(".chat-meta-chip--context"),
+    ).toContainText("用了你的长期档案");
   });
 
-  test("memory-only routes show a focused context card without knowledge sections", async ({
+  test("memory-only routes open the context inspector with memory sections only", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1636,23 +2239,24 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("你记得我之前喜欢什么风格吗");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    const trace = assistantMessage.locator(".chat-context-trace");
-    await expect(trace).toBeVisible();
-    await expect(trace).toContainText("本轮上下文");
-    await expect(trace).toContainText("记忆 1");
-    await trace.locator(".chat-context-trace-toggle").click();
-    await expect(trace).toContainText("命中的记忆");
-    await expect(trace).not.toContainText("知识库片段");
-    await expect(trace).not.toContainText("关联文件片段");
+    const contextChip = assistantMessage.locator(".chat-meta-chip--context");
+    await expect(contextChip).toContainText("参考了 1 条记忆");
+    await contextChip.click();
+    const inspector = page.locator(".chat-inspector-panel");
+    await expect(inspector).toContainText("一贯信息");
+    await expect(inspector).toContainText("用户喜欢分步骤解释。");
+    await expect(inspector).not.toContainText("资料片段");
+    await expect(inspector).not.toContainText("关联文件");
   });
 
-  test("full-rag routes continue to show knowledge and linked file sections", async ({
+  test("full-rag routes open grouped materials in the inspector", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -1691,22 +2295,21 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("请结合我上传的资料回答");
     await page.getByRole("button", { name: "发送" }).click();
 
     const assistantMessage = page.locator(".chat-message.is-assistant").last();
-    const trace = assistantMessage.locator(".chat-context-trace");
-    await expect(trace).toBeVisible();
-    await expect(trace).toContainText("记忆 1");
-    await expect(trace).toContainText("知识片段 1");
-    await expect(trace).toContainText("关联文件 1");
-    await trace.locator(".chat-context-trace-toggle").click();
-    await expect(trace).toContainText("知识库片段");
-    await expect(trace).toContainText("关联文件片段");
-    await expect(trace).toContainText("数学手册.pdf");
-    await expect(trace).toContainText("竞赛笔记.md");
+    const contextChip = assistantMessage.locator(".chat-meta-chip--context");
+    await expect(contextChip).toContainText("参考了 1 条记忆和 2 份资料");
+    await contextChip.click();
+    const inspector = page.locator(".chat-inspector-panel");
+    await expect(inspector).toContainText("资料片段");
+    await expect(inspector).toContainText("关联文件");
+    await expect(inspector).toContainText("数学手册.pdf");
+    await expect(inspector).toContainText("竞赛笔记.md");
   });
 
   test("chat updates remembered facts when assistant metadata arrives over the events stream", async ({
@@ -1856,27 +2459,14 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "先正常回答，记忆稍后补上。",
     );
-    await expect(assistantMessage.locator(".chat-memory-card")).toContainText(
-      "记住了",
+    await expect(assistantMessage.locator(".chat-memory-summary-card")).toContainText(
+      "用户对微分几何有持续兴趣",
     );
-    await expect(
-      assistantMessage.locator(".chat-memory-card-body"),
-    ).toContainText("新增永久记忆 1 条");
-    await expect(
-      assistantMessage.locator(".chat-memory-fact-text"),
-    ).toContainText("用户对微分几何有持续兴趣");
-    await expect(
-      assistantMessage.locator(".chat-memory-fact-result"),
-    ).toContainText("永久记忆");
-    await expect(
-      assistantMessage.locator(".chat-memory-fact-score"),
-    ).toContainText("95%");
-    await expect(
-      assistantMessage.locator(".chat-memory-fact-decision"),
-    ).toContainText("处理：新建");
-    await expect(
-      assistantMessage.locator(".chat-memory-fact-reason"),
-    ).toContainText("这是稳定且高重要度的长期偏好");
+    await assistantMessage.locator(".chat-memory-summary-open").click();
+    const inspector = page.locator(".chat-inspector-panel");
+    await expect(inspector).toContainText("用户对微分几何有持续兴趣");
+    await expect(inspector).toContainText("长期档案");
+    await expect(inspector).toContainText("这是稳定且高重要度的长期偏好");
   });
 
   test("new assistant messages render with a typewriter cursor before settling", async ({
@@ -1885,6 +2475,7 @@ test.describe("Console Shell", () => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
     await page.getByRole("textbox", { name: "输入消息…" }).fill("帮我起草");
     await page.getByRole("button", { name: "发送" }).click();
 
@@ -1892,6 +2483,192 @@ test.describe("Console Shell", () => {
     await expect(assistantMessage.locator(".chat-inline-cursor")).toBeVisible();
     await expect(assistantMessage.locator(".chat-bubble")).toContainText(
       "Mock assistant response",
+    );
+  });
+
+  test("memory inspector fetches details on demand and refreshes after edit, promote, and delete", async ({
+    page,
+  }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+    let detailGets = 0;
+    let currentContent = "用户准备继续学习微分几何。";
+    let currentType: "temporary" | "permanent" = "temporary";
+
+    await page.route(
+      "**/api/v1/chat/conversations/*/messages",
+      async (route, request) => {
+        if (request.method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+
+        const conversationId =
+          request.url().match(/\/conversations\/([^/]+)\/messages$/)?.[1] ||
+          "conv-001";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "msg-memory-govern-001",
+            conversation_id: conversationId,
+            role: "assistant",
+            content: "先给出正常回答，再把记忆放到 inspector。",
+            reasoning_content: null,
+            metadata_json: {
+              extracted_facts: [
+                {
+                  fact: currentContent,
+                  category: "学习计划",
+                  importance: 0.93,
+                  status: "temporary",
+                  triage_action: "create",
+                  triage_reason: "这是当前轮的短期计划。",
+                  target_memory_id: "memory-temp-001",
+                },
+              ],
+            },
+            created_at: "2026-03-14T12:00:00.000Z",
+          }),
+        });
+      },
+    );
+
+    await page.route("**/api/v1/memory/memory-temp-001", async (route) => {
+      if (route.request().method() === "GET") {
+        detailGets += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "memory-temp-001",
+            content: currentContent,
+            category: "学习计划",
+            type: currentType,
+            metadata_json: {},
+          }),
+        });
+        return;
+      }
+
+      if (route.request().method() === "PATCH") {
+        const body = route.request().postDataJSON() as { content?: string };
+        currentContent = body.content || currentContent;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "memory-temp-001",
+            content: currentContent,
+            category: "学习计划",
+            type: currentType,
+            metadata_json: {},
+          }),
+        });
+        return;
+      }
+
+      if (route.request().method() === "DELETE") {
+        await route.fulfill({
+          status: 204,
+          body: "",
+        });
+        return;
+      }
+
+      await route.fallback();
+    });
+
+    await page.route(
+      "**/api/v1/memory/memory-temp-001/promote",
+      async (route) => {
+        currentType = "permanent";
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            id: "memory-temp-001",
+            content: currentContent,
+            category: "学习计划",
+            type: currentType,
+            metadata_json: {},
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await ensureChatConversationReady(page, handle.seedProjectId);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("记一下");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    const memoryCard = assistantMessage.locator(".chat-memory-summary-card");
+    await expect(memoryCard).toContainText("记住了");
+    await expect(memoryCard).toContainText("新增临时记忆 1 条");
+    await assistantMessage.locator(".chat-memory-summary-open").click();
+
+    const inspector = page.locator(".chat-inspector-panel");
+    await expect(inspector).toContainText("这是当前轮的短期计划。");
+    expect(detailGets).toBe(0);
+
+    await inspector.getByRole("button", { name: "展开" }).click();
+    await expect.poll(() => detailGets).toBe(1);
+    await expect(inspector).toContainText("memory-temp-001");
+
+    await inspector.getByRole("button", { name: "编辑内容" }).click();
+    await inspector
+      .locator(".chat-memory-write-textarea")
+      .fill("用户准备继续学习微分几何和李群。");
+    await inspector.getByRole("button", { name: "保存" }).click();
+    await expect(inspector).toContainText("李群");
+    await expect(memoryCard).toContainText("李群");
+
+    await inspector.getByRole("button", { name: "升为长期" }).click();
+    await expect(inspector).toContainText("长期档案");
+
+    await inspector.getByRole("button", { name: "删除" }).click();
+    await expect(inspector).toContainText("这轮没有写入记忆");
+    await expect(memoryCard).toHaveCount(0);
+  });
+
+  test("mobile inspector opens as a bottom sheet", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await stubAssistantMessageWithRetrievalTrace(page, {
+      strategy: "subject_graph_v1",
+      context_level: "full_rag",
+      memories: [
+        {
+          id: "mem-mobile-001",
+          type: "permanent",
+          category: "用户画像",
+          memory_kind: "profile",
+          source: "static",
+          score: 0.92,
+          content: "用户偏好条理清晰的答案。",
+        },
+      ],
+      knowledge_chunks: [
+        {
+          id: "chunk-mobile-001",
+          filename: "指南.pdf",
+          score: 0.81,
+          chunk_text: "这里有一段知识库片段。",
+        },
+      ],
+      linked_file_chunks: [],
+    });
+
+    await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
+    await page.getByRole("textbox", { name: "输入消息…" }).fill("移动端看看");
+    await page.getByRole("button", { name: "发送" }).click();
+
+    const assistantMessage = page.locator(".chat-message.is-assistant").last();
+    await assistantMessage.locator(".chat-meta-chip--context").click();
+    await expect(page.locator(".chat-inspector-sheet")).toBeVisible();
+    await expect(page.locator(".chat-inspector-sheet")).toContainText(
+      "指南.pdf",
     );
   });
 
@@ -1914,7 +2691,11 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await page.getByRole("button", { name: "自动朗读" }).click();
+    await openChatToolsMenu(page);
+    await page
+      .locator(".chat-tools-menu-item", { hasText: "自动朗读" })
+      .click();
+    await expect(page.locator(".chat-active-tool")).toContainText("自动朗读");
     await page
       .getByRole("textbox", { name: "输入消息…" })
       .fill("请自动朗读这段回复");
@@ -1949,7 +2730,10 @@ test.describe("Console Shell", () => {
     });
 
     await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
-    await expect(page.getByRole("button", { name: "上传图片" })).toBeEnabled();
+    await openChatToolsMenu(page);
+    await expect(
+      page.locator(".chat-tools-menu-item", { hasText: "添加图片" }),
+    ).toBeVisible();
     await page
       .locator('[data-testid="chat-image-upload-input"]:not([disabled])')
       .setInputFiles({
@@ -2629,7 +3413,9 @@ test.describe("Console Shell", () => {
 
     const contextMenuState = await page.evaluate(() => {
       const menu = document.querySelector(".chat-sidebar-context-menu");
-      const button = document.querySelector(".chat-sidebar-context-item.is-danger");
+      const button = document.querySelector(
+        ".chat-sidebar-context-item.is-danger",
+      );
       const composer = document.querySelector(".chat-input-bar");
       const rect = (element: Element | null) => {
         if (!element) {
@@ -2667,9 +3453,9 @@ test.describe("Console Shell", () => {
     expect(contextMenuState.menuHitTarget).toBe("chat-sidebar-context-menu");
     expect(contextMenuState.menu?.y).not.toBeNull();
     expect(contextMenuState.composer?.y).not.toBeNull();
-    expect(contextMenuState.menu!.y + contextMenuState.menu!.height).toBeLessThan(
-      contextMenuState.composer!.y,
-    );
+    expect(
+      contextMenuState.menu!.y + contextMenuState.menu!.height,
+    ).toBeLessThan(contextMenuState.composer!.y);
   });
 
   test("chat auto-creates a ready conversation when the assistant has no history", async ({
@@ -2739,7 +3525,7 @@ test.describe("Console Shell", () => {
     await expect(page.locator(".rt-entry")).toContainText("合成实时");
   });
 
-  test("discover picker keeps the current slot and model context visible", async ({
+  test("discover picker routes return to the source page when disabled", async ({
     page,
   }) => {
     const handle = await installWorkbenchApiMock(page, { authenticated: true });
@@ -2748,14 +3534,8 @@ test.describe("Console Shell", () => {
       `/app/discover?picker=1&category=vision&current_model_id=qwen3-vl-plus&from=/app/assistants/${handle.seedProjectId}`,
     );
 
-    const pickerContext = page.locator("[data-testid='discover-picker-context']:visible").first();
-
-    await expect(pickerContext).toBeVisible();
-    await expect(pickerContext).toContainText(
-      "当前槽位",
-    );
-    await expect(pickerContext).toContainText(
-      "qwen3-vl-plus",
+    await expect(page).toHaveURL(
+      new RegExp(`/app/assistants/${handle.seedProjectId}$`),
     );
   });
 
@@ -2846,10 +3626,10 @@ test.describe("Console Shell", () => {
     ).toContainText("已有会话");
     const modeSwitcher = page.locator(".chat-mode-switcher").first();
 
-    await modeSwitcher.getByRole("button", { name: /Omni 实时/ }).click();
+    await modeSwitcher.getByRole("button", { name: /实时语音/ }).click();
     await expect(
       modeSwitcher.locator(".chat-mode-chip.is-active"),
-    ).toContainText("Omni 实时");
+    ).toContainText("实时语音");
 
     await modeSwitcher.getByRole("button", { name: /合成实时/ }).click();
     await expect(
@@ -2873,8 +3653,22 @@ test.describe("Console Shell", () => {
     await page.getByRole("button", { name: "缩小" }).click();
 
     await expect(page.locator(".graph-controls")).toBeVisible();
-    await expect(page.locator(".graph-controls-stats")).toBeVisible();
+    await expect(page.locator(".graph-controls-stats").first()).toBeVisible();
     await expect(page.locator(".graph-controls-btn.is-add")).toBeVisible();
+  });
+
+  test("memory orbit mode shows 3D interaction guidance", async ({ page }) => {
+    const handle = await installWorkbenchApiMock(page, { authenticated: true });
+
+    await page.goto(`/app/memory?project_id=${handle.seedProjectId}`);
+    await page.getByRole("button", { name: "3D 探索" }).click();
+
+    await expect(
+      page.locator(".graph-controls-mode-badge.is-orbit"),
+    ).toContainText("3D 探索");
+    await expect(page.locator(".graph-controls-mode-hint")).toContainText(
+      "拖拽旋转",
+    );
   });
 
   test("personality card shows a friendly placeholder when empty", async ({

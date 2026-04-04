@@ -6,13 +6,20 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { useProjectContext } from "@/lib/ProjectContext";
 import { buildProjectDisplayMap } from "@/lib/project-display";
+import { DISCOVER_ENABLED } from "@/lib/feature-flags";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { HomeIcon, ChatIcon, MemoryIcon, DevicesIcon, DiscoverIcon } from "./NavIcons";
+import {
+  HomeIcon,
+  ChatIcon,
+  MemoryIcon,
+  DevicesIcon,
+  DiscoverIcon,
+} from "./NavIcons";
 
 interface NavItem {
   href: string;
@@ -24,7 +31,16 @@ interface NavItem {
 
 function SettingsIcon() {
   return (
-    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx={12} cy={12} r={3} />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
@@ -33,7 +49,16 @@ function SettingsIcon() {
 
 function FolderIcon() {
   return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
@@ -46,7 +71,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/app/chat", key: "nav.chat", Icon: ChatIcon },
   { href: "/app/memory", key: "nav.memory", Icon: MemoryIcon },
   { href: "/app/devices", key: "nav.devices", Icon: DevicesIcon },
-  { href: "/app/discover", key: "nav.discover", Icon: DiscoverIcon },
+  ...(DISCOVER_ENABLED
+    ? [{ href: "/app/discover", key: "nav.discover", Icon: DiscoverIcon }]
+    : []),
 ];
 
 /* ── Component ── */
@@ -56,7 +83,9 @@ export function Sidebar() {
   const t = useTranslations("console");
   const { projects } = useProjectContext();
   const [showExpanded, setShowExpanded] = useState(false);
-  const [animState, setAnimState] = useState<"idle" | "opening" | "closing">("idle");
+  const [animState, setAnimState] = useState<"idle" | "opening" | "closing">(
+    "idle",
+  );
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const displayMap = buildProjectDisplayMap(projects);
@@ -124,7 +153,10 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   prefetch={false}
-                  className={clsx("glass-sidebar-nav-item", isActive(item.href) && "is-active")}
+                  className={clsx(
+                    "glass-sidebar-nav-item",
+                    isActive(item.href) && "is-active",
+                  )}
                   aria-current={isActive(item.href) ? "page" : undefined}
                   aria-label={t(item.key)}
                   onClick={handleImmediateCollapse}
@@ -150,14 +182,27 @@ export function Sidebar() {
                 prefetch={false}
                 className="glass-sidebar-nav-item"
                 style={{
-                  background: "var(--console-accent-soft, rgba(99,102,241,0.1))",
+                  background:
+                    "var(--console-accent-soft, rgba(99,102,241,0.1))",
                   color: "var(--console-accent, #6366f1)",
                 }}
                 aria-label={t("sidebar.newProject")}
                 onClick={handleImmediateCollapse}
               >
-                <span className="glass-sidebar-icon" style={{ color: "var(--console-accent, #6366f1)" }}>
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <span
+                  className="glass-sidebar-icon"
+                  style={{ color: "var(--console-accent, #6366f1)" }}
+                >
+                  <svg
+                    width={18}
+                    height={18}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <line x1="12" y1="5" x2="12" y2="19" />
                     <line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
@@ -177,7 +222,10 @@ export function Sidebar() {
               <Link
                 href="/app/settings"
                 prefetch={false}
-                className={clsx("glass-sidebar-nav-item", isActive("/app/settings") && "is-active")}
+                className={clsx(
+                  "glass-sidebar-nav-item",
+                  isActive("/app/settings") && "is-active",
+                )}
                 aria-current={isActive("/app/settings") ? "page" : undefined}
                 aria-label={t("nav.settings")}
                 onClick={handleImmediateCollapse}
@@ -201,7 +249,7 @@ export function Sidebar() {
           <div
             className={clsx(
               "glass-sidebar-overlay",
-              animState === "closing" && "glass-sidebar-overlay--closing"
+              animState === "closing" && "glass-sidebar-overlay--closing",
             )}
             onClick={handleCollapse}
             aria-hidden="true"
@@ -213,7 +261,7 @@ export function Sidebar() {
               "glass-sidebar",
               "glass-sidebar--expanded",
               animState === "opening" && "glass-sidebar--opening",
-              animState === "closing" && "glass-sidebar--closing"
+              animState === "closing" && "glass-sidebar--closing",
             )}
             role="navigation"
             aria-label="Main expanded"
@@ -235,7 +283,10 @@ export function Sidebar() {
                   key={item.href}
                   href={item.href}
                   prefetch={false}
-                  className={clsx("glass-sidebar-nav-item-full", isActive(item.href) && "is-active")}
+                  className={clsx(
+                    "glass-sidebar-nav-item-full",
+                    isActive(item.href) && "is-active",
+                  )}
                   aria-current={isActive(item.href) ? "page" : undefined}
                   onClick={handleCollapse}
                 >
@@ -255,7 +306,9 @@ export function Sidebar() {
               <div className="glass-sidebar-projects-title">
                 {t("sidebar.projects")}
                 {projects.length > 0 && (
-                  <span className="glass-sidebar-projects-count">{projects.length}</span>
+                  <span className="glass-sidebar-projects-count">
+                    {projects.length}
+                  </span>
                 )}
                 <Link
                   href="/app/assistants/new"
@@ -270,7 +323,8 @@ export function Sidebar() {
                     alignItems: "center",
                     justifyContent: "center",
                     color: "var(--console-accent, #6366f1)",
-                    background: "var(--console-accent-soft, rgba(99,102,241,0.1))",
+                    background:
+                      "var(--console-accent-soft, rgba(99,102,241,0.1))",
                     textDecoration: "none",
                     fontSize: 14,
                     lineHeight: 1,
@@ -287,7 +341,10 @@ export function Sidebar() {
                     prefetch={false}
                     onClick={handleCollapse}
                     className="glass-sidebar-projects-empty"
-                    style={{ textDecoration: "none", color: "var(--console-text-faint, #9ca3af)" }}
+                    style={{
+                      textDecoration: "none",
+                      color: "var(--console-text-faint, #9ca3af)",
+                    }}
                   >
                     {t("sidebar.noProjects")}
                   </Link>
@@ -318,7 +375,10 @@ export function Sidebar() {
               <Link
                 href="/app/settings"
                 prefetch={false}
-                className={clsx("glass-sidebar-nav-item-full", isActive("/app/settings") && "is-active")}
+                className={clsx(
+                  "glass-sidebar-nav-item-full",
+                  isActive("/app/settings") && "is-active",
+                )}
                 aria-current={isActive("/app/settings") ? "page" : undefined}
                 onClick={handleCollapse}
               >

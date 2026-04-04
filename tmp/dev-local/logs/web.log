@@ -1,0 +1,22 @@
+▲ Next.js 16.1.6 (webpack)
+- Local:         http://127.0.0.1:3000
+- Network:       http://127.0.0.1:3000
+
+✓ Starting...
+✓ Ready in 1833ms
+<w> [webpack.cache.PackFileCacheStrategy/webpack.FileSystemInfo] Parsing of /Users/dog/Desktop/铭润/apps/web/node_modules/next-intl/dist/esm/production/extractor/format/index.js for build dependencies failed at 'import(t)'.
+<w> Build dependencies behind this expression are ignored and might cause incorrect cache invalidation.
+<w> [webpack.cache.PackFileCacheStrategy/webpack.FileSystemInfo] Parsing of /Users/dog/Desktop/铭润/apps/web/node_modules/next-intl/dist/esm/production/extractor/format/index.js for build dependencies failed at 'import(t)'.
+<w> Build dependencies behind this expression are ignored and might cause incorrect cache invalidation.
+ GET / 200 in 2.8s (compile: 2.6s, proxy.ts: 50ms, generate-params: 266ms, render: 135ms)
+ GET /app/chat 200 in 1188ms (proxy.ts: 5ms)
+ GET / 200 in 100ms (compile: 18ms, proxy.ts: 7ms, generate-params: 1731µs, render: 75ms)
+ GET /ecosystem 200 in 433ms (compile: 410ms, proxy.ts: 6ms, generate-params: 189ms, render: 16ms)
+ GET /demo 200 in 530ms (compile: 510ms, proxy.ts: 7ms, generate-params: 189ms, render: 14ms)
+ GET /demo 200 in 93ms (compile: 7ms, proxy.ts: 4ms, generate-params: 1952µs, render: 82ms)
+ GET /pricing 200 in 449ms (compile: 432ms, proxy.ts: 3ms, generate-params: 188ms, render: 14ms)
+ GET /support 200 in 448ms (compile: 431ms, proxy.ts: 6ms, generate-params: 186ms, render: 12ms)
+ GET /product 200 in 465ms (compile: 446ms, proxy.ts: 5ms, generate-params: 193ms, render: 13ms)
+ GET /ecosystem 200 in 35ms (compile: 14ms, proxy.ts: 4ms, generate-params: 2ms, render: 16ms)
+ GET /demo 200 in 48ms (compile: 24ms, proxy.ts: 6ms, generate-params: 2ms, render: 17ms)
+ GET /demo 200 in 141ms (compile: 7ms, proxy.ts: 4ms, generate-params: 1863µs, render: 131ms)

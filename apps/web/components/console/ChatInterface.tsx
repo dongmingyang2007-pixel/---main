@@ -19,6 +19,7 @@ import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
 import { ChatModePanel } from "./ChatModePanel";
 import { StandardVoiceControls } from "./StandardVoiceControls";
+import { normalizeRenderableMarkdown } from "./chat-markdown-normalization";
 import {
   ConversationInspector,
   type InspectorMemoryRecord,
@@ -99,6 +100,99 @@ function normalizeMemoryRecord(
   };
 }
 
+function shouldAnimateAssistantMessage(message: Message): boolean {
+  const hasSources = (message.sources?.length ?? 0) > 0;
+  const hasRetrievalTrace =
+    Boolean(message.retrievalTrace) &&
+    ((message.retrievalTrace?.memories.length ?? 0) > 0 ||
+      (message.retrievalTrace?.knowledge_chunks.length ?? 0) > 0 ||
+      (message.retrievalTrace?.linked_file_chunks.length ?? 0) > 0);
+  const hasMemoryWrites = (message.extracted_facts?.length ?? 0) > 0;
+  const hasReasoning = Boolean(message.reasoningContent?.trim());
+
+  return !(hasSources || hasRetrievalTrace || hasMemoryWrites || hasReasoning);
+}
+
+function hasSupplementalAssistantData(message: Message | null | undefined): boolean {
+  if (!message || message.role !== "assistant") {
+    return false;
+  }
+
+  const extractionStatus = message.memory_extraction_status?.trim() || null;
+  return (
+    (message.sources?.length ?? 0) > 0 ||
+    Boolean(message.retrievalTrace) ||
+    (message.extracted_facts?.length ?? 0) > 0 ||
+    Boolean(message.memories_extracted?.trim()) ||
+    (Boolean(extractionStatus) && extractionStatus !== "pending")
+  );
+}
+
+function shouldHydrateAfterAssistantMetadataPatch(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object") {
+    return false;
+  }
+
+  const candidate = metadata as Record<string, unknown>;
+  if (Array.isArray(candidate.extracted_facts) && candidate.extracted_facts.length > 0) {
+    return true;
+  }
+  if (
+    typeof candidate.memories_extracted === "string" &&
+    candidate.memories_extracted.trim()
+  ) {
+    return true;
+  }
+  if (
+    typeof candidate.memory_extraction_status === "string" &&
+    candidate.memory_extraction_status.trim() &&
+    candidate.memory_extraction_status.trim() !== "pending"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function shouldReuseLiveTranscriptMessage(
+  role: Message["role"],
+  existingContent: string,
+  nextContent: string,
+): boolean {
+  if (role !== "user") {
+    return false;
+  }
+  const current = existingContent.trim();
+  const incoming = nextContent.trim();
+  if (!current || !incoming) {
+    return false;
+  }
+  return incoming.startsWith(current) || current.startsWith(incoming);
+}
+
+function findCollapsibleTrailingUserMessage(
+  messages: Message[],
+  nextContent: string,
+): Message | null {
+  let trailingStart = messages.length;
+  while (trailingStart > 0 && messages[trailingStart - 1]?.role === "user") {
+    trailingStart -= 1;
+  }
+  if (trailingStart === messages.length) {
+    return null;
+  }
+  const trailingUsers = messages.slice(trailingStart);
+  if (
+    trailingUsers.some(
+      (message) =>
+        message.role !== "user" ||
+        !shouldReuseLiveTranscriptMessage("user", message.content, nextContent),
+    )
+  ) {
+    return null;
+  }
+  return trailingUsers[trailingUsers.length - 1] ?? null;
+}
+
 export function ChatInterface({
   conversationId,
   projectId,
@@ -150,6 +244,18 @@ export function ChatInterface({
   const messageListRef = useRef<ChatMessageListHandle>(null);
   const messagesRef = useRef<Message[]>([]);
   const pendingAssistantMetadataRef = useRef<Record<string, unknown>>({});
+  const activeConversationIdRef = useRef<string | null>(conversationId ?? null);
+  const scheduledConversationSyncsRef = useRef<number[]>([]);
+  const scheduleConversationHydrationSyncRef = useRef<
+    (
+      targetConversationId: string,
+      assistantMessageId?: string | null,
+      options?: {
+        delayMs?: number;
+        force?: boolean;
+      },
+    ) => void
+  >(() => undefined);
   const pendingRealtimeTurnPersistenceRef = useRef<
     Array<{
       userRuntimeId: string | null;
@@ -190,6 +296,18 @@ export function ChatInterface({
     },
     [],
   );
+  const publishConversationPreview = useCallback(
+    (previewText: string) => {
+      if (!conversationId) {
+        return;
+      }
+      onConversationActivity?.({
+        conversationId,
+        previewText,
+      });
+    },
+    [conversationId, onConversationActivity],
+  );
   const invalidateActiveRequest = useCallback(() => {
     requestGenerationRef.current += 1;
     streamAbortReasonRef.current = "user";
@@ -204,6 +322,10 @@ export function ChatInterface({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = conversationId ?? null;
+  }, [conversationId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -256,6 +378,9 @@ export function ChatInterface({
     setMessageInspectorOverrides({});
     setMemoryDetails({});
     setMemoryStatuses({});
+    const pendingSyncs = scheduledConversationSyncsRef.current;
+    scheduledConversationSyncsRef.current = [];
+    pendingSyncs.forEach((timeoutId) => window.clearTimeout(timeoutId));
   }, [conversationId, invalidateActiveRequest, projectId]);
 
   useEffect(() => {
@@ -432,11 +557,13 @@ export function ChatInterface({
           }
           pendingAssistantMetadataRef.current[payload.id] =
             payload.metadata_json ?? {};
+          let matchedMessage = false;
           setMessages((prev) =>
             prev.map((message) => {
               if (message.id !== payload.id) {
                 return message;
               }
+              matchedMessage = true;
               delete pendingAssistantMetadataRef.current[payload.id];
               return mergeAssistantMetadataPatch(
                 message,
@@ -444,6 +571,15 @@ export function ChatInterface({
               );
             }),
           );
+          if (
+            !matchedMessage ||
+            shouldHydrateAfterAssistantMetadataPatch(payload.metadata_json)
+          ) {
+            scheduleConversationHydrationSyncRef.current(conversationId, payload.id, {
+              delayMs: matchedMessage ? 120 : 300,
+              force: true,
+            });
+          }
         } catch {
           // Ignore malformed event payloads.
         }
@@ -467,13 +603,25 @@ export function ChatInterface({
   }, [conversationId]);
 
   const syncConversationMessages = useCallback(
-    async (targetConversationId: string) => {
+    async (
+      targetConversationId: string,
+      options?: {
+        fallbackAssistantMessage?: Message | null;
+      },
+    ) => {
       try {
         const data = await apiGet<ApiMessage[]>(
           `/api/v1/chat/conversations/${targetConversationId}/messages`,
         );
         const list = Array.isArray(data) ? data : [];
-        setMessages(list.map(toMessage));
+        const syncedMessages = list.map(toMessage);
+        const lastSyncedMessage = syncedMessages[syncedMessages.length - 1];
+        const fallbackAssistantMessage = options?.fallbackAssistantMessage;
+        const nextMessages =
+          fallbackAssistantMessage && lastSyncedMessage?.role === "user"
+            ? [...syncedMessages, fallbackAssistantMessage]
+            : syncedMessages;
+        setMessages(nextMessages);
         onConversationLoaded?.({
           conversationId: targetConversationId,
           messages: list,
@@ -484,6 +632,47 @@ export function ChatInterface({
     },
     [onConversationLoaded],
   );
+
+  const scheduleConversationHydrationSync = useCallback(
+    (
+      targetConversationId: string,
+      assistantMessageId?: string | null,
+      options?: {
+        delayMs?: number;
+        force?: boolean;
+      },
+    ) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const delayMs = options?.delayMs ?? 900;
+      const force = options?.force ?? false;
+      const timeoutId = window.setTimeout(() => {
+        scheduledConversationSyncsRef.current =
+          scheduledConversationSyncsRef.current.filter((id) => id !== timeoutId);
+
+        if (activeConversationIdRef.current !== targetConversationId) {
+          return;
+        }
+
+        if (assistantMessageId) {
+          const assistantMessage = messagesRef.current.find(
+            (message) => message.id === assistantMessageId,
+          );
+          if (!force && hasSupplementalAssistantData(assistantMessage)) {
+            return;
+          }
+        }
+
+        void syncConversationMessages(targetConversationId);
+      }, delayMs);
+
+      scheduledConversationSyncsRef.current.push(timeoutId);
+    },
+    [syncConversationMessages],
+  );
+  scheduleConversationHydrationSyncRef.current = scheduleConversationHydrationSync;
 
   useEffect(() => {
     if (!conversationId) {
@@ -508,7 +697,7 @@ export function ChatInterface({
       void syncConversationMessages(conversationId).finally(() => {
         memoryExtractionSyncInFlightRef.current = false;
       });
-    }, 2500);
+    }, 900);
 
     return () => {
       clearTimeout(timeoutId);
@@ -738,10 +927,7 @@ export function ChatInterface({
         setMessages((prev) => [...prev, userMessage]);
         setIsTyping(true);
         setVoiceNotice(null);
-        onConversationActivity?.({
-          conversationId,
-          previewText: submittedText,
-        });
+        publishConversationPreview(submittedText);
 
         try {
           const formData = new FormData();
@@ -768,14 +954,16 @@ export function ChatInterface({
             return;
           }
 
+          const baseMessage = toMessage(response.message);
           const assistantMessage: Message = {
-            ...toMessage(response.message),
+            ...baseMessage,
             id: response.message?.id || nextRuntimeMessageId("img-a"),
             audioBase64: response.audio_response,
-            animateOnMount: true,
+            animateOnMount: shouldAnimateAssistantMessage(baseMessage),
             isStreaming: false,
           };
           setMessages((prev) => [...prev, assistantMessage]);
+          publishConversationPreview(assistantMessage.content);
           if (autoReadEnabled && response.audio_response) {
             queueAutoRead(assistantMessage.id, response.audio_response);
           }
@@ -794,6 +982,7 @@ export function ChatInterface({
               content: errorContent,
             },
           ]);
+          publishConversationPreview(errorContent);
         } finally {
           if (isCurrentRequest()) {
             setIsTyping(false);
@@ -815,10 +1004,7 @@ export function ChatInterface({
       setMessages((prev) => [...prev, userMessage]);
       setIsTyping(true);
       setVoiceNotice(null);
-      onConversationActivity?.({
-        conversationId,
-        previewText: content,
-      });
+      publishConversationPreview(content);
 
       const streamBody = {
         content,
@@ -872,16 +1058,24 @@ export function ChatInterface({
             (message) => message.id === tempAssistantId,
           );
           const current = index >= 0 ? prev[index] : null;
-          const nextMessage: Message = {
+          let nextMessage: Message = {
             id: final.id,
             role: "assistant",
             content: final.content,
             reasoningContent: final.reasoningContent ?? null,
-            sources: final.sources,
-            retrievalTrace: final.retrievalTrace ?? null,
+            sources:
+              final.sources !== undefined ? final.sources : current?.sources,
+            retrievalTrace:
+              final.retrievalTrace !== undefined
+                ? final.retrievalTrace
+                : (current?.retrievalTrace ?? null),
             audioBase64: final.audioBase64 ?? current?.audioBase64 ?? null,
-            memories_extracted: final.memories_extracted,
-            extracted_facts: final.extracted_facts,
+            memories_extracted:
+              final.memories_extracted ?? current?.memories_extracted,
+            extracted_facts:
+              final.extracted_facts !== undefined
+                ? final.extracted_facts
+                : current?.extracted_facts,
             memory_extraction_status:
               final.memory_extraction_status ??
               current?.memory_extraction_status ??
@@ -894,10 +1088,16 @@ export function ChatInterface({
               final.memory_extraction_error ??
               current?.memory_extraction_error ??
               null,
+            metadataJson: current?.metadataJson ?? null,
             animateOnMount:
               final.animateOnMount ?? current?.animateOnMount ?? false,
             isStreaming: final.isStreaming,
           };
+          const pendingMetadata = pendingAssistantMetadataRef.current[final.id];
+          if (pendingMetadata) {
+            delete pendingAssistantMetadataRef.current[final.id];
+            nextMessage = mergeAssistantMetadataPatch(nextMessage, pendingMetadata);
+          }
           if (index === -1) {
             return [...prev, nextMessage];
           }
@@ -947,11 +1147,18 @@ export function ChatInterface({
           sawStreamEvent = true;
           armWatchdog();
           if (event.event === "token") {
-            const delta = (event.data.content as string) ?? "";
+            const snapshot =
+              typeof event.data.snapshot === "string"
+                ? event.data.snapshot
+                : null;
+            const delta =
+              typeof event.data.content === "string" ? event.data.content : "";
             updateStreamingAssistant((current) => ({
               id: tempAssistantId,
               role: "assistant",
-              content: (current?.content ?? "") + delta,
+              content: normalizeRenderableMarkdown(
+                snapshot ?? (current?.content ?? "") + delta,
+              ),
               reasoningContent: current?.reasoningContent ?? null,
               sources: current?.sources,
               retrievalTrace: current?.retrievalTrace ?? null,
@@ -963,16 +1170,24 @@ export function ChatInterface({
               memory_extraction_attempts:
                 current?.memory_extraction_attempts ?? null,
               memory_extraction_error: current?.memory_extraction_error ?? null,
+              metadataJson: current?.metadataJson ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
             }));
           } else if (event.event === "reasoning") {
-            const delta = (event.data.content as string) ?? "";
+            const snapshot =
+              typeof event.data.snapshot === "string"
+                ? event.data.snapshot
+                : null;
+            const delta =
+              typeof event.data.content === "string" ? event.data.content : "";
             updateStreamingAssistant((current) => ({
               id: tempAssistantId,
               role: "assistant",
               content: current?.content ?? "",
-              reasoningContent: (current?.reasoningContent ?? "") + delta,
+              reasoningContent: normalizeRenderableMarkdown(
+                snapshot ?? (current?.reasoningContent ?? "") + delta,
+              ),
               sources: current?.sources,
               retrievalTrace: current?.retrievalTrace ?? null,
               audioBase64: current?.audioBase64 ?? null,
@@ -983,6 +1198,7 @@ export function ChatInterface({
               memory_extraction_attempts:
                 current?.memory_extraction_attempts ?? null,
               memory_extraction_error: current?.memory_extraction_error ?? null,
+              metadataJson: current?.metadataJson ?? null,
               animateOnMount: current?.animateOnMount ?? false,
               isStreaming: true,
             }));
@@ -990,26 +1206,78 @@ export function ChatInterface({
             const finalId = (event.data.id as string) || tempAssistantId;
             const finalContent =
               typeof event.data.content === "string" ? event.data.content : "";
+            const normalizedFinalContent =
+              normalizeRenderableMarkdown(finalContent);
             const finalReasoning =
               typeof event.data.reasoning_content === "string"
                 ? event.data.reasoning_content
                 : null;
-            const memoriesExtracted = event.data.memories_extracted as
-              | string
-              | undefined;
-            const sources = normalizeSearchSources(event.data.sources);
-            const retrievalTrace = normalizeRetrievalTrace(
-              event.data.retrieval_trace,
+            const normalizedFinalReasoning =
+              typeof finalReasoning === "string" && finalReasoning.trim()
+                ? normalizeRenderableMarkdown(finalReasoning)
+                : null;
+            const hasMemoriesExtracted = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "memories_extracted",
+            );
+            const memoriesExtracted = hasMemoriesExtracted
+              ? (event.data.memories_extracted as string | undefined)
+              : undefined;
+            const hasSources = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "sources",
+            );
+            const sources = hasSources
+              ? normalizeSearchSources(event.data.sources)
+              : undefined;
+            const hasRetrievalTrace = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "retrieval_trace",
+            );
+            const retrievalTrace = hasRetrievalTrace
+              ? normalizeRetrievalTrace(event.data.retrieval_trace)
+              : undefined;
+            const hasExtractedFacts = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "extracted_facts",
+            );
+            const extractedFacts = hasExtractedFacts
+              ? toMessage({
+                  id: finalId,
+                  conversation_id: conversationId,
+                  role: "assistant",
+                  content: normalizedFinalContent,
+                  reasoning_content: normalizedFinalReasoning,
+                  metadata_json: {
+                    extracted_facts: event.data.extracted_facts,
+                  },
+                  created_at: new Date().toISOString(),
+                }).extracted_facts
+              : undefined;
+            const hasMemoryExtractionStatus = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "memory_extraction_status",
             );
             const memoryExtractionStatus =
+              hasMemoryExtractionStatus &&
               typeof event.data.memory_extraction_status === "string"
                 ? event.data.memory_extraction_status
                 : null;
+            const hasMemoryExtractionAttempts = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "memory_extraction_attempts",
+            );
             const memoryExtractionAttempts =
+              hasMemoryExtractionAttempts &&
               typeof event.data.memory_extraction_attempts === "number"
                 ? event.data.memory_extraction_attempts
                 : null;
+            const hasMemoryExtractionError = Object.prototype.hasOwnProperty.call(
+              event.data,
+              "memory_extraction_error",
+            );
             const memoryExtractionError =
+              hasMemoryExtractionError &&
               typeof event.data.memory_extraction_error === "string"
                 ? event.data.memory_extraction_error
                 : null;
@@ -1017,15 +1285,18 @@ export function ChatInterface({
             finalizeStreamingAssistant({
               id: finalId,
               isStreaming: false,
-              content: finalContent,
-              reasoningContent: finalReasoning,
+              content: normalizedFinalContent,
+              reasoningContent: normalizedFinalReasoning,
               memories_extracted: memoriesExtracted,
               sources,
               retrievalTrace,
+              extracted_facts: extractedFacts,
               memory_extraction_status: memoryExtractionStatus,
               memory_extraction_attempts: memoryExtractionAttempts,
               memory_extraction_error: memoryExtractionError,
             });
+            publishConversationPreview(normalizedFinalContent);
+            scheduleConversationHydrationSync(conversationId, finalId);
           } else if (event.event === "error") {
             const errorMsg =
               (event.data.detail as string) ||
@@ -1037,6 +1308,7 @@ export function ChatInterface({
               content: errorMsg,
               reasoningContent: null,
             });
+            publishConversationPreview(errorMsg);
           }
         }
         clearWatchdog();
@@ -1046,18 +1318,19 @@ export function ChatInterface({
 
         if (!finalizedAssistantId) {
           finalizedAssistantId = tempAssistantId;
+          const fallbackContent =
+            messagesRef.current.find((message) => message.id === tempAssistantId)
+              ?.content ?? "";
           finalizeStreamingAssistant({
             id: tempAssistantId,
             isStreaming: false,
-            content:
-              messagesRef.current.find(
-                (message) => message.id === tempAssistantId,
-              )?.content ?? "",
+            content: fallbackContent,
             reasoningContent:
               messagesRef.current.find(
                 (message) => message.id === tempAssistantId,
               )?.reasoningContent ?? null,
           });
+          publishConversationPreview(fallbackContent);
         }
 
         if (autoReadEnabled) {
@@ -1084,27 +1357,53 @@ export function ChatInterface({
             (message) => message.id === tempAssistantId,
           );
           if (abortReason === "user") {
+            const abortedContent = currentStreamingMessage?.content ?? "";
             finalizeStreamingAssistant({
               id: tempAssistantId,
               isStreaming: false,
-              content: currentStreamingMessage?.content ?? "",
+              content: abortedContent,
               reasoningContent:
                 currentStreamingMessage?.reasoningContent ?? null,
             });
+            publishConversationPreview(abortedContent);
           } else {
-            finalizeStreamingAssistant({
+            const fallbackAssistantMessage: Message = {
               id: tempAssistantId,
-              isStreaming: false,
+              role: "assistant",
               content:
                 currentStreamingMessage?.content?.trim() ||
                 t("errors.streamError"),
               reasoningContent:
                 currentStreamingMessage?.reasoningContent ?? null,
+              sources: currentStreamingMessage?.sources,
+              retrievalTrace: currentStreamingMessage?.retrievalTrace ?? null,
+              audioBase64: currentStreamingMessage?.audioBase64 ?? null,
+              memories_extracted: currentStreamingMessage?.memories_extracted,
+              extracted_facts: currentStreamingMessage?.extracted_facts,
+              memory_extraction_status:
+                currentStreamingMessage?.memory_extraction_status ?? null,
+              memory_extraction_attempts:
+                currentStreamingMessage?.memory_extraction_attempts ?? null,
+              memory_extraction_error:
+                currentStreamingMessage?.memory_extraction_error ?? null,
+              metadataJson: currentStreamingMessage?.metadataJson ?? null,
+              animateOnMount: currentStreamingMessage?.animateOnMount ?? false,
+              isStreaming: false,
+            };
+            finalizeStreamingAssistant({
+              id: tempAssistantId,
+              isStreaming: false,
+              content: fallbackAssistantMessage.content,
+              reasoningContent:
+                fallbackAssistantMessage.reasoningContent ?? null,
             });
+            publishConversationPreview(fallbackAssistantMessage.content);
             if (conversationId) {
               window.setTimeout(() => {
                 if (isCurrentRequest()) {
-                  void syncConversationMessages(conversationId);
+                  void syncConversationMessages(conversationId, {
+                    fallbackAssistantMessage,
+                  });
                 }
               }, 1500);
             }
@@ -1122,13 +1421,15 @@ export function ChatInterface({
             if (!isCurrentRequest()) {
               return;
             }
+            const baseMessage = toMessage(response);
             const aiMessage: Message = {
-              ...toMessage(response),
+              ...baseMessage,
               id: response.id || nextRuntimeMessageId("a"),
-              animateOnMount: true,
+              animateOnMount: shouldAnimateAssistantMessage(baseMessage),
               isStreaming: false,
             };
             setMessages((prev) => [...prev, aiMessage]);
+            publishConversationPreview(aiMessage.content);
             if (autoReadEnabled) {
               queueAutoRead(aiMessage.id);
             }
@@ -1147,6 +1448,7 @@ export function ChatInterface({
                 content: errorContent,
               },
             ]);
+            publishConversationPreview(errorContent);
           } finally {
             if (isCurrentRequest()) {
               setIsTyping(false);
@@ -1160,6 +1462,7 @@ export function ChatInterface({
             content: t("errors.streamError"),
             reasoningContent: null,
           });
+          publishConversationPreview(t("errors.streamError"));
         } else {
           // Stream never started — fall back to non-streaming apiPost
           try {
@@ -1171,13 +1474,15 @@ export function ChatInterface({
             if (!isCurrentRequest()) {
               return;
             }
+            const baseMessage = toMessage(response);
             const aiMessage: Message = {
-              ...toMessage(response),
+              ...baseMessage,
               id: response.id || nextRuntimeMessageId("a"),
-              animateOnMount: true,
+              animateOnMount: shouldAnimateAssistantMessage(baseMessage),
               isStreaming: false,
             };
             setMessages((prev) => [...prev, aiMessage]);
+            publishConversationPreview(aiMessage.content);
             if (autoReadEnabled) {
               queueAutoRead(aiMessage.id);
             }
@@ -1196,6 +1501,7 @@ export function ChatInterface({
                 content: errorContent,
               },
             ]);
+            publishConversationPreview(errorContent);
           } finally {
             if (isCurrentRequest()) {
               setIsTyping(false);
@@ -1216,9 +1522,10 @@ export function ChatInterface({
       conversationId,
       isStreamingActive,
       isTyping,
-      onConversationActivity,
       nextRuntimeMessageId,
+      publishConversationPreview,
       queueAutoRead,
+      scheduleConversationHydrationSync,
       syncConversationMessages,
       t,
     ],
@@ -1249,13 +1556,26 @@ export function ChatInterface({
       const nextText = final ? text.trim() : text;
 
       let messageId = liveTurnIdsRef.current[slot];
+      const collapsibleUserMessage =
+        role === "user"
+          ? findCollapsibleTrailingUserMessage(messagesRef.current, nextText)
+          : null;
+      if (collapsibleUserMessage) {
+        messageId = collapsibleUserMessage.id;
+        liveTurnIdsRef.current[slot] = messageId;
+      }
       const existingMessage = messageId
         ? messagesRef.current.find((message) => message.id === messageId)
         : null;
       if (
         existingMessage &&
         !existingMessage.isStreaming &&
-        !(final && existingMessage.content.trim() === nextText.trim())
+        !(final && existingMessage.content.trim() === nextText.trim()) &&
+        !shouldReuseLiveTranscriptMessage(
+          role,
+          existingMessage.content,
+          nextText,
+        )
       ) {
         messageId = null;
       }
@@ -1272,6 +1592,16 @@ export function ChatInterface({
           animateOnMount: false,
           isStreaming: !final,
         };
+        if (role === "user" && collapsibleUserMessage) {
+          let trailingStart = prev.length;
+          while (
+            trailingStart > 0 &&
+            prev[trailingStart - 1]?.role === "user"
+          ) {
+            trailingStart -= 1;
+          }
+          return [...prev.slice(0, trailingStart), nextMessage];
+        }
         const index = prev.findIndex((message) => message.id === messageId);
         if (index === -1) {
           return [...prev, nextMessage];
@@ -1286,13 +1616,10 @@ export function ChatInterface({
       });
 
       if (role === "user" && final) {
-        onConversationActivity?.({
-          conversationId,
-          previewText: nextText.trim(),
-        });
+        publishConversationPreview(nextText.trim());
       }
     },
-    [conversationId, nextRuntimeMessageId, onConversationActivity],
+    [conversationId, nextRuntimeMessageId, publishConversationPreview],
   );
 
   const handleRealtimeTurnComplete = useCallback(
@@ -1309,16 +1636,10 @@ export function ChatInterface({
       const normalizedUserText = userText.trim();
       const normalizedAssistantText = assistantText.trim();
 
-      if (normalizedUserText) {
-        onConversationActivity?.({
-          conversationId,
-          previewText: normalizedUserText,
-        });
-      } else if (normalizedAssistantText) {
-        onConversationActivity?.({
-          conversationId,
-          previewText: normalizedAssistantText,
-        });
+      if (normalizedAssistantText) {
+        publishConversationPreview(normalizedAssistantText);
+      } else if (normalizedUserText) {
+        publishConversationPreview(normalizedUserText);
       }
 
       setMessages((prev) => {
@@ -1370,8 +1691,13 @@ export function ChatInterface({
       }
       liveTurnIdsRef.current = { userId: null, assistantId: null };
     },
-    [conversationId, onConversationActivity],
+    [conversationId, publishConversationPreview],
   );
+
+  const handleRealtimeVoiceError = useCallback((message: string) => {
+    setVoiceNotice(message);
+    liveTurnIdsRef.current = { userId: null, assistantId: null };
+  }, []);
 
   const handleRealtimeTurnPersisted = useCallback(
     ({ userMessage, assistantMessage }: PersistedRealtimeTurnPayload) => {
@@ -1577,10 +1903,18 @@ export function ChatInterface({
     "web_search",
   );
   const isStandardMode = chatMode === "standard";
+  const isRealtimeMode =
+    Boolean(conversationId) &&
+    Boolean(projectId) &&
+    !isConversationPending &&
+    (chatMode === "omni_realtime" ||
+      (chatMode === "synthetic_realtime" && syntheticModeAvailable));
   const noConversation = !conversationId;
   const interactionDisabled = noConversation || isConversationPending;
   const workspaceHint = noConversation
     ? t("emptyHint")
+    : isRealtimeMode
+      ? t("realtimeWorkspaceHint")
     : messages.length === 0 && !loadingMessages
       ? t("emptyConversationHint")
       : t("description");
@@ -1590,12 +1924,7 @@ export function ChatInterface({
       : chatMode === "synthetic_realtime"
         ? t("mode.synthetic")
         : t("mode.standard");
-  const inspectorVariant =
-    viewportWidth >= 1360
-      ? "docked"
-      : viewportWidth >= 1024
-        ? "overlay"
-        : "sheet";
+  const inspectorVariant = viewportWidth >= 1024 ? "overlay" : "sheet";
 
   return (
     <div className="chat-interface">
@@ -1643,6 +1972,7 @@ export function ChatInterface({
             messages={messages}
             onMessagesChange={setMessages}
             isTyping={isTyping}
+            isCompactViewport={viewportWidth < 768}
             conversationId={conversationId}
             noConversation={noConversation}
             messageInspectorOverrides={messageInspectorOverrides}
@@ -1697,41 +2027,13 @@ export function ChatInterface({
         </div>
       )}
 
-      <div className="chat-composer-shell">
+      <div
+        className={`chat-composer-shell${isRealtimeMode ? " has-realtime-panel" : ""}`}
+      >
         {voiceNotice ? (
           <div className="chat-voice-indicator is-error">{voiceNotice}</div>
         ) : null}
-        <div className="chat-input-bar-voice">
-          {isStandardMode && conversationId && projectId ? (
-            <StandardVoiceControls
-              conversationId={conversationId}
-              projectId={projectId}
-              isTyping={isTyping}
-              disabled={interactionDisabled}
-              onDictationDraftChange={handleLiveDictationDraftChange}
-              onDictationStateChange={setIsLiveDictating}
-              onError={setVoiceNotice}
-            />
-          ) : null}
-          <ChatInputBar
-            onSend={(content, options) => void handleSend(content, options)}
-            disabled={interactionDisabled}
-            isTyping={isTyping || isStreamingActive}
-            isStandardMode={isStandardMode}
-            searchAvailable={webSearchAvailable}
-            autoReadEnabled={autoReadEnabled}
-            onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
-            liveExternalInputText={liveDictationText}
-            isLiveExternalInputActive={isLiveDictating}
-          />
-        </div>
-      </div>
-
-      {conversationId &&
-        projectId &&
-        !isConversationPending &&
-        (chatMode === "omni_realtime" ||
-          (chatMode === "synthetic_realtime" && syntheticModeAvailable)) && (
+        {isRealtimeMode && conversationId && projectId ? (
           <RealtimeVoicePanel
             chatMode={chatMode}
             conversationId={conversationId}
@@ -1740,10 +2042,36 @@ export function ChatInterface({
             onTurnComplete={handleRealtimeTurnComplete}
             onTurnPersisted={handleRealtimeTurnPersisted}
             onTranscriptUpdate={handleLiveTranscriptUpdate}
-            onError={setVoiceNotice}
+            onError={handleRealtimeVoiceError}
             onStateChange={setVoiceSessionState}
           />
+        ) : (
+          <div className="chat-input-bar-voice">
+            {isStandardMode && conversationId && projectId ? (
+              <StandardVoiceControls
+                conversationId={conversationId}
+                projectId={projectId}
+                isTyping={isTyping}
+                disabled={interactionDisabled}
+                onDictationDraftChange={handleLiveDictationDraftChange}
+                onDictationStateChange={setIsLiveDictating}
+                onError={setVoiceNotice}
+              />
+            ) : null}
+            <ChatInputBar
+              onSend={(content, options) => void handleSend(content, options)}
+              disabled={interactionDisabled}
+              isTyping={isTyping || isStreamingActive}
+              isStandardMode={isStandardMode}
+              searchAvailable={webSearchAvailable}
+              autoReadEnabled={autoReadEnabled}
+              onAutoReadToggle={() => setAutoReadEnabled((state) => !state)}
+              liveExternalInputText={liveDictationText}
+              isLiveExternalInputActive={isLiveDictating}
+            />
+          </div>
         )}
+      </div>
     </div>
   );
 }

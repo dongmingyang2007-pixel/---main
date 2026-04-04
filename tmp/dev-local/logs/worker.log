@@ -1,0 +1,34 @@
+ 
+ -------------- celery@MacBook-Pro.local v5.6.2 (recovery)
+--- ***** ----- 
+-- ******* ---- macOS-26.4-arm64-arm-64bit-Mach-O 2026-04-04 04:16:15
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         qihang:0x1079997f0
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     disabled://
+- *** --- * --- .> concurrency: 18 (prefork)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                .> cleanup          exchange=cleanup(direct) key=cleanup
+                .> data             exchange=data(direct) key=data
+                .> inference        exchange=inference(direct) key=inference
+
+[tasks]
+  . app.tasks.worker_tasks.cleanup_deleted_dataset
+  . app.tasks.worker_tasks.cleanup_deleted_project
+  . app.tasks.worker_tasks.cleanup_pending_demo_request
+  . app.tasks.worker_tasks.cleanup_pending_model_artifact_upload
+  . app.tasks.worker_tasks.cleanup_pending_upload_session
+  . app.tasks.worker_tasks.compact_project_memories
+  . app.tasks.worker_tasks.extract_memories
+  . app.tasks.worker_tasks.index_data_item
+  . app.tasks.worker_tasks.process_data_item
+  . app.tasks.worker_tasks.repair_project_memory_graph
+
+[2026-04-04 04:16:16,098: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2026-04-04 04:16:16,100: INFO/MainProcess] mingle: searching for neighbors
+[2026-04-04 04:16:17,104: INFO/MainProcess] mingle: all alone
+[2026-04-04 04:16:17,114: INFO/MainProcess] celery@MacBook-Pro.local ready.

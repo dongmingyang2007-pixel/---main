@@ -5,7 +5,7 @@ import base64
 import logging
 import re
 from binascii import Error as BinasciiError
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import WebSocket
 
@@ -41,6 +41,7 @@ ALLOWED_SYNTHETIC_MEDIA_TYPES = ALLOWED_SYNTHETIC_IMAGE_MEDIA_TYPES | ALLOWED_SY
 
 logger = logging.getLogger(__name__)
 _IMMEDIATE_TTS_BOUNDARY_CHARS = {"。", "！", "？", "!", "?"}
+MAX_SYNTHETIC_VIDEO_FRAMES = 24
 
 
 @dataclass
@@ -48,7 +49,10 @@ class PendingMedia:
     kind: str
     filename: str
     mime_type: str
-    data: bytes
+    data: bytes | None = None
+    frame_data_urls: list[str] = field(default_factory=list)
+    frame_bytes: list[int] = field(default_factory=list)
+    fps: float = 1.0
 
 
 def decode_pending_media(
@@ -112,6 +116,14 @@ def decode_pending_media(
     return PendingMedia(kind=kind, filename=safe_filename, mime_type=mime_type, data=raw_data)
 
 
+def clamp_pending_video_fps(value: float | int | None) -> float:
+    try:
+        parsed = float(value or 0)
+    except (TypeError, ValueError):
+        return 1.0
+    return min(max(parsed, 0.25), 4.0)
+
+
 def split_text_for_realtime_tts(text: str) -> list[str]:
     stripped = text.strip()
     if not stripped:
@@ -167,7 +179,9 @@ class ComposedRealtimeSession:
         self._last_activity = self._loop.time()
         self._audio_buffer = bytearray()
         self._pending_media: PendingMedia | None = None
-        self._live_transcript = ""
+        self._partial_transcript = ""
+        self._committed_transcript = ""
+        self._pending_user_text = ""
         self._generation_epoch = 0
         self._turn_task: asyncio.Task[dict[str, str] | None] | None = None
 
@@ -193,15 +207,48 @@ class ComposedRealtimeSession:
     def clear_buffered_audio(self) -> None:
         self._audio_buffer.clear()
 
+    @staticmethod
+    def _merge_transcript_text(existing: str, incoming: str) -> str:
+        left = str(existing or "").strip()
+        right = str(incoming or "").strip()
+        if not left:
+            return right
+        if not right:
+            return left
+        if right.startswith(left) or left in right:
+            return right
+        if left.startswith(right) or right in left:
+            return left
+        needs_space = bool(re.search(r"[A-Za-z0-9]$", left) and re.match(r"[A-Za-z0-9]", right))
+        return f"{left}{' ' if needs_space else ''}{right}"
+
+    @property
+    def live_transcript(self) -> str:
+        if self._partial_transcript:
+            return self._merge_transcript_text(self._committed_transcript, self._partial_transcript)
+        return self._committed_transcript
+
+    @property
+    def turn_input_text(self) -> str:
+        current_transcript = self.live_transcript.strip()
+        if not current_transcript:
+            return ""
+        return self._merge_transcript_text(self._pending_user_text, current_transcript)
+
     def set_live_transcript(self, text: str, *, final: bool) -> None:
         if final:
-            self._live_transcript = text.strip()
+            self._committed_transcript = self._merge_transcript_text(self._committed_transcript, text)
+            self._partial_transcript = ""
         else:
-            self._live_transcript = text
+            self._partial_transcript = text
         self.touch_activity()
 
     def clear_live_transcript(self) -> None:
-        self._live_transcript = ""
+        self._partial_transcript = ""
+        self._committed_transcript = ""
+
+    def reset_pending_user_text(self) -> None:
+        self._pending_user_text = ""
 
     def replace_pending_media(self, media: PendingMedia) -> dict[str, str]:
         self._pending_media = media
@@ -211,6 +258,39 @@ class ComposedRealtimeSession:
             "filename": media.filename,
             "mime_type": media.mime_type,
         }
+
+    def append_pending_video_frame(
+        self,
+        *,
+        frame_data_url: str,
+        frame_bytes: int,
+        fps: float,
+    ) -> None:
+        media = self._pending_media
+        if media is None or media.kind != "video_frames":
+            media = PendingMedia(
+                kind="video_frames",
+                filename="camera-stream",
+                mime_type="image/jpeg",
+                frame_data_urls=[],
+                frame_bytes=[],
+                fps=fps,
+            )
+            self._pending_media = media
+
+        media.fps = clamp_pending_video_fps(fps)
+        media.frame_data_urls.append(frame_data_url)
+        media.frame_bytes.append(frame_bytes)
+
+        total_bytes = sum(media.frame_bytes)
+        max_total_bytes = settings.realtime_media_max_mb * 1024 * 1024
+        while media.frame_data_urls and (
+            len(media.frame_data_urls) > MAX_SYNTHETIC_VIDEO_FRAMES
+            or total_bytes > max_total_bytes
+        ):
+            total_bytes -= media.frame_bytes.pop(0)
+            media.frame_data_urls.pop(0)
+        self.touch_activity()
 
     def clear_pending_media(self) -> dict[str, str]:
         self._pending_media = None
@@ -242,18 +322,20 @@ class ComposedRealtimeSession:
 
         self._audio_buffer.clear()
         pending_media = self._pending_media
-        self._pending_media = None
-        user_text = self._live_transcript.strip()
-        self._live_transcript = ""
+        current_transcript = self.live_transcript.strip()
         self._generation_epoch += 1
         epoch = self._generation_epoch
-        if not user_text:
+        if not current_transcript:
             await ws.send_json({
                 "type": "turn.notice",
                 "code": "empty_transcription",
                 "message": "未识别到语音，请重试。",
             })
-            return None, pending_media is not None
+            return None, False
+        user_text = self._merge_transcript_text(self._pending_user_text, current_transcript)
+        self._pending_user_text = user_text
+        self._pending_media = None
+        self.clear_live_transcript()
         task = asyncio.create_task(self._run_turn(ws, user_text, pending_media, epoch))
         self._turn_task = task
         return task, pending_media is not None
@@ -270,18 +352,34 @@ class ComposedRealtimeSession:
             image_mime_type = pending_media.mime_type if pending_media and pending_media.kind == "image" else "image/jpeg"
             video_bytes = pending_media.data if pending_media and pending_media.kind == "video" else None
             video_mime_type = pending_media.mime_type if pending_media and pending_media.kind == "video" else "video/mp4"
+            video_frame_data_urls = (
+                pending_media.frame_data_urls
+                if pending_media and pending_media.kind == "video_frames"
+                else None
+            )
+            video_fps = (
+                pending_media.fps
+                if pending_media and pending_media.kind == "video_frames"
+                else 1.0
+            )
+            orchestrate_kwargs = {
+                "workspace_id": self.workspace_id,
+                "project_id": self.project_id,
+                "conversation_id": self.conversation_id,
+                "user_text": user_text,
+                "image_bytes": image_bytes,
+                "image_mime_type": image_mime_type,
+                "video_bytes": video_bytes,
+                "video_mime_type": video_mime_type,
+            }
+            if video_frame_data_urls:
+                orchestrate_kwargs["video_frame_data_urls"] = video_frame_data_urls
+                orchestrate_kwargs["video_fps"] = video_fps
 
             with SessionLocal() as db:
                 result = await orchestrate_synthetic_realtime_turn_from_text(
                     db,
-                    workspace_id=self.workspace_id,
-                    project_id=self.project_id,
-                    conversation_id=self.conversation_id,
-                    user_text=user_text,
-                    image_bytes=image_bytes,
-                    image_mime_type=image_mime_type,
-                    video_bytes=video_bytes,
-                    video_mime_type=video_mime_type,
+                    **orchestrate_kwargs,
                 )
 
             if epoch != self._generation_epoch:
@@ -346,6 +444,7 @@ class ComposedRealtimeSession:
             if epoch == self._generation_epoch:
                 self.turn_count += 1
                 await ws.send_json({"type": "response.done"})
+                self.reset_pending_user_text()
                 if audio_degraded:
                     await ws.send_json({
                         "type": "turn.notice",

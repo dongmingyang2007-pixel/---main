@@ -158,6 +158,7 @@ test.describe("Realtime Voice", () => {
     const response = await page.goto(`/app/chat?project_id=${handle.seedProjectId}`);
     expect(response).not.toBeNull();
     expect(response?.headers()["permissions-policy"] || "").toContain("microphone=(self)");
+    expect(response?.headers()["permissions-policy"] || "").toContain("camera=(self)");
 
     await page.locator(".chat-sidebar-new").click();
     await page.locator(".chat-workspace-controls .chat-mode-dropdown").first().selectOption("omni_realtime");

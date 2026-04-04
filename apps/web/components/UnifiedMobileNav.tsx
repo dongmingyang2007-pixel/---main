@@ -6,6 +6,7 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 import { PublicDocumentLink } from "@/components/PublicDocumentLink";
+import { DISCOVER_ENABLED } from "@/lib/feature-flags";
 import {
   getAuthStateServerSnapshot,
   getAuthStateSnapshot,
@@ -32,7 +33,7 @@ const CONSOLE_NAV_ITEMS = [
   { href: "/app/chat", navKey: "chat" },
   { href: "/app/memory", navKey: "memory" },
   { href: "/app/devices", navKey: "devices" },
-  { href: "/app/discover", navKey: "discover" },
+  ...(DISCOVER_ENABLED ? [{ href: "/app/discover", navKey: "discover" }] : []),
   { href: "/app/settings", navKey: "settings" },
 ] as const;
 

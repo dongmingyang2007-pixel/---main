@@ -2067,7 +2067,11 @@ async def search_project_memories_for_tool(
             if not is_structural_only_memory(memory) and _memory_matches_query(memory, query_tokens)
         ]
 
-    selected = _select_best_candidates(candidates, limit=top_k)
+    selected = _select_primary_lineage_candidates(
+        candidates,
+        limit=top_k,
+        allow_conflicts=_query_requests_conflict_expansion(query),
+    )
     return [
         {
             "id": candidate.memory.id,

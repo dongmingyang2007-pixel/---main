@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiGet, isApiRequestError } from "@/lib/api";
 import { getApiBaseUrl } from "@/lib/env";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,10 @@ export interface RealtimeVoiceBaseConfig {
   /** Half-duplex safety: suppress microphone capture while AI audio is actively playing. */
   blockCaptureWhileAiSpeaking?: boolean;
   enableInterrupt: boolean;
+  /** Whether user speech may interrupt a reply that is pending but has not started playing yet. */
+  interruptPendingResponse?: boolean;
+  /** Called immediately before sending `audio.stop` in VAD-gated mode. */
+  beforeAudioStop?: () => Promise<void> | void;
   onError?: (msg: string) => void;
   onTurnComplete?: (payload: {
     userText: string;
@@ -82,6 +87,10 @@ export interface RealtimeVoiceBaseReturn {
   aiVolume: number;
   sendJson: (data: Record<string, unknown>) => void;
   sendBinary: (data: ArrayBuffer) => void;
+}
+
+interface RealtimeWsTicketResponse {
+  ticket: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,9 +183,9 @@ export function useRealtimeVoiceBase(
   const sessionEndReasonRef = useRef<string | null>(null);
   const currentUserTextRef = useRef("");
   const currentAssistantTextRef = useRef("");
-  const openConnectionRef = useRef<(mode: "connect" | "reconnect") => void>(
-    () => undefined,
-  );
+  const openConnectionRef = useRef<
+    (mode: "connect" | "reconnect") => Promise<void>
+  >(() => Promise.resolve());
   const sessionContextRef = useRef(`${projectId}:${conversationId}`);
 
   const getMessage = useCallback(
@@ -195,6 +204,9 @@ export function useRealtimeVoiceBase(
   // Interrupt tracking
   const interruptStartRef = useRef(0);
   const stateRef = useRef<RealtimeState>("idle");
+  const suppressAssistantOutputRef = useRef(false);
+  const assistantTurnPendingRef = useRef(false);
+  const pendingAudioStopTokenRef = useRef(0);
 
   // Calibration refs (when speechThreshold === "auto")
   const calibratingRef = useRef(false);
@@ -270,6 +282,22 @@ export function useRealtimeVoiceBase(
     currentAssistantTextRef.current = "";
     return true;
   }, [discardAssistantPartial, finalizeAssistantPartial]);
+
+  const armAssistantOutputSuppression = useCallback(() => {
+    suppressAssistantOutputRef.current = true;
+  }, []);
+
+  const clearAssistantOutputSuppression = useCallback(() => {
+    suppressAssistantOutputRef.current = false;
+  }, []);
+
+  const armAssistantTurnPending = useCallback(() => {
+    assistantTurnPendingRef.current = true;
+  }, []);
+
+  const clearAssistantTurnPending = useCallback(() => {
+    assistantTurnPendingRef.current = false;
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Timer management
@@ -372,6 +400,18 @@ export function useRealtimeVoiceBase(
     }
     setAiVolume(0);
   }, [resetPcmPlaybackQueue]);
+
+  const ensureCaptureContext = useCallback(async (): Promise<AudioContext> => {
+    let ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === "closed") {
+      ctx = new AudioContext({ sampleRate: 16000 });
+      audioCtxRef.current = ctx;
+    }
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
+    return ctx;
+  }, []);
 
   const playPcmChunkDirect = useCallback((pcmData: ArrayBuffer) => {
     let ctx = playbackCtxRef.current;
@@ -673,11 +713,8 @@ export function useRealtimeVoiceBase(
       });
       streamRef.current = stream;
 
-      audioCtx = new AudioContext({ sampleRate: 16000 });
+      audioCtx = await ensureCaptureContext();
       audioCtxRef.current = audioCtx;
-      if (audioCtx.state === "suspended") {
-        await audioCtx.resume().catch(() => {});
-      }
 
       const source = audioCtx.createMediaStreamSource(stream);
       processor = audioCtx.createScriptProcessor(
@@ -726,7 +763,10 @@ export function useRealtimeVoiceBase(
         const vad = cfg.vadConfig;
         const shouldBlockCapture =
           Boolean(cfg.blockCaptureWhileAiSpeaking) &&
-          (stateRef.current === "ai_speaking" || isPlaybackActiveRef.current);
+          (
+            stateRef.current === "ai_speaking" ||
+            isPlaybackActiveRef.current
+          );
 
         if (shouldBlockCapture) {
           speechActiveRef.current = false;
@@ -775,8 +815,15 @@ export function useRealtimeVoiceBase(
         if (mode === "continuous") {
           ws.send(pcm.buffer);
 
-          // Interrupt detection during ai_speaking
-          if (cfg.enableInterrupt && stateRef.current === "ai_speaking") {
+          // Interrupt detection while a response is speaking or pending.
+          if (
+            cfg.enableInterrupt &&
+            (
+              stateRef.current === "ai_speaking" ||
+              ((cfg.interruptPendingResponse ?? true) &&
+                assistantTurnPendingRef.current)
+            )
+          ) {
             const isSpeech = rms >= threshold;
             if (isSpeech) {
               if (!interruptStartRef.current) {
@@ -787,6 +834,7 @@ export function useRealtimeVoiceBase(
                 performance.now() - interruptStartRef.current >=
                 interruptMs
               ) {
+                armAssistantOutputSuppression();
                 ws.send(JSON.stringify({ type: "input.interrupt" }));
                 interruptStartRef.current = 0;
               }
@@ -807,6 +855,9 @@ export function useRealtimeVoiceBase(
         const now = performance.now();
         const isSpeech = rms >= threshold;
         if (isSpeech) {
+          if (pendingAudioStopTokenRef.current) {
+            pendingAudioStopTokenRef.current += 1;
+          }
           speechActiveRef.current = true;
           lastSpeechAtRef.current = now;
         }
@@ -822,15 +873,31 @@ export function useRealtimeVoiceBase(
             speechActiveRef.current = false;
             hasSegmentAudioRef.current = false;
             setUserVolume(0);
-            ws.send(JSON.stringify({ type: "audio.stop" }));
+            const stopToken = pendingAudioStopTokenRef.current + 1;
+            pendingAudioStopTokenRef.current = stopToken;
+            void Promise.resolve(cfg.beforeAudioStop?.())
+              .catch(() => undefined)
+              .finally(() => {
+                if (pendingAudioStopTokenRef.current !== stopToken) {
+                  return;
+                }
+                pendingAudioStopTokenRef.current = 0;
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: "audio.stop" }));
+                }
+              });
           }
           return;
         }
 
-        // Interrupt detection during ai_speaking (vad-gated)
+        // Interrupt detection while a response is speaking or pending.
         if (
           cfg.enableInterrupt &&
-          stateRef.current === "ai_speaking" &&
+          (
+            stateRef.current === "ai_speaking" ||
+            ((cfg.interruptPendingResponse ?? true) &&
+              assistantTurnPendingRef.current)
+          ) &&
           isSpeech
         ) {
           if (!interruptStartRef.current) {
@@ -838,6 +905,7 @@ export function useRealtimeVoiceBase(
           }
           const interruptMs = vad.interruptThresholdMs ?? 400;
           if (now - interruptStartRef.current >= interruptMs) {
+            armAssistantOutputSuppression();
             ws.send(JSON.stringify({ type: "input.interrupt" }));
             interruptStartRef.current = 0;
           }
@@ -865,7 +933,7 @@ export function useRealtimeVoiceBase(
       setUserVolume(0);
       throw error;
     }
-  }, []);
+  }, [ensureCaptureContext]);
 
   const stopCapture = useCallback(() => {
     // In vad-gated mode, flush pending segment
@@ -891,6 +959,7 @@ export function useRealtimeVoiceBase(
     streamRef.current = null;
     speechActiveRef.current = false;
     hasSegmentAudioRef.current = false;
+    pendingAudioStopTokenRef.current = 0;
     interruptStartRef.current = 0;
     calibratingRef.current = false;
     calibrationBufferRef.current = [];
@@ -921,6 +990,8 @@ export function useRealtimeVoiceBase(
       options?: { clearTranscript?: boolean; message?: string },
     ) => {
       clearReconnectTimer();
+      clearAssistantOutputSuppression();
+      clearAssistantTurnPending();
       teardownMedia();
       clearTurnBuffers();
       resetTimerTracking();
@@ -932,7 +1003,14 @@ export function useRealtimeVoiceBase(
         configRef.current.onError?.(options.message);
       }
     },
-    [clearReconnectTimer, clearTurnBuffers, resetTimerTracking, teardownMedia],
+    [
+      clearAssistantOutputSuppression,
+      clearAssistantTurnPending,
+      clearReconnectTimer,
+      clearTurnBuffers,
+      resetTimerTracking,
+      teardownMedia,
+    ],
   );
 
   const scheduleReconnect = useCallback(() => {
@@ -952,7 +1030,7 @@ export function useRealtimeVoiceBase(
     setState("reconnecting");
     reconnectTimeoutRef.current = setTimeout(() => {
       reconnectTimeoutRef.current = null;
-      openConnectionRef.current("reconnect");
+      void openConnectionRef.current("reconnect");
     }, delayMs);
   }, [finalizeConnection, getMessage, teardownMedia]);
 
@@ -963,11 +1041,19 @@ export function useRealtimeVoiceBase(
   const handleWsMessage = useCallback(
     async (event: MessageEvent, ws: WebSocket) => {
       if (event.data instanceof ArrayBuffer) {
+        if (suppressAssistantOutputRef.current) {
+          return;
+        }
+        clearAssistantTurnPending();
         playAudioChunk(event.data);
         setState("ai_speaking");
         return;
       }
       if (event.data instanceof Blob) {
+        if (suppressAssistantOutputRef.current) {
+          return;
+        }
+        clearAssistantTurnPending();
         playAudioChunk(await event.data.arrayBuffer());
         setState("ai_speaking");
         return;
@@ -978,6 +1064,8 @@ export function useRealtimeVoiceBase(
 
       switch (msg.type) {
         case "session.ready":
+          clearAssistantOutputSuppression();
+          clearAssistantTurnPending();
           reconnectAttemptsRef.current = 0;
           setState("ready");
           cfg.onSessionReady?.(ws);
@@ -1015,6 +1103,8 @@ export function useRealtimeVoiceBase(
           // Flush any audio still queued from the previous AI response so the
           // new response plays immediately instead of waiting for old audio.
           resetPlaybackQueue();
+          clearAssistantOutputSuppression();
+          armAssistantTurnPending();
           currentUserTextRef.current = msg.text || "";
           cfg.onTranscriptUpdate?.({
             role: "user",
@@ -1034,6 +1124,10 @@ export function useRealtimeVoiceBase(
           break;
 
         case "response.text":
+          if (suppressAssistantOutputRef.current) {
+            break;
+          }
+          clearAssistantTurnPending();
           currentAssistantTextRef.current = msg.replace
             ? msg.text || ""
             : currentAssistantTextRef.current + (msg.text || "");
@@ -1064,6 +1158,10 @@ export function useRealtimeVoiceBase(
           break;
 
         case "response.done":
+          if (suppressAssistantOutputRef.current) {
+            break;
+          }
+          clearAssistantTurnPending();
           cfg.onTranscriptUpdate?.({
             role: "assistant",
             text: currentAssistantTextRef.current,
@@ -1088,6 +1186,8 @@ export function useRealtimeVoiceBase(
           break;
 
         case "interrupt.ack":
+          armAssistantOutputSuppression();
+          clearAssistantTurnPending();
           resetPlaybackQueue();
           if (!preserveAssistantPartialOnInterrupt()) {
             cfg.onTranscriptUpdate?.({
@@ -1101,6 +1201,9 @@ export function useRealtimeVoiceBase(
           break;
 
         case "audio.meta":
+          if (suppressAssistantOutputRef.current) {
+            break;
+          }
           audioMimeRef.current = msg.mime || "audio/mpeg";
           break;
 
@@ -1108,12 +1211,14 @@ export function useRealtimeVoiceBase(
           break;
 
         case "session.end":
+          clearAssistantTurnPending();
           sessionEndReasonRef.current =
             typeof msg.reason === "string" ? msg.reason : "";
           ws.close();
           break;
 
         case "error":
+          clearAssistantTurnPending();
           terminalErrorMessageRef.current =
             msg.code === "model_api_unconfigured"
               ? "model_api_unconfigured"
@@ -1122,18 +1227,21 @@ export function useRealtimeVoiceBase(
           break;
 
         case "turn.error":
+          clearAssistantTurnPending();
           finalizeAssistantPartial();
           clearTurnBuffers();
           setState("listening");
           cfg.onError?.(
             msg.message || getMessage("turnError", "本轮处理失败，请重试"),
           );
+          cfg.onCustomMessage?.(msg as Record<string, unknown>, ws);
           break;
 
         case "turn.notice":
           cfg.onError?.(
             msg.message || getMessage("turnNotice", "语音输出暂时不可用"),
           );
+          cfg.onCustomMessage?.(msg as Record<string, unknown>, ws);
           break;
 
         default:
@@ -1143,6 +1251,10 @@ export function useRealtimeVoiceBase(
       }
     },
     [
+      armAssistantOutputSuppression,
+      armAssistantTurnPending,
+      clearAssistantOutputSuppression,
+      clearAssistantTurnPending,
       clearTurnBuffers,
       finalizeAssistantPartial,
       getMessage,
@@ -1157,8 +1269,21 @@ export function useRealtimeVoiceBase(
   // openConnection
   // ---------------------------------------------------------------------------
 
+  const buildWebSocketUrl = useCallback(async (wsPath: string) => {
+    const apiBaseUrl = new URL(getApiBaseUrl());
+    const protocol = apiBaseUrl.protocol === "https:" ? "wss:" : "ws:";
+    const { ticket } = await apiGet<RealtimeWsTicketResponse>(
+      "/api/v1/realtime/ws-ticket",
+    );
+    const wsUrl = new URL(`${protocol}//${apiBaseUrl.host}${wsPath}`);
+    if (ticket) {
+      wsUrl.searchParams.set("ticket", ticket);
+    }
+    return wsUrl.toString();
+  }, []);
+
   const openConnection = useCallback(
-    (mode: "connect" | "reconnect") => {
+    async (mode: "connect" | "reconnect") => {
       const existingSocket = wsRef.current;
       if (
         existingSocket &&
@@ -1169,6 +1294,8 @@ export function useRealtimeVoiceBase(
       }
 
       clearReconnectTimer();
+      clearAssistantOutputSuppression();
+      clearAssistantTurnPending();
       manualDisconnectRef.current = false;
       terminalErrorMessageRef.current = null;
       sessionEndReasonRef.current = null;
@@ -1187,9 +1314,21 @@ export function useRealtimeVoiceBase(
       }
 
       const cfg = configRef.current;
-      const apiBaseUrl = new URL(getApiBaseUrl());
-      const protocol = apiBaseUrl.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${apiBaseUrl.host}${cfg.wsPath}`;
+      let wsUrl = "";
+      try {
+        wsUrl = await buildWebSocketUrl(cfg.wsPath);
+      } catch (error) {
+        finalizeConnection("error", {
+          message:
+            isApiRequestError(error) && error.message
+              ? error.message
+              : getMessage(
+                  "websocketConnectionFailed",
+                  WEBSOCKET_CONNECTION_FAILED_MESSAGE,
+                ),
+        });
+        return;
+      }
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -1248,10 +1387,14 @@ export function useRealtimeVoiceBase(
       ws.onerror = () => undefined;
     },
     [
+      buildWebSocketUrl,
+      clearAssistantOutputSuppression,
+      clearAssistantTurnPending,
       clearReconnectTimer,
       clearTurnBuffers,
       finalizeConnection,
       handleWsMessage,
+      getMessage,
       resetTimerTracking,
       scheduleReconnect,
     ],
@@ -1282,6 +1425,8 @@ export function useRealtimeVoiceBase(
     if (!hasLiveSession) return;
 
     clearReconnectTimer();
+    clearAssistantOutputSuppression();
+    clearAssistantTurnPending();
     manualDisconnectRef.current = true;
     terminalErrorMessageRef.current = null;
     sessionEndReasonRef.current = null;
@@ -1300,6 +1445,8 @@ export function useRealtimeVoiceBase(
       message: "Conversation changed. Please restart voice.",
     });
   }, [
+    clearAssistantOutputSuppression,
+    clearAssistantTurnPending,
     clearReconnectTimer,
     conversationId,
     finalizeConnection,
@@ -1313,6 +1460,8 @@ export function useRealtimeVoiceBase(
 
   const disconnect = useCallback(() => {
     clearReconnectTimer();
+    clearAssistantOutputSuppression();
+    clearAssistantTurnPending();
     manualDisconnectRef.current = true;
     terminalErrorMessageRef.current = null;
     sessionEndReasonRef.current = null;
@@ -1331,21 +1480,27 @@ export function useRealtimeVoiceBase(
       }
     }
     ws.close();
-  }, [clearReconnectTimer, finalizeConnection]);
+  }, [
+    clearAssistantOutputSuppression,
+    clearAssistantTurnPending,
+    clearReconnectTimer,
+    finalizeConnection,
+  ]);
 
   const connect = useCallback(async () => {
     if (state !== "idle" && state !== "error") return;
-    // PCM playback mode needs an AudioContext primed before connect
+    // Keep connection setup in the same user gesture. Deferring it to a timer
+    // can prevent some browsers / external microphones from activating capture.
+    await ensureCaptureContext();
     if (!blobPlayback) {
       await ensurePlaybackContext();
     } else {
-      await primeBlobPlayback();
+      void primeBlobPlayback();
     }
-    window.setTimeout(() => {
-      openConnection("connect");
-    }, 80);
+    await openConnection("connect");
   }, [
     blobPlayback,
+    ensureCaptureContext,
     ensurePlaybackContext,
     openConnection,
     primeBlobPlayback,
@@ -1370,9 +1525,12 @@ export function useRealtimeVoiceBase(
   const sendJson = useCallback((data: Record<string, unknown>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
+      if (data.type === "input.interrupt") {
+        armAssistantOutputSuppression();
+      }
       ws.send(JSON.stringify(data));
     }
-  }, []);
+  }, [armAssistantOutputSuppression]);
 
   const sendBinary = useCallback((data: ArrayBuffer) => {
     const ws = wsRef.current;

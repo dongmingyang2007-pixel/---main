@@ -47,16 +47,11 @@ export function CraftScene({ eyebrow, title, body, imageAlt1, imageAlt2 }: Craft
       );
     }
 
-    const tl = gsap.timeline({
-      scrollTrigger: { trigger: el, start: "top 60%", once: true },
-    });
-    tl.from(el.querySelector(".craft-copy"), { opacity: 0, y: 30, duration: 0.7 });
     return () => {
       tweens.forEach((t) => {
         t.scrollTrigger?.kill();
         t.kill();
       });
-      tl.kill();
     };
   }, []);
 

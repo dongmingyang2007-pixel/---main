@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import type { CSSProperties } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -8,13 +7,6 @@ import { Providers } from "@/components/providers";
 import { routing } from "@/i18n/routing";
 import "@/styles/globals.css";
 import "@/styles/chat-workbench.css";
-
-const localFontVariables = {
-  "--font-dm-sans": "\"DM Sans\", \"SF Pro Display\", \"PingFang SC\", \"Noto Sans SC\", -apple-system, BlinkMacSystemFont, sans-serif",
-  "--font-sans": "\"Inter\", \"SF Pro Text\", \"PingFang SC\", \"Noto Sans SC\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
-  "--font-mono": "\"JetBrains Mono\", \"SFMono-Regular\", ui-monospace, \"Cascadia Code\", monospace",
-  "--font-sora": "\"Sora\", \"SF Pro Display\", \"PingFang SC\", \"Noto Sans SC\", -apple-system, BlinkMacSystemFont, sans-serif",
-} as CSSProperties;
 
 // Noto Sans SC is loaded via system fonts (PingFang SC / Noto Sans SC)
 // in the CSS font-stack rather than next/font to avoid 7MB+ download at build time.
@@ -75,7 +67,7 @@ export default async function LocaleLayout({
 
   return (
     <html lang={localeKey} suppressHydrationWarning>
-      <body style={localFontVariables}>
+      <body>
         <NextIntlClientProvider messages={messages}>
           <Providers>{children}</Providers>
         </NextIntlClientProvider>

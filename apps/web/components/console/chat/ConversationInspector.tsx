@@ -23,6 +23,7 @@ import type {
   InspectorTab,
   Message,
   MessageInspectorOverride,
+  MemoryWriteSummaryView,
   RetrievalTraceChunk,
   RetrievalTraceMemory,
 } from "../chat-types";
@@ -165,6 +166,237 @@ function EmptyBody({
   );
 }
 
+function MemoryWriteTabContent({
+  message,
+  memorySummary,
+  memoryDetails,
+  memoryStatuses,
+  onEnsureMemoryDetail,
+  onUpdateMemory,
+  onDeleteMemory,
+  onPromoteMemory,
+}: {
+  message: Message;
+  memorySummary: MemoryWriteSummaryView;
+  memoryDetails: Record<string, InspectorMemoryRecord>;
+  memoryStatuses: Record<
+    string,
+    "idle" | "loading" | "saving" | "deleting" | "promoting"
+  >;
+  onEnsureMemoryDetail: (memoryId: string) => Promise<void> | void;
+  onUpdateMemory: (payload: {
+    messageId: string;
+    memoryId: string;
+    content: string;
+  }) => Promise<void>;
+  onDeleteMemory: (payload: {
+    messageId: string;
+    memoryId: string;
+  }) => Promise<void>;
+  onPromoteMemory: (payload: {
+    messageId: string;
+    memoryId: string;
+  }) => Promise<void>;
+}) {
+  const t = useTranslations("console-chat");
+  const [expandedMemoryIds, setExpandedMemoryIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState("");
+
+  const handleExpandMemory = async (memoryId: string | null) => {
+    if (!memoryId) {
+      return;
+    }
+    setExpandedMemoryIds((prev) => ({
+      ...prev,
+      [memoryId]: !prev[memoryId],
+    }));
+    if (!expandedMemoryIds[memoryId] && !memoryDetails[memoryId]) {
+      await onEnsureMemoryDetail(memoryId);
+    }
+  };
+
+  if (!memorySummary.items.length) {
+    return (
+      <EmptyBody
+        title={t("inspector.memory.emptyTitle")}
+        description={t("inspector.memory.emptyDescription")}
+      />
+    );
+  }
+
+  return (
+    <div className="chat-memory-write-list">
+      {memorySummary.items.map((item) => {
+        const detail = item.targetMemoryId
+          ? memoryDetails[item.targetMemoryId]
+          : null;
+        const status =
+          (item.targetMemoryId && memoryStatuses[item.targetMemoryId]) || "idle";
+        const isExpanded = item.targetMemoryId
+          ? Boolean(expandedMemoryIds[item.targetMemoryId])
+          : false;
+        const isEditing =
+          item.targetMemoryId !== null && editingMemoryId === item.targetMemoryId;
+        const canPromote =
+          item.targetMemoryId !== null &&
+          (detail?.type || item.memoryType || item.status) === "temporary";
+
+        return (
+          <article key={item.id} className="chat-memory-write-item">
+            <button
+              type="button"
+              className="chat-memory-write-head"
+              onClick={() => void handleExpandMemory(item.targetMemoryId)}
+              disabled={!item.targetMemoryId}
+            >
+              <div className="chat-memory-write-copy">
+                <div className="chat-memory-write-text">{item.fact}</div>
+                <div className="chat-memory-write-meta">
+                  <span className="chat-inspector-pill is-primary">
+                    {badgeLabel(item.badgeKey, t)}
+                  </span>
+                  {item.category ? (
+                    <span className="chat-inspector-pill">{item.category}</span>
+                  ) : null}
+                </div>
+              </div>
+              {item.targetMemoryId ? (
+                <span className="chat-memory-write-expand">
+                  {isExpanded
+                    ? t("inspector.memory.collapse")
+                    : t("inspector.memory.expand")}
+                </span>
+              ) : null}
+            </button>
+
+            <div className="chat-memory-write-subcopy">
+              {item.triageReason || t("inspector.memory.noReason")}
+            </div>
+
+            {isExpanded ? (
+              <div className="chat-memory-write-panel">
+                {status === "loading" ? (
+                  <div className="chat-memory-write-loading">
+                    {t("inspector.memory.loading")}
+                  </div>
+                ) : null}
+
+                {isEditing ? (
+                  <div className="chat-memory-write-editor">
+                    <textarea
+                      className="chat-memory-write-textarea"
+                      value={editingDraft}
+                      onChange={(event) => setEditingDraft(event.target.value)}
+                      rows={4}
+                    />
+                    <div className="chat-memory-write-actions">
+                      <button
+                        type="button"
+                        className="chat-inspector-button is-primary"
+                        disabled={status !== "idle" || !editingDraft.trim()}
+                        onClick={async () => {
+                          if (!item.targetMemoryId) {
+                            return;
+                          }
+                          await onUpdateMemory({
+                            messageId: message.id,
+                            memoryId: item.targetMemoryId,
+                            content: editingDraft.trim(),
+                          });
+                          setEditingMemoryId(null);
+                        }}
+                      >
+                        {t("inspector.memory.save")}
+                      </button>
+                      <button
+                        type="button"
+                        className="chat-inspector-button"
+                        onClick={() => setEditingMemoryId(null)}
+                      >
+                        {t("inspector.memory.cancel")}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {detail ? (
+                      <div className="chat-memory-write-detail">
+                        <div>{detail.content}</div>
+                        <div className="chat-memory-write-detail-meta">
+                          <span>{detail.id}</span>
+                          <span>{detail.type}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {item.isActionable ? (
+                      <div className="chat-memory-write-actions">
+                        <button
+                          type="button"
+                          className="chat-inspector-button"
+                          disabled={status !== "idle"}
+                          onClick={async () => {
+                            if (!item.targetMemoryId) {
+                              return;
+                            }
+                            if (!detail) {
+                              await onEnsureMemoryDetail(item.targetMemoryId);
+                            }
+                            setEditingMemoryId(item.targetMemoryId);
+                            setEditingDraft(detail?.content || item.fact);
+                          }}
+                        >
+                          {t("inspector.memory.edit")}
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-inspector-button"
+                          disabled={status !== "idle"}
+                          onClick={async () => {
+                            if (!item.targetMemoryId) {
+                              return;
+                            }
+                            await onDeleteMemory({
+                              messageId: message.id,
+                              memoryId: item.targetMemoryId,
+                            });
+                          }}
+                        >
+                          {t("inspector.memory.delete")}
+                        </button>
+                        {canPromote ? (
+                          <button
+                            type="button"
+                            className="chat-inspector-button"
+                            disabled={status !== "idle"}
+                            onClick={async () => {
+                              if (!item.targetMemoryId) {
+                                return;
+                              }
+                              await onPromoteMemory({
+                                messageId: message.id,
+                                memoryId: item.targetMemoryId,
+                              });
+                            }}
+                          >
+                            {t("inspector.memory.promote")}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function InspectorInner({
   inspectorState,
   messages,
@@ -182,11 +414,6 @@ function InspectorInner({
 }: Omit<ConversationInspectorProps, "variant">) {
   const t = useTranslations("console-chat");
   const sectionHostRef = useRef<HTMLDivElement | null>(null);
-  const [expandedMemoryIds, setExpandedMemoryIds] = useState<
-    Record<string, boolean>
-  >({});
-  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
-  const [editingDraft, setEditingDraft] = useState("");
 
   const message = useMemo(
     () =>
@@ -230,16 +457,9 @@ function InspectorInner({
     }
   }, [inspectorState.open, inspectorState.section, inspectorState.tab]);
 
-  useEffect(() => {
-    setExpandedMemoryIds({});
-    setEditingMemoryId(null);
-    setEditingDraft("");
-  }, [message?.id, inspectorState.tab]);
-
   const tabOptions = [
     { key: "context" as const, label: t("inspector.tabs.context") },
     { key: "memory_write" as const, label: t("inspector.tabs.memory") },
-    { key: "thinking" as const, label: t("inspector.tabs.thinking") },
     ...(uiMode === "debug"
       ? [{ key: "debug" as const, label: t("inspector.tabs.debug") }]
       : []),
@@ -295,19 +515,6 @@ function InspectorInner({
       </button>
     </div>
   );
-
-  const handleExpandMemory = async (memoryId: string | null) => {
-    if (!memoryId) {
-      return;
-    }
-    setExpandedMemoryIds((prev) => ({
-      ...prev,
-      [memoryId]: !prev[memoryId],
-    }));
-    if (!expandedMemoryIds[memoryId] && !memoryDetails[memoryId]) {
-      await onEnsureMemoryDetail(memoryId);
-    }
-  };
 
   const body = !message ? (
     <EmptyBody
@@ -534,184 +741,18 @@ function InspectorInner({
 
       {inspectorState.tab === "memory_write" ? (
         <div className="chat-inspector-content">
-          {memorySummary.items.length ? (
-            <div className="chat-memory-write-list">
-              {memorySummary.items.map((item) => {
-                const detail = item.targetMemoryId
-                  ? memoryDetails[item.targetMemoryId]
-                  : null;
-                const status =
-                  (item.targetMemoryId &&
-                    memoryStatuses[item.targetMemoryId ?? ""]) ||
-                  "idle";
-                const isExpanded = item.targetMemoryId
-                  ? Boolean(expandedMemoryIds[item.targetMemoryId])
-                  : false;
-                const isEditing =
-                  item.targetMemoryId !== null &&
-                  editingMemoryId === item.targetMemoryId;
-                const canPromote =
-                  item.targetMemoryId !== null &&
-                  (detail?.type || item.memoryType || item.status) === "temporary";
-
-                return (
-                  <article key={item.id} className="chat-memory-write-item">
-                    <button
-                      type="button"
-                      className="chat-memory-write-head"
-                      onClick={() => void handleExpandMemory(item.targetMemoryId)}
-                      disabled={!item.targetMemoryId}
-                    >
-                      <div className="chat-memory-write-copy">
-                        <div className="chat-memory-write-text">{item.fact}</div>
-                        <div className="chat-memory-write-meta">
-                          <span className="chat-inspector-pill is-primary">
-                            {badgeLabel(item.badgeKey, t)}
-                          </span>
-                          {item.category ? (
-                            <span className="chat-inspector-pill">
-                              {item.category}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      {item.targetMemoryId ? (
-                        <span className="chat-memory-write-expand">
-                          {isExpanded
-                            ? t("inspector.memory.collapse")
-                            : t("inspector.memory.expand")}
-                        </span>
-                      ) : null}
-                    </button>
-
-                    <div className="chat-memory-write-subcopy">
-                      {item.triageReason || t("inspector.memory.noReason")}
-                    </div>
-
-                    {isExpanded ? (
-                      <div className="chat-memory-write-panel">
-                        {status === "loading" ? (
-                          <div className="chat-memory-write-loading">
-                            {t("inspector.memory.loading")}
-                          </div>
-                        ) : null}
-
-                        {isEditing ? (
-                          <div className="chat-memory-write-editor">
-                            <textarea
-                              className="chat-memory-write-textarea"
-                              value={editingDraft}
-                              onChange={(event) =>
-                                setEditingDraft(event.target.value)
-                              }
-                              rows={4}
-                            />
-                            <div className="chat-memory-write-actions">
-                              <button
-                                type="button"
-                                className="chat-inspector-button is-primary"
-                                disabled={
-                                  status !== "idle" || !editingDraft.trim()
-                                }
-                                onClick={async () => {
-                                  if (!item.targetMemoryId) {
-                                    return;
-                                  }
-                                  await onUpdateMemory({
-                                    messageId: message.id,
-                                    memoryId: item.targetMemoryId,
-                                    content: editingDraft.trim(),
-                                  });
-                                  setEditingMemoryId(null);
-                                }}
-                              >
-                                {t("inspector.memory.save")}
-                              </button>
-                              <button
-                                type="button"
-                                className="chat-inspector-button"
-                                onClick={() => setEditingMemoryId(null)}
-                              >
-                                {t("inspector.memory.cancel")}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            {detail ? (
-                              <div className="chat-memory-write-detail">
-                                <div>{detail.content}</div>
-                                <div className="chat-memory-write-detail-meta">
-                                  <span>{detail.id}</span>
-                                  <span>{detail.type}</span>
-                                </div>
-                              </div>
-                            ) : null}
-                            {item.isActionable ? (
-                              <div className="chat-memory-write-actions">
-                                <button
-                                  type="button"
-                                  className="chat-inspector-button"
-                                  disabled={status !== "idle"}
-                                  onClick={async () => {
-                                    if (!item.targetMemoryId) {
-                                      return;
-                                    }
-                                    if (!detail) {
-                                      await onEnsureMemoryDetail(
-                                        item.targetMemoryId,
-                                      );
-                                    }
-                                    setEditingMemoryId(item.targetMemoryId);
-                                    setEditingDraft(detail?.content || item.fact);
-                                  }}
-                                >
-                                  {t("inspector.memory.edit")}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="chat-inspector-button"
-                                  disabled={status !== "idle"}
-                                  onClick={async () => {
-                                    if (!item.targetMemoryId) {
-                                      return;
-                                    }
-                                    await onDeleteMemory({
-                                      messageId: message.id,
-                                      memoryId: item.targetMemoryId,
-                                    });
-                                  }}
-                                >
-                                  {t("inspector.memory.delete")}
-                                </button>
-                                {canPromote ? (
-                                  <button
-                                    type="button"
-                                    className="chat-inspector-button"
-                                    disabled={status !== "idle"}
-                                    onClick={async () => {
-                                      if (!item.targetMemoryId) {
-                                        return;
-                                      }
-                                      await onPromoteMemory({
-                                        messageId: message.id,
-                                        memoryId: item.targetMemoryId,
-                                      });
-                                    }}
-                                  >
-                                    {t("inspector.memory.promote")}
-                                  </button>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </>
-                        )}
-                      </div>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
+          {message ? (
+            <MemoryWriteTabContent
+              key={`${message.id}:${inspectorState.tab}`}
+              message={message}
+              memorySummary={memorySummary}
+              memoryDetails={memoryDetails}
+              memoryStatuses={memoryStatuses}
+              onEnsureMemoryDetail={onEnsureMemoryDetail}
+              onUpdateMemory={onUpdateMemory}
+              onDeleteMemory={onDeleteMemory}
+              onPromoteMemory={onPromoteMemory}
+            />
           ) : (
             <EmptyBody
               title={t("inspector.memory.emptyTitle")}
@@ -788,6 +829,8 @@ export function ConversationInspector({
   onClose,
   ...props
 }: ConversationInspectorProps) {
+  const t = useTranslations("console-chat");
+
   if (!inspectorState.open) {
     return null;
   }
@@ -796,9 +839,9 @@ export function ConversationInspector({
     return (
       <Dialog open={inspectorState.open} onOpenChange={(open) => !open && onClose()}>
         <DialogContent className="chat-inspector-sheet">
-          <DialogHeader className="chat-inspector-sheet-header">
-            <DialogTitle />
-            <DialogDescription />
+          <DialogHeader className="chat-inspector-sheet-header sr-only">
+            <DialogTitle>{t("inspector.context.title")}</DialogTitle>
+            <DialogDescription>{t("inspector.context.description")}</DialogDescription>
           </DialogHeader>
           <InspectorInner
             {...props}

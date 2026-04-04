@@ -1,7 +1,5 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { gsap } from "@/lib/gsap-register";
 import { TextReveal } from "@/components/TextReveal";
 import { ImagePlaceholder } from "@/components/ImagePlaceholder";
 
@@ -13,19 +11,8 @@ interface HeroSceneProps {
 }
 
 export function HeroScene({ eyebrow, title, body, imageAlt }: HeroSceneProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
-    tl.from(el.querySelector(".hero-body"), { opacity: 0, y: 30, duration: 0.8, delay: 0.3 });
-    tl.from(el.querySelector(".hero-image"), { opacity: 0, filter: "blur(8px)", duration: 1 }, "<0.2");
-    return () => { tl.kill(); };
-  }, []);
-
   return (
-    <div ref={containerRef} className="flex min-h-[80vh] flex-col items-center justify-center px-6 text-center">
+    <div className="flex min-h-[80vh] flex-col items-center justify-center px-6 text-center">
       <p className="mb-4 text-sm font-medium tracking-widest text-[var(--text-secondary)] uppercase">
         {eyebrow}
       </p>

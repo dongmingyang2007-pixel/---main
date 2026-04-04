@@ -17,6 +17,7 @@ import base64
 import enum
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +26,10 @@ import websockets
 
 from app.core.config import settings
 from app.services.dashscope_client import UpstreamServiceError
+from app.services.voice_response_limits import (
+    clamp_voice_response_text,
+    normalize_voice_response_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +72,21 @@ class RealtimeSession:
     _text_response_text: str = ""
     _audio_response_text: str = ""
     _response_text_channel: str | None = None
+    _response_outputs_blocked: bool = False
+    _swallow_next_response_done: bool = False
+    _response_done_should_finalize_turn: bool = False
     _upstream_ws: websockets.ClientConnection | None = None
     _last_activity: float = field(default_factory=time.time)
     _session_update_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _pending_session_update: asyncio.Future[None] | None = None
     _active_turn_retrieval_trace: dict[str, Any] | None = None
+    _response_in_flight: bool = False
+    _awaiting_transcript_response: bool = False
+    _response_request_started_for_current_input: bool = False
+    _latest_transcript_completion: str = ""
+    _pending_response_refresh_task: asyncio.Task[None] | None = None
+    _has_sent_input_audio: bool = False
+    _pending_image_b64: str | None = None
 
     @property
     def is_ai_speaking(self) -> bool:
@@ -79,7 +94,7 @@ class RealtimeSession:
 
     def should_interrupt(self, speech_duration_ms: int) -> bool:
         """Decide whether user speech should interrupt AI output."""
-        if not self._ai_speaking:
+        if not (self._ai_speaking or self._response_in_flight):
             return False
         return speech_duration_ms >= settings.realtime_interrupt_threshold_ms
 
@@ -92,6 +107,33 @@ class RealtimeSession:
         self._text_response_text = ""
         self._audio_response_text = ""
         self._response_text_channel = None
+
+    def _reset_response_output_block(self) -> None:
+        self._response_outputs_blocked = False
+
+    def consume_response_done_finalization(self) -> bool:
+        should_finalize = self._response_done_should_finalize_turn
+        self._response_done_should_finalize_turn = False
+        return should_finalize
+
+    def _clear_swallowed_done_guard_on_new_output(self) -> None:
+        if self._swallow_next_response_done and not self._response_outputs_blocked:
+            self._swallow_next_response_done = False
+
+    @staticmethod
+    def _merge_transcript_text(existing: str, incoming: str) -> str:
+        left = str(existing or "").strip()
+        right = str(incoming or "").strip()
+        if not left:
+            return right
+        if not right:
+            return left
+        if right.startswith(left) or left in right:
+            return right
+        if left.startswith(right) or right in left:
+            return left
+        needs_space = bool(re.search(r"[A-Za-z0-9]$", left) and re.match(r"[A-Za-z0-9]", right))
+        return f"{left}{' ' if needs_space else ''}{right}"
 
     def _reconcile_response_text(self, *, channel: str, candidate: str) -> tuple[str, bool]:
         """Merge one response-text channel into the visible assistant transcript.
@@ -130,6 +172,41 @@ class RealtimeSession:
         if common_prefix_len == 0:
             return candidate, True
         return candidate, True
+
+    async def _emit_response_text_candidate(self, *, channel: str, candidate: str) -> list[dict]:
+        normalized_candidate = normalize_voice_response_text(candidate)
+        if not normalized_candidate:
+            return []
+
+        clamped_candidate = clamp_voice_response_text(normalized_candidate)
+        outgoing: list[dict] = []
+
+        if (
+            clamped_candidate != normalized_candidate
+            and self._current_response_text
+            and self._current_response_text != clamped_candidate
+            and self._current_response_text.startswith(clamped_candidate)
+        ):
+            self._response_text_channel = channel
+            self._current_response_text = clamped_candidate
+            outgoing.append({"type": "response.text", "text": clamped_candidate, "replace": True})
+        else:
+            visible_delta, replace = self._reconcile_response_text(
+                channel=channel,
+                candidate=clamped_candidate,
+            )
+            if visible_delta:
+                payload = {"type": "response.text", "text": visible_delta}
+                if replace:
+                    payload["replace"] = True
+                outgoing.append(payload)
+
+        if clamped_candidate != normalized_candidate:
+            await self.cancel_response(
+                preserve_turn=True,
+                suppress_response_done=False,
+            )
+        return outgoing
 
     @property
     def idle_seconds(self) -> float:
@@ -236,49 +313,87 @@ class RealtimeSession:
             "type": "input_audio_buffer.append",
             "audio": audio_b64,
         }))
+        if not self._has_sent_input_audio:
+            self._has_sent_input_audio = True
+            if self._pending_image_b64:
+                pending_image_b64 = self._pending_image_b64
+                self._pending_image_b64 = None
+                await self._upstream_ws.send(json.dumps({
+                    "type": "input_image_buffer.append",
+                    "image": pending_image_b64,
+                }))
+
+    async def relay_image_to_upstream(self, image_bytes: bytes) -> None:
+        """Forward one JPEG frame from the browser camera to DashScope."""
+        if not self._upstream_ws or not image_bytes:
+            return
+        self.touch()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        if not self._has_sent_input_audio:
+            self._pending_image_b64 = image_b64
+            return
+        await self._upstream_ws.send(json.dumps({
+            "type": "input_image_buffer.append",
+            "image": image_b64,
+        }))
 
     async def request_response(self) -> None:
         """Explicitly ask the realtime model to answer the latest committed turn."""
         if not self._upstream_ws:
             raise UpstreamServiceError("Upstream not connected")
+        if self._response_in_flight:
+            return
         self.touch()
-        await self._upstream_ws.send(json.dumps({"type": "response.create"}))
+        self._speech_start_time = None
+        self._response_done_should_finalize_turn = False
+        self._reset_response_output_block()
+        self._response_in_flight = True
+        try:
+            await self._upstream_ws.send(json.dumps({"type": "response.create"}))
+        except Exception:
+            self._response_in_flight = False
+            raise
 
     async def handle_upstream_event(self, event: dict) -> list[dict | bytes]:
         """Process a DashScope event and return messages to send to client."""
         event_type = event.get("type", "")
         outgoing: list[dict | bytes] = []
+        if event_type != "response.done":
+            self._response_done_should_finalize_turn = False
 
         if event_type == "conversation.item.input_audio_transcription.text":
             confirmed = str(event.get("text", ""))
             speculative = str(event.get("stash", ""))
             preview = f"{confirmed}{speculative}"
             if preview:
-                self._partial_transcript = preview
+                self._partial_transcript = self._merge_transcript_text(self._current_transcript, preview)
             outgoing.append({"type": "transcript.partial", "text": self._partial_transcript})
             self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.delta":
             partial = event.get("delta", "")
             if partial:
-                self._partial_transcript += partial
+                self._partial_transcript = f"{self._partial_transcript or self._current_transcript}{partial}"
             outgoing.append({"type": "transcript.partial", "text": self._partial_transcript})
             self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "")
             self._partial_transcript = ""
-            self._current_transcript = transcript
-            outgoing.append({"type": "transcript.final", "text": transcript})
+            self._current_transcript = self._merge_transcript_text(self._current_transcript, str(transcript or ""))
+            outgoing.append({"type": "transcript.final", "text": self._current_transcript})
             self.state = SessionState.LISTENING
             self.touch()
 
         elif event_type == "conversation.item.input_audio_transcription.failed":
             self._partial_transcript = ""
-            self._current_transcript = ""
             self.touch()
 
         elif event_type == "response.audio.delta":
+            if self._response_outputs_blocked:
+                self.touch()
+                return outgoing
+            self._clear_swallowed_done_guard_on_new_output()
             self._ai_speaking = True
             self.state = SessionState.AI_SPEAKING
             audio_b64 = event.get("delta", "")
@@ -287,54 +402,69 @@ class RealtimeSession:
             self.touch()
 
         elif event_type == "response.text.delta":
+            if self._response_outputs_blocked:
+                self.touch()
+                return outgoing
+            self._clear_swallowed_done_guard_on_new_output()
+            self._ai_speaking = True
+            self.state = SessionState.AI_SPEAKING
             delta = event.get("delta", "")
             self._text_response_text += delta
-            visible_delta, replace = self._reconcile_response_text(
-                channel="text",
-                candidate=self._text_response_text,
+            outgoing.extend(
+                await self._emit_response_text_candidate(
+                    channel="text",
+                    candidate=self._text_response_text,
+                )
             )
-            if visible_delta:
-                payload = {"type": "response.text", "text": visible_delta}
-                if replace:
-                    payload["replace"] = True
-                outgoing.append(payload)
             self.touch()
 
         elif event_type == "response.audio_transcript.delta":
+            if self._response_outputs_blocked:
+                self.touch()
+                return outgoing
+            self._clear_swallowed_done_guard_on_new_output()
+            self._ai_speaking = True
+            self.state = SessionState.AI_SPEAKING
             delta = event.get("delta", "")
             self._audio_response_text += delta
-            visible_delta, replace = self._reconcile_response_text(
-                channel="audio",
-                candidate=self._audio_response_text,
-            )
-            if visible_delta:
-                payload = {"type": "response.text", "text": visible_delta}
-                if replace:
-                    payload["replace"] = True
-                outgoing.append(payload)
-            self.touch()
-
-        elif event_type == "response.audio_transcript.done":
-            transcript = event.get("transcript", "")
-            if transcript:
-                self._audio_response_text = transcript
-                visible_delta, replace = self._reconcile_response_text(
+            outgoing.extend(
+                await self._emit_response_text_candidate(
                     channel="audio",
                     candidate=self._audio_response_text,
                 )
-                if visible_delta:
-                    payload = {"type": "response.text", "text": visible_delta}
-                    if replace:
-                        payload["replace"] = True
-                    outgoing.append(payload)
+            )
+            self.touch()
+
+        elif event_type == "response.audio_transcript.done":
+            if self._response_outputs_blocked:
+                self.touch()
+                return outgoing
+            self._clear_swallowed_done_guard_on_new_output()
+            self._ai_speaking = True
+            self.state = SessionState.AI_SPEAKING
+            transcript = event.get("transcript", "")
+            if transcript:
+                self._audio_response_text = transcript
+                outgoing.extend(
+                    await self._emit_response_text_candidate(
+                        channel="audio",
+                        candidate=self._audio_response_text,
+                    )
+                )
             self.touch()
 
         elif event_type == "response.done":
             self._ai_speaking = False
-            self.turn_count += 1
-            outgoing.append({"type": "response.done"})
+            self._response_in_flight = False
+            self._reset_response_output_block()
             self.state = SessionState.LISTENING
             self.touch()
+            if self._swallow_next_response_done:
+                self._swallow_next_response_done = False
+                return outgoing
+            self.turn_count += 1
+            self._response_done_should_finalize_turn = True
+            outgoing.append({"type": "response.done"})
 
         elif event_type == "session.updated":
             if self._pending_session_update and not self._pending_session_update.done():
@@ -345,10 +475,28 @@ class RealtimeSession:
         elif event_type == "input_audio_buffer.speech_started":
             self._partial_transcript = ""
             self._speech_start_time = time.time()
+            self._awaiting_transcript_response = False
+            self._response_request_started_for_current_input = False
+            self._latest_transcript_completion = ""
+            if (
+                self._pending_response_refresh_task is not None
+                and not self._pending_response_refresh_task.done()
+            ):
+                self._pending_response_refresh_task.cancel()
+                self._pending_response_refresh_task = None
             self.touch()
 
         elif event_type == "input_audio_buffer.speech_stopped":
             self._speech_start_time = None
+            self._awaiting_transcript_response = True
+            self._response_request_started_for_current_input = False
+            self._latest_transcript_completion = ""
+            if (
+                self._pending_response_refresh_task is not None
+                and not self._pending_response_refresh_task.done()
+            ):
+                self._pending_response_refresh_task.cancel()
+                self._pending_response_refresh_task = None
             self.touch()
 
         elif event_type == "error":
@@ -364,7 +512,7 @@ class RealtimeSession:
             })
 
         # Check if ongoing speech should trigger interruption
-        if self._speech_start_time and self._ai_speaking:
+        if self._speech_start_time and (self._ai_speaking or self._response_in_flight):
             elapsed_ms = (time.time() - self._speech_start_time) * 1000
             if self.should_interrupt(speech_duration_ms=int(elapsed_ms)):
                 await self.cancel_response()
@@ -377,22 +525,44 @@ class RealtimeSession:
         """Process a control message sent from the client and return reply messages."""
         outgoing: list[dict] = []
         if msg_type == "input.interrupt":
-            if self._ai_speaking:
+            if self._ai_speaking or self._response_in_flight:
                 await self.cancel_response()
                 outgoing.append({"type": "interrupt.ack"})
         return outgoing
 
-    async def cancel_response(self) -> None:
+    async def cancel_response(
+        self,
+        *,
+        preserve_turn: bool = False,
+        suppress_response_done: bool | None = None,
+    ) -> None:
         """Tell DashScope to stop current generation."""
         if not self._upstream_ws:
             return
-        await self._upstream_ws.send(json.dumps({"type": "response.cancel"}))
+        if suppress_response_done is None:
+            suppress_response_done = not preserve_turn
+        if self._response_outputs_blocked:
+            if suppress_response_done:
+                self._swallow_next_response_done = True
+            return
+        self._response_outputs_blocked = True
+        self._response_in_flight = False
+        if suppress_response_done:
+            self._swallow_next_response_done = True
         self._ai_speaking = False
-        self._reset_response_text_tracking()
+        self._partial_transcript = ""
+        if not preserve_turn:
+            self._current_transcript = ""
+            self._active_turn_retrieval_trace = None
+            self._reset_response_text_tracking()
+        await self._upstream_ws.send(json.dumps({"type": "response.cancel"}))
 
     async def close(self) -> None:
         """Gracefully close upstream connection."""
         self.state = SessionState.CLOSING
+        if self._pending_response_refresh_task and not self._pending_response_refresh_task.done():
+            self._pending_response_refresh_task.cancel()
+            self._pending_response_refresh_task = None
         if self._pending_session_update and not self._pending_session_update.done():
             self._pending_session_update.set_exception(
                 UpstreamServiceError("Upstream connection closed")

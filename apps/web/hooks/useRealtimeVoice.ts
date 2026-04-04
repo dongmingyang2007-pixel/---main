@@ -55,6 +55,7 @@ interface UseRealtimeVoiceReturn {
   isSpeakerMuted: boolean;
   userVolume: number;
   aiVolume: number;
+  sendJson: (data: Record<string, unknown>) => void;
 }
 
 export function useRealtimeVoice({
@@ -110,5 +111,6 @@ export function useRealtimeVoice({
     isSpeakerMuted: base.isSpeakerMuted,
     userVolume: base.userVolume,
     aiVolume: base.aiVolume,
+    sendJson: base.sendJson,
   };
 }

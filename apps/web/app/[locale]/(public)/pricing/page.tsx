@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef } from "react";
 import { useTranslations } from "next-intl";
-import { gsap } from "@/lib/gsap-register";
+import { useScrollReveal } from "@/lib/useScrollReveal";
 import { MagneticButton } from "@/components/MagneticButton";
 
 const TIER_KEYS = ["explore", "studio", "team"] as const;
@@ -12,27 +12,7 @@ export default function PricingPage() {
   const tc = useTranslations("common");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const cards = el.querySelectorAll(".pricing-card");
-    const tween = gsap.from(cards, {
-      opacity: 0,
-      y: 30,
-      stagger: 0.1,
-      duration: 0.6,
-      ease: "power2.out",
-      scrollTrigger: {
-        trigger: el.querySelector(".pricing-grid"),
-        start: "top 80%",
-        once: true,
-      },
-    });
-    return () => {
-      tween.scrollTrigger?.kill();
-      tween.kill();
-    };
-  }, []);
+  useScrollReveal(containerRef);
 
   const plans = TIER_KEYS.map((key) => ({
     key,
@@ -64,6 +44,8 @@ export default function PricingPage() {
             return (
               <div
                 key={plan.key}
+                data-reveal
+                data-reveal-delay={`${TIER_KEYS.indexOf(plan.key) + 1}`}
                 className={`pricing-card relative flex flex-col rounded-[var(--radius-lg)] border p-6 transition-shadow hover:shadow-lg ${
                   isRecommended
                     ? "border-[var(--brand-v2)] bg-[var(--bg-base)] shadow-[0_0_0_1px_var(--brand-v2)]"

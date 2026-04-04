@@ -759,9 +759,46 @@ function readJsonBody<T>(route: Route): T {
 
 export async function installWorkbenchApiMock(
   page: Page,
-  options: { authenticated?: boolean } = {},
+  options: {
+    authenticated?: boolean;
+    seedConversations?: Array<{
+      id: string;
+      project_id?: string;
+      title?: string;
+      updated_at?: string;
+    }>;
+    seedMessagesByConversationId?: Record<string, ChatMessage[]>;
+  } = {},
 ): Promise<MockWorkbenchHandle> {
   const db = createMockDb();
+  if (Array.isArray(options.seedConversations)) {
+    for (const conversation of options.seedConversations) {
+      const projectId = conversation.project_id || db.projects[0]?.id || "";
+      const seededConversation: Conversation = {
+        id: conversation.id,
+        project_id: projectId,
+        title: conversation.title || "Seeded Conversation",
+        updated_at: conversation.updated_at || nowIso(),
+      };
+      db.conversationsByProjectId[projectId] = [
+        seededConversation,
+        ...(db.conversationsByProjectId[projectId] || []).filter(
+          (item) => item.id !== seededConversation.id,
+        ),
+      ];
+      db.messagesByConversationId[seededConversation.id] =
+        db.messagesByConversationId[seededConversation.id] || [];
+    }
+  }
+  if (options.seedMessagesByConversationId) {
+    for (const [conversationId, messages] of Object.entries(
+      options.seedMessagesByConversationId,
+    )) {
+      db.messagesByConversationId[conversationId] = Array.isArray(messages)
+        ? [...messages]
+        : [];
+    }
+  }
   const seedProjects = db.projects.map((project) => ({
     id: project.id,
     name: project.name,
@@ -881,6 +918,11 @@ export async function installWorkbenchApiMock(
 
     if (pathname === "/api/v1/auth/csrf" && method === "GET") {
       await fulfillJson(route, { csrf_token: "csrf-playwright-token" });
+      return;
+    }
+
+    if (pathname === "/api/v1/realtime/ws-ticket" && method === "GET") {
+      await fulfillJson(route, { ticket: "mock-realtime-ticket", expires_in_seconds: 60 });
       return;
     }
 

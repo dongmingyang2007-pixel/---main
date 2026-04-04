@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, Tag
 
+from app.services.responses_native_tools import merge_native_tool_names
 
 CATALOG_SNAPSHOT_PATH = Path(__file__).resolve().parent.parent / "data" / "qwen_official_catalog.json"
 CATALOG_SNAPSHOT_FALLBACK_PATH = CATALOG_SNAPSHOT_PATH.with_name("qwen_official_catalog.last_good.json")
@@ -798,7 +799,7 @@ def generate_snapshot(source_payloads: Mapping[str, str] | None = None) -> dict[
         taxonomy_entry = TAXONOMY_BY_KEY[category_key]
         display_name = _titleize_model_id(raw.canonical_model_id)
         input_modalities, output_modalities = _derive_modalities(raw, category_key)
-        supported_tools = sorted(raw.supported_tools)
+        supported_tools = merge_native_tool_names(raw.canonical_model_id, raw.supported_tools)
         supported_features = sorted(raw.supported_features)
         pipeline_slot = _pipeline_slot_for_category(category_key)
         aliases = sorted(alias for alias in raw.aliases if alias != raw.canonical_model_id)
@@ -911,7 +912,10 @@ def load_snapshot() -> OfficialCatalogIndex:
         normalized.setdefault("provider_display", "千问 · 阿里云")
         normalized.setdefault("official_group_key", "")
         normalized.setdefault("official_category_key", "")
-        normalized.setdefault("supported_tools", [])
+        normalized["supported_tools"] = merge_native_tool_names(
+            str(normalized["canonical_model_id"]),
+            normalized.get("supported_tools", []),
+        )
         normalized.setdefault("supported_features", [])
         normalized.setdefault("aliases", [])
         normalized.setdefault("pipeline_slot", None)

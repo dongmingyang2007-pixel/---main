@@ -48,9 +48,11 @@ interface UseSyntheticRealtimeVoiceReturn {
   isSpeakerMuted: boolean;
   userVolume: number;
   aiVolume: number;
+  sendJson: (data: Record<string, unknown>) => void;
   pendingMedia: SyntheticPendingMedia | null;
   attachMediaFile: (file: File) => Promise<void>;
   clearPendingMedia: () => void;
+  turnBoundaryCount: number;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -72,6 +74,7 @@ export function useSyntheticRealtimeVoice({
   messages,
 }: UseSyntheticRealtimeVoiceOptions): UseSyntheticRealtimeVoiceReturn {
   const [pendingMedia, setPendingMedia] = useState<SyntheticPendingMedia | null>(null);
+  const [turnBoundaryCount, setTurnBoundaryCount] = useState(0);
   const pendingMediaRef = useRef<SyntheticPendingMedia | null>(null);
   const pendingMediaVersionRef = useRef(0);
   const lastSentMediaVersionRef = useRef(0);
@@ -97,15 +100,19 @@ export function useSyntheticRealtimeVoice({
     conversationId,
     projectId,
     wsPath: "/api/v1/realtime/composed-voice",
-    audioSendMode: "vad-gated",
+    audioSendMode: "continuous",
     blockCaptureWhileAiSpeaking: true,
     enableInterrupt: true,
+    interruptPendingResponse: false,
     vadConfig: {
       speechThreshold: 0.015,
-      silenceCommitMs: 420,
+      silenceCommitMs: 850,
     },
     onError,
-    onTurnComplete,
+    onTurnComplete: (payload) => {
+      setTurnBoundaryCount((currentValue) => currentValue + 1);
+      onTurnComplete?.(payload);
+    },
     onTranscriptUpdate,
     messages,
     onSessionReady: sendPendingMedia,
@@ -115,6 +122,13 @@ export function useSyntheticRealtimeVoice({
       } else if (data.type === "media.cleared") {
         setPendingMedia(null);
         pendingMediaRef.current = null;
+      } else if (data.type === "turn.error") {
+        setTurnBoundaryCount((currentValue) => currentValue + 1);
+      } else if (data.type === "turn.notice") {
+        const noticeCode = typeof data.code === "string" ? data.code : "";
+        if (noticeCode === "empty_transcription" || noticeCode === "no_audio_input") {
+          setTurnBoundaryCount((currentValue) => currentValue + 1);
+        }
       } else if (data.type === "turn.persisted") {
         onTurnPersisted?.({
           userMessage:
@@ -150,7 +164,7 @@ export function useSyntheticRealtimeVoice({
         filename: nextMedia.filename,
       });
     },
-    [base],
+    [base.sendJson],
   );
 
   const clearPendingMedia = useCallback(() => {
@@ -158,7 +172,7 @@ export function useSyntheticRealtimeVoice({
     pendingMediaRef.current = null;
     setPendingMedia(null);
     base.sendJson({ type: "media.clear" });
-  }, [base]);
+  }, [base.sendJson]);
 
   return {
     state: base.state,
@@ -172,8 +186,10 @@ export function useSyntheticRealtimeVoice({
     isSpeakerMuted: base.isSpeakerMuted,
     userVolume: base.userVolume,
     aiVolume: base.aiVolume,
+    sendJson: base.sendJson,
     pendingMedia,
     attachMediaFile,
     clearPendingMedia,
+    turnBoundaryCount,
   };
 }

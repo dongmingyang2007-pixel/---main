@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DEFAULT_LOCAL_API_PORT, LOOPBACK_HOSTS, isLoopbackHost, isLocalBindHost } from "@/lib/network-hosts";
+import {
+  DEFAULT_LOCAL_API_PORT,
+  LOOPBACK_HOSTS,
+  isLoopbackHost,
+  isLocalBindHost,
+} from "@/lib/network-hosts";
+import {
+  DISCOVER_ENABLED,
+  resolveDiscoverRedirectTarget,
+} from "@/lib/feature-flags";
 
 const AUTH_STATE_COOKIE = "auth_state";
 const AUTH_STATE_COOKIE_VALUE = "1";
@@ -80,6 +89,10 @@ function isProtectedConsolePath(pathname: string): boolean {
   return pathname === "/app" || pathname.startsWith("/app/");
 }
 
+function isDiscoverPath(pathname: string): boolean {
+  return pathname === "/app/discover" || pathname.startsWith("/app/discover/");
+}
+
 function isEnglishPath(pathname: string): boolean {
   return pathname === "/en" || pathname.startsWith("/en/");
 }
@@ -99,14 +112,22 @@ function buildCsp(
     CSP_LOOPBACK_HOSTS,
   );
   const apiOrigins =
-    configuredApiOrigins.length > 0 ? configuredApiOrigins : defaultLocalApiOrigins(request);
+    configuredApiOrigins.length > 0
+      ? configuredApiOrigins
+      : defaultLocalApiOrigins(request);
   const assetOrigins = expandLoopbackOrigins(
     normalizeOrigin(process.env.NEXT_PUBLIC_ASSET_ORIGIN),
     CSP_LOOPBACK_HOSTS,
   );
   const connectOrigins = expandConnectOrigins([...apiOrigins, ...assetOrigins]);
   const connectSrc = ["'self'", "blob:", ...connectOrigins].join(" ");
-  const assetSrc = ["'self'", "data:", "blob:", ...apiOrigins, ...assetOrigins].join(" ");
+  const assetSrc = [
+    "'self'",
+    "data:",
+    "blob:",
+    ...apiOrigins,
+    ...assetOrigins,
+  ].join(" ");
   const frameAncestors = allowSameOriginFrame ? "'self'" : "'none'";
 
   return [
@@ -130,7 +151,8 @@ export function proxy(request: NextRequest) {
   const allowSameOriginFrame = isSameOriginEmbeddablePath(rawPathname);
   const isStaticViewerPath = rawPathname === "/product-viewer.html";
   const hasAccessToken = Boolean(request.cookies.get("access_token")?.value);
-  const hasAuthState = request.cookies.get(AUTH_STATE_COOKIE)?.value === AUTH_STATE_COOKIE_VALUE;
+  const hasAuthState =
+    request.cookies.get(AUTH_STATE_COOKIE)?.value === AUTH_STATE_COOKIE_VALUE;
 
   // Strip locale prefix so /en/app/* is also handled correctly
   const strippedPath = rawPathname.replace(/^\/(en|zh)(?=\/|$)/, "") || "/";
@@ -147,14 +169,29 @@ export function proxy(request: NextRequest) {
 
   const redirectTarget = ROUTE_REDIRECTS[strippedPath];
   if (redirectTarget) {
-    const redirectUrl = new URL(`${localePrefix}${redirectTarget}`, request.url);
+    const redirectUrl = new URL(
+      `${localePrefix}${redirectTarget}`,
+      request.url,
+    );
     return NextResponse.redirect(redirectUrl, 301);
+  }
+
+  if (!DISCOVER_ENABLED && isDiscoverPath(strippedPath)) {
+    const from = request.nextUrl.searchParams.get("from");
+    const redirectTarget = resolveDiscoverRedirectTarget(
+      localePrefix === "/en" ? "en" : "zh",
+      from,
+    );
+    return NextResponse.redirect(new URL(redirectTarget, request.url), 307);
   }
 
   // Auth check
   if (isProtectedConsolePath(strippedPath) && !hasAccessToken) {
     const loginUrl = new URL(`${localePrefix}/login`, request.url);
-    loginUrl.searchParams.set("next", `${strippedPath}${request.nextUrl.search}`);
+    loginUrl.searchParams.set(
+      "next",
+      `${strippedPath}${request.nextUrl.search}`,
+    );
     const redirect = NextResponse.redirect(loginUrl);
     if (hasAuthState) {
       redirect.cookies.delete(AUTH_STATE_COOKIE);
@@ -164,7 +201,8 @@ export function proxy(request: NextRequest) {
 
   const isLocalHost = isLoopbackHost(request.nextUrl.hostname);
   const isLocalStack = process.env.QIHANG_LOCAL_STACK === "true";
-  const useNonceCsp = process.env.NODE_ENV === "production" && !isLocalHost && !isLocalStack;
+  const useNonceCsp =
+    process.env.NODE_ENV === "production" && !isLocalHost && !isLocalStack;
   let nonce: string | null = null;
   const response = NextResponse.next();
 
@@ -176,10 +214,13 @@ export function proxy(request: NextRequest) {
   // Security headers — applied to every response (including intl redirects)
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  response.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");
+  response.headers.set(
+    "X-Frame-Options",
+    allowSameOriginFrame ? "SAMEORIGIN" : "DENY",
+  );
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
+    "camera=(self), microphone=(self), geolocation=(), browsing-topics=()",
   );
 
   if (process.env.NODE_ENV === "production") {
